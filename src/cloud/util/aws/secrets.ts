@@ -11,6 +11,7 @@
  */
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 import { AWS_REGION } from "./aws-target.js";
+import { fitCliCredentialsProvider } from "./aws-cli.js";
 import { isMain } from "../../../util/non-fit/cli.js";
 
 /** Thrown when a secret can't be read (missing, access denied, or malformed). */
@@ -18,7 +19,7 @@ export class AwsSecretError extends Error {}
 
 let client: SecretsManagerClient | undefined;
 function secretsClient(): SecretsManagerClient {
-  client ??= new SecretsManagerClient({ region: AWS_REGION });
+  client ??= new SecretsManagerClient({ region: AWS_REGION, credentials: fitCliCredentialsProvider });
   return client;
 }
 

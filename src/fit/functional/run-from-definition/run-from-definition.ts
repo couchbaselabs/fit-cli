@@ -1379,10 +1379,31 @@ async function disposeCycleResources(
 ): Promise<void> {
   await disposeGroupClusterAndPerformers(execution, clusterState, performers, cbcollect);
   if (teardown.terminate) {
-    console.log(`\nTerminating instance ${teardown.instanceId ?? ""}...`);
-    await teardown.terminate();
+    await terminateInstanceWithGuidance(teardown);
+  }
+}
+
+/**
+ * Terminate the run's EC2 instance, printing loud, actionable guidance if it fails. With the
+ * refreshing credentials provider a failure here should no longer be a `RequestExpired` (the SDK
+ * re-assumes fit-cli-role), but if teardown still can't terminate — e.g. the underlying SSO
+ * session itself lapsed — the instance keeps costing money, so make that impossible to miss
+ * rather than let it disappear behind a generic error. Re-throws so existing error handling runs.
+ */
+async function terminateInstanceWithGuidance(teardown: ExecutionTargetTeardown): Promise<void> {
+  console.log(`\nTerminating instance ${teardown.instanceId ?? ""}...`);
+  try {
+    await teardown.terminate!();
     console.log("✓ Terminated.");
     clearLogContext();
+  } catch (err) {
+    console.error(
+      `\n✗ Failed to terminate instance ${teardown.instanceId ?? "(unknown)"}: ${(err as Error).message}\n` +
+        `  It is STILL RUNNING and incurring AWS charges. Remove it with:\n` +
+        (teardown.instanceId ? `    ${terminateInstanceCommand(teardown.instanceId)}\n` : "") +
+        `  or sweep every fit-cli instance you own:\n    fit cloud-instances remove-all`,
+    );
+    throw err;
   }
 }
 
@@ -1539,10 +1560,7 @@ async function teardownRun(inputs: TeardownInputs): Promise<{ leftUp: boolean }>
     }
   }
   if (teardown.terminate) {
-    console.log(`\nTerminating instance ${teardown.instanceId ?? ""}...`);
-    await teardown.terminate();
-    console.log("✓ Terminated.");
-    clearLogContext();
+    await terminateInstanceWithGuidance(teardown);
   }
   return { leftUp: false };
 }

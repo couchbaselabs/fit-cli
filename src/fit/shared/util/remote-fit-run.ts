@@ -15,6 +15,7 @@ import { ensureRepo } from "../../util/ensure-repo.js";
 import { collectJunitArtifacts } from "../run-test-driver/collect-junit.js";
 import type { Sdk } from "../../../util/sdk/sdks.js";
 import type { AwsCredentials } from "../../../cloud/util/aws/identity.js";
+import { freshAssumedCredentials } from "../../../cloud/util/aws/aws-cli.js";
 import { DEFAULT_PERFORMER_PORT } from "../../performers/util/performer-port.js";
 import { createRemoteFitExecutionContext } from "./remote-fit-execution-context.js";
 import { resolveFitPerformerDir, resolveGerritSshKey, type ResolvedCapellaConfig } from "../../util/config.js";
@@ -239,7 +240,10 @@ export async function uploadRemoteAwsCredentials(
 ): Promise<void> {
   const remotePath = remoteAwsCredentialsPath(rootDir);
   const localFile = createRunFilePath(REMOTE_AWS_CREDENTIALS_FILENAME);
-  writeFileSync(localFile, awsCredentialsScript(creds), { mode: 0o600 });
+  // Forward the freshest possible session so the box starts with a full lifetime (re-assuming if
+  // ours is near expiry); fall back to the caller-supplied creds when we didn't assume them.
+  const fresh = await freshAssumedCredentials();
+  writeFileSync(localFile, awsCredentialsScript(fresh ?? creds), { mode: 0o600 });
   console.log(
     `→ setup-aws-credentials: uploading AWS credentials to ${remotePath} on ${(target as { description?: string }).description ?? "remote"}`,
   );
