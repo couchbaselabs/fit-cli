@@ -118,7 +118,7 @@ function printAwsProfileSummary(profiles: AwsProfilesInfo): void {
   console.log("  There are some limits on how long a role can be assumed: 1-12 hours, depending on how logged in.  TBD what impact this has..");
   console.log("  'fit-cli-role' can only be assumed from these two AWS accounts: cb-sdk (958525475024) and cb-qe (516524556673).");
   console.log("  E.g. you must be on one of these two accounts: if not, create an IT ticket.");
-  console.log("  Instances are always created on us-west-2 and in VPC `cbqerunners-vpc` for several reasons (see README).");
+  console.log("  Instances are always created on us-west-2 and in VPC `fit-cli-vpc` for several reasons (see README).");
   console.log("AWS profile:");
   const activeEntry = profiles.profiles.find((p) => p.name === profiles.active);
   console.log(`  active: ${activeEntry ? describeProfile(activeEntry) : profiles.active}`);

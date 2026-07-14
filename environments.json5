@@ -73,11 +73,11 @@
       // The single AWS region fit-cli operates in.
       region: "us-west-2",
 
-      // cbqerunners-vpc — the only VPC in us-west-2 in this account (there is NO default
+      // fit-cli-vpc — the only VPC in us-west-2 in this account (there is NO default
       // VPC, which is why a VPC must be named explicitly).
       vpcId: "vpc-0ea6734517a89f0f9",
 
-      // cbqerunners-vpc-public-us-west-2b — a public subnet (MapPublicIpOnLaunch=true)
+      // fit-cli-vpc-public-us-west-2b — a public subnet (MapPublicIpOnLaunch=true)
       // so launched instances get a public IP we can SSH to.
       subnetId: "subnet-066bf3b21c106d96b",
 
