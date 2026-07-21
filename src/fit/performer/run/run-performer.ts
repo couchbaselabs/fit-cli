@@ -11,17 +11,16 @@ import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { runScriptPrefix } from "../../../util/non-fit/fit-cli-log.js";
 import type { RunOutput } from "../../../util/non-fit/artifacts.js";
 import {
-  PREBUILT_PERFORMER_SDKS,
+  SDKS,
   sdkByPerformerImageBasename,
   sdkByValue,
-  sdkPublishesPerformerImage,
 } from "../../../util/sdk/sdks.js";
 import { validatePerformerVersion } from "../../performers/util/performer-image.js";
 import { createLocalFitExecutionContext } from "../../shared/util/remote-fit-run.js";
 import { checkBuildAndRunPerformer } from "../../performers/check-build-and-run-performer/check-build-and-run-performer.js";
 
 function helpText(): string {
-  const sdks = PREBUILT_PERFORMER_SDKS.map((s) => s.value).join(", ");
+  const sdks = SDKS.map((s) => s.value).join(", ");
   return `Run a single prebuilt performer Docker image, for manual testing outside a full FIT run.
 
 Usage:
@@ -53,14 +52,8 @@ export async function runPerformerRunMain(argv: string[]): Promise<RunOutput | v
 
   const sdk = sdkByValue(sdkValue) ?? sdkByPerformerImageBasename(sdkValue);
   if (!sdk) {
-    const supported = PREBUILT_PERFORMER_SDKS.map((s) => s.value).join(", ");
-    console.error(`Unknown SDK "${sdkValue}". SDKs with prebuilt performer images: ${supported}.\n`);
-    console.error(helpText());
-    process.exit(2);
-  }
-  if (!sdkPublishesPerformerImage(sdk)) {
-    const supported = PREBUILT_PERFORMER_SDKS.map((s) => s.value).join(", ");
-    console.error(`${sdk.name} (${sdk.value}) does not publish a prebuilt performer image. Pick one of: ${supported}.\n`);
+    const supported = SDKS.map((s) => s.value).join(", ");
+    console.error(`Unknown SDK "${sdkValue}". Supported SDKs: ${supported}.\n`);
     console.error(helpText());
     process.exit(2);
   }

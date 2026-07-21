@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { PREBUILT_PERFORMER_SDKS } from "../../../../util/sdk/sdks.js";
+import { SDKS } from "../../../../util/sdk/sdks.js";
 import { resolvePerformerListSdks } from "../list-performer.js";
 
-test("resolvePerformerListSdks with no arg returns every prebuilt-performer SDK", () => {
+test("resolvePerformerListSdks with no arg returns every supported SDK", () => {
   const result = resolvePerformerListSdks();
   assert.ok(Array.isArray(result));
   assert.deepEqual(
     result.map((s) => s.value),
-    PREBUILT_PERFORMER_SDKS.map((s) => s.value),
+    SDKS.map((s) => s.value),
   );
 });
 
@@ -37,8 +37,8 @@ test("resolvePerformerListSdks rejects an unknown SDK", () => {
   assert.match(result.error, /Unknown SDK/);
 });
 
-test("resolvePerformerListSdks rejects an SDK that publishes no performer image", () => {
+test("resolvePerformerListSdks resolves Node.js, which now publishes a performer image", () => {
   const result = resolvePerformerListSdks("node");
-  assert.ok("error" in result);
-  assert.match(result.error, /does not publish/);
+  assert.ok(Array.isArray(result));
+  assert.equal(result[0]?.value, "node");
 });

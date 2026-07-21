@@ -17,7 +17,7 @@ import { artifactFromPath, type RunOutput } from "../../util/non-fit/artifacts.j
 import { isMain, runCli } from "../../util/non-fit/cli.js";
 import { fitCliWarn, printWithoutTimestamps, runScriptPrefix } from "../../util/non-fit/fit-cli-log.js";
 import { ensureRunDir } from "../../util/non-fit/replay.js";
-import { OPERATIONAL_PREBUILT_SDKS, SDKS, isAnalyticsSdk, sdkPublishesPerformerImage, type Sdk } from "../../util/sdk/sdks.js";
+import { OPERATIONAL_SDKS, SDKS, isAnalyticsSdk, type Sdk } from "../../util/sdk/sdks.js";
 import { DEFAULT_PERFORMER_IMAGE_TAG } from "../performers/util/performer-image.js";
 import { ensureGhcrLogin, fetchCapsForSdk } from "./fetch-caps/fetch-caps.js";
 import { DEFAULT_CAPS_PATH, findCap, loadCapsFile } from "./util/caps-metadata.js";
@@ -85,7 +85,7 @@ async function mapWithConcurrency<T, R>(items: readonly T[], limit: number, work
  * works if you want to check whether that's changed.
  */
 export function resolveSdks(csv: string | undefined): Sdk[] {
-  if (!csv) return [...OPERATIONAL_PREBUILT_SDKS];
+  if (!csv) return [...OPERATIONAL_SDKS];
 
   const requested = csv
     .split(",")
@@ -96,9 +96,6 @@ export function resolveSdks(csv: string | undefined): Sdk[] {
     const sdk = SDKS.find((candidate) => candidate.value === value);
     if (!sdk) {
       throw new Error(`Unknown SDK "${value}". Known SDKs: ${SDKS.map((s) => s.value).join(", ")}.`);
-    }
-    if (!sdkPublishesPerformerImage(sdk)) {
-      throw new Error(`${sdk.name} (${sdk.value}) does not publish a prebuilt performer image, so its caps cannot be fetched.`);
     }
     return sdk;
   });
@@ -126,13 +123,8 @@ async function cmdTable(argv: string[]): Promise<RunOutput> {
   }
 
   // Explain who isn't in the table, rather than leaving a reader to wonder where they
-  // went: Node and Python publish no performer image at all, and the Analytics
-  // performers don't implement this RPC.
+  // went: the Analytics performers don't implement this RPC.
   if (!flagValue(argv, "--sdks")) {
-    const noImage = SDKS.filter((sdk) => !sdkPublishesPerformerImage(sdk));
-    if (noImage.length > 0) {
-      console.log(`Note: ${noImage.map((s) => s.name).join(" and ")} publish no prebuilt performer image, so are not shown.`);
-    }
     const analytics = SDKS.filter(isAnalyticsSdk);
     console.log(
       `Note: the Analytics performers (${analytics.map((s) => s.value).join(", ")}) do not implement performerCapsFetch,` +

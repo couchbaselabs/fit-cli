@@ -58,14 +58,25 @@ test("parseGeneratePresetArgs requires a performer image name", () => {
   );
 });
 
-test("parseGeneratePresetArgs rejects an SDK without prebuilt images", () => {
+test("parseGeneratePresetArgs accepts supported SDKs", () => {
+  for (const sdk of ["java", "scala", "kotlin", "cxx", "dotnet", "go", "node", "python", "ruby", "rust"]) {
+    const args = parseGeneratePresetArgs([
+      "--type=op-onprem-func-lite",
+      `--performer-image-name=${sdk}-fit-performer:main`,
+    ]);
+
+    assert.equal(args.image, `${sdk}-fit-performer:main`);
+  }
+});
+
+test("parseGeneratePresetArgs rejects an SDK that does not support FIT", () => {
   assert.throws(
     () =>
       parseGeneratePresetArgs([
         "--type=op-onprem-func-lite",
-        "--performer-image-name=python-fit-performer:main",
+        "--performer-image-name=php-fit-performer:main",
       ]),
-    /publish prebuilt performer images/,
+    /Unknown SDK "php"/,
   );
 });
 

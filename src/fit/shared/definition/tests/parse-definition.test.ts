@@ -87,9 +87,14 @@ test("rejects setting both excludedGroups and addToDefaultExcludedGroups", () =>
   );
 });
 
-test("rejects a performer image for an SDK without prebuilt images", () => {
+test("accepts the Python performer image", () => {
   const def = FUNCTIONAL.replace("image: java-fit-performer:main", "image: python-fit-performer:main");
-  assert.throws(() => parseDefinition(def), /publish prebuilt performer images/);
+  assert.equal(parseDefinition(def).instances[0]?.clusters[0]?.sessions[0]?.performer.image, "python-fit-performer:main");
+});
+
+test("rejects a performer image for an SDK FIT doesn't know", () => {
+  const def = FUNCTIONAL.replace("image: java-fit-performer:main", "image: php-fit-performer:main");
+  assert.throws(() => parseDefinition(def), /Unknown SDK "php"/);
 });
 
 test("rejects the legacy performer sdk/version fields", () => {

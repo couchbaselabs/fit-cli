@@ -1,23 +1,17 @@
 /**
  * SDKs that FIT can test.
- *
- * `performer` is the SDK's performer directory name. For non-JVM SDKs that is
- * the directory under transactions-fit-performer/performers. For JVM SDKs
- * (Java, Kotlin, Scala) the performer lives in couchbase-jvm-clients as
- * <performer>-fit-performer; the matching performers/ entry under
- * transactions-fit-performer is the old one and is no longer used.
  */
 export const SDKS = [
-  { name: "Java", value: "java", jvm: true, performer: "java", family: "operational" },
-  { name: "Scala", value: "scala", jvm: true, performer: "scala", family: "operational" },
-  { name: "Kotlin", value: "kotlin", jvm: true, performer: "kotlin", family: "operational" },
-  { name: "C++", value: "cpp", jvm: false, performer: "cpp", family: "operational" },
-  { name: ".NET", value: "dotnet", jvm: false, performer: "dotnet", family: "operational" },
-  { name: "Go", value: "go", jvm: false, performer: "go", family: "operational" },
-  { name: "Node.js", value: "node", jvm: false, performer: "node", family: "operational" },
-  { name: "Python", value: "python", jvm: false, performer: "python", family: "operational" },
-  { name: "Ruby", value: "ruby", jvm: false, performer: "ruby", family: "operational" },
-  { name: "Rust", value: "rust", jvm: false, performer: "rust", family: "operational" },
+  { name: "Java", value: "java", family: "operational" },
+  { name: "Scala", value: "scala", family: "operational" },
+  { name: "Kotlin", value: "kotlin", family: "operational" },
+  { name: "C++", value: "cpp", family: "operational" },
+  { name: ".NET", value: "dotnet", family: "operational" },
+  { name: "Go", value: "go", family: "operational" },
+  { name: "Node.js", value: "node", family: "operational" },
+  { name: "Python", value: "python", family: "operational" },
+  { name: "Ruby", value: "ruby", family: "operational" },
+  { name: "Rust", value: "rust", family: "operational" },
   // Analytics SDKs — tested via the columnar-test-driver (`analytics-functional`
   // runs). Two families exist: "Columnar SDK" (recommended for Capella Analytics) and
   // "Enterprise Analytics SDK" (recommended for Enterprise Analytics + a load balancer).
@@ -33,9 +27,9 @@ export const SDKS = [
   // Enterprise Analytics SDK first — it's the standard/recommended choice for the
   // (self-managed Enterprise Analytics) clusters fit-cli allocates; the Columnar SDK
   // is mainly for Capella Analytics or the odd cross-combination.
-  { name: "Java Enterprise Analytics", value: "analytics-java", jvm: true, performer: "analytics/java", family: "enterprise-analytics" },
-  { name: ".NET Enterprise Analytics", value: "analytics-dotnet", jvm: false, performer: "analytics/dotnet", family: "enterprise-analytics" },
-  { name: "Java Columnar", value: "columnar-java", jvm: true, performer: "columnar/java", family: "columnar" },
+  { name: "Java Enterprise Analytics", value: "analytics-java", family: "enterprise-analytics" },
+  { name: ".NET Enterprise Analytics", value: "analytics-dotnet", family: "enterprise-analytics" },
+  { name: "Java Columnar", value: "columnar-java", family: "columnar" },
 ] as const;
 
 export type Sdk = (typeof SDKS)[number];
@@ -56,24 +50,8 @@ export function isAnalyticsSdk(sdk: Sdk): boolean {
   return sdk.family !== "operational";
 }
 
-/**
- * True if this SDK currently publishes a prebuilt performer Docker image to
- * GHCR. The operational JVM SDKs (Java, Scala, Kotlin), C++, .NET, Go, Ruby
- * and Rust do, as do the Analytics SDKs (Columnar + Enterprise Analytics);
- * fit-cli only runs performers from prebuilt images, so these are the only
- * SDKs it can test. Node.js and Python don't yet publish prebuilt images.
- */
-const PERFORMER_IMAGE_SDK_VALUES: SdkValue[] = ["cpp", "dotnet", "go", "ruby", "rust"];
-
-export function sdkPublishesPerformerImage(sdk: Sdk): boolean {
-  return isAnalyticsSdk(sdk) || sdk.jvm || PERFORMER_IMAGE_SDK_VALUES.includes(sdk.value);
-}
-
-/** All SDKs fit-cli can test — those with prebuilt performer images. */
-export const PREBUILT_PERFORMER_SDKS = SDKS.filter(sdkPublishesPerformerImage);
-
-/** Operational (non-Analytics) prebuilt SDKs — the choices for a functional/situational run. */
-export const OPERATIONAL_PREBUILT_SDKS = PREBUILT_PERFORMER_SDKS.filter((sdk) => sdk.family === "operational");
+/** Operational (non-Analytics) SDKs — the choices for a functional/situational run. */
+export const OPERATIONAL_SDKS = SDKS.filter((sdk) => sdk.family === "operational");
 
 /**
  * The SDKs an `analytics-functional` run can use — both the Columnar SDKs and the

@@ -22,10 +22,10 @@ test("resolveMetadataSdk rejects an unknown SDK", () => {
   assert.match(result.error, /Unknown SDK/);
 });
 
-test("resolveMetadataSdk rejects an SDK that publishes no performer image", () => {
-  const result = resolveMetadataSdk("node");
-  assert.ok("error" in result);
-  assert.match(result.error, /does not publish/);
+test("resolveMetadataSdk resolves Python, which now publishes a performer image", () => {
+  const result = resolveMetadataSdk("python");
+  assert.ok(!("error" in result));
+  assert.equal(result.value, "python");
 });
 
 test("formatImageLabels renders only the labels fit-cli recognises, with their raw key", () => {

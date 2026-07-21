@@ -12,10 +12,9 @@ import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { runScriptPrefix } from "../../../util/non-fit/fit-cli-log.js";
 import type { Detail, RunOutput } from "../../../util/non-fit/artifacts.js";
 import {
-  PREBUILT_PERFORMER_SDKS,
+  SDKS,
   sdkByPerformerImageBasename,
   sdkByValue,
-  sdkPublishesPerformerImage,
   type Sdk,
 } from "../../../util/sdk/sdks.js";
 import { performerImageName, validatePerformerVersion } from "../../performers/util/performer-image.js";
@@ -27,7 +26,7 @@ import { reportedNumbers } from "../../caps/util/caps-table.js";
 import type { PerformerCaps } from "../../caps/util/performer-caps-rpc.js";
 
 function helpText(): string {
-  const sdks = PREBUILT_PERFORMER_SDKS.map((s) => s.value).join(", ");
+  const sdks = SDKS.map((s) => s.value).join(", ");
   return `Show all metadata available for a performer image: the Docker image labels
 baked in at build time, plus everything the performer reports over
 performerCapsFetch (user agent, library version, transactions protocol, and
@@ -51,12 +50,8 @@ Example:
 export function resolveMetadataSdk(sdkValue: string): Sdk | { error: string } {
   const sdk = sdkByValue(sdkValue) ?? sdkByPerformerImageBasename(sdkValue);
   if (!sdk) {
-    const supported = PREBUILT_PERFORMER_SDKS.map((s) => s.value).join(", ");
-    return { error: `Unknown SDK "${sdkValue}". SDKs with prebuilt performer images: ${supported}.` };
-  }
-  if (!sdkPublishesPerformerImage(sdk)) {
-    const supported = PREBUILT_PERFORMER_SDKS.map((s) => s.value).join(", ");
-    return { error: `${sdk.name} (${sdk.value}) does not publish a prebuilt performer image. Pick one of: ${supported}.` };
+    const supported = SDKS.map((s) => s.value).join(", ");
+    return { error: `Unknown SDK "${sdkValue}". Supported SDKs: ${supported}.` };
   }
   return sdk;
 }

@@ -1,8 +1,7 @@
 import {
-  PREBUILT_PERFORMER_SDKS,
+  SDKS,
   sdkByPerformerImageBasename,
   sdkPerformerImageBasename,
-  sdkPublishesPerformerImage,
   type Sdk,
 } from "../../../util/sdk/sdks.js";
 
@@ -81,19 +80,11 @@ export function analysePerformerImage(image: string): ParsedPerformerImage | { e
   }
   const sdk = sdkByPerformerImageBasename(match.groups.sdk);
   if (!sdk) {
-    const supported = PREBUILT_PERFORMER_SDKS.map((s) => `${sdkPerformerImageBasename(s)} (${s.name})`).join(", ");
+    const supported = SDKS.map((s) => `${sdkPerformerImageBasename(s)} (${s.name})`).join(", ");
     return {
       error:
         `Unknown SDK "${match.groups.sdk}" in performer image ${JSON.stringify(image)}.` +
         ` Supported image prefixes: ${supported}.`,
-    };
-  }
-  if (!sdkPublishesPerformerImage(sdk)) {
-    return {
-      error:
-        `Only the JVM SDKs (java, scala, kotlin), C++ (cxx), .NET (dotnet), Go, Ruby, Rust and the` +
-        ` Analytics SDKs for Java (columnar-java, analytics-java) publish prebuilt performer images,` +
-        ` and ${sdk.name} (${sdk.value}) does not. Pick one of those SDKs.`,
     };
   }
   return { sdk, tag: match.groups.tag };

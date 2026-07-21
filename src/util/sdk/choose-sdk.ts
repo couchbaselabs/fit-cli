@@ -8,21 +8,20 @@
  */
 import { qualifyPromptId, select } from "../non-fit/prompts.js";
 import { isMain, runCli } from "../non-fit/cli.js";
-import { ANALYTICS_FUNCTIONAL_SDKS, OPERATIONAL_PREBUILT_SDKS, sdkByValue, type Sdk, type SdkValue } from "./sdks.js";
+import { ANALYTICS_FUNCTIONAL_SDKS, OPERATIONAL_SDKS, sdkByValue, type Sdk, type SdkValue } from "./sdks.js";
 
 export async function chooseSdk(
   message: string = "Which SDK do you want to test?",
   promptIdPrefix?: string,
 ): Promise<Sdk> {
-  // Only the operational JVM SDKs, .NET and C++ publish prebuilt performer images,
-  // and fit-cli only runs performers from prebuilt images, so they're the only
-  // choices offered here. (Columnar SDKs are chosen via their own columnar flow.)
+  // Only the operational SDKs are offered here; the Analytics SDKs are chosen via
+  // their own analytics-functional flow.
   const value = await select<SdkValue>({
     promptId: qualifyPromptId("sdk.choose", promptIdPrefix),
-    message: `${message} (only SDKs that publish prebuilt performer images are supported)`,
-    choices: OPERATIONAL_PREBUILT_SDKS.map((sdk) => ({ name: sdk.name, value: sdk.value })),
+    message,
+    choices: OPERATIONAL_SDKS.map((sdk) => ({ name: sdk.name, value: sdk.value })),
   });
-  // The selected value always comes from OPERATIONAL_PREBUILT_SDKS, so this is never undefined.
+  // The selected value always comes from OPERATIONAL_SDKS, so this is never undefined.
   return sdkByValue(value)!;
 }
 

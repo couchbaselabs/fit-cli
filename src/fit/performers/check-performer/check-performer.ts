@@ -11,7 +11,7 @@
  */
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { fitCliError } from "../../../util/non-fit/fit-cli-log.js";
-import { PREBUILT_PERFORMER_SDKS, sdkByValue, type Sdk } from "../../../util/sdk/sdks.js";
+import { SDKS, sdkByValue, type Sdk } from "../../../util/sdk/sdks.js";
 import { createLocalFitExecutionContext, type FitExecutionContext } from "../../shared/util/remote-fit-run.js";
 import { performerImageName } from "../util/performer-image.js";
 
@@ -111,7 +111,7 @@ if (isMain(import.meta.url)) {
     const sdk = value ? sdkByValue(value) : undefined;
     const version = positionals[1];
     if (!sdk) {
-      const values = PREBUILT_PERFORMER_SDKS.map((s) => s.value).join(" | ");
+      const values = SDKS.map((s) => s.value).join(" | ");
       console.error(
         `Usage: tsx src/fit/performers/check-performer/check-performer.ts <${values}> [tag]`,
       );

@@ -12,10 +12,9 @@ import { fitCliWarn, runScriptPrefix } from "../../../util/non-fit/fit-cli-log.j
 import type { RunOutput, Detail } from "../../../util/non-fit/artifacts.js";
 import { resolveGithubToken } from "../../util/config.js";
 import {
-  PREBUILT_PERFORMER_SDKS,
+  SDKS,
   sdkByPerformerImageBasename,
   sdkByValue,
-  sdkPublishesPerformerImage,
   type Sdk,
 } from "../../../util/sdk/sdks.js";
 import {
@@ -45,19 +44,13 @@ const VERSIONS_PER_TAG_FETCH_MULTIPLIER = 4;
 export function resolvePerformerListSdks(arg?: string): Sdk[] | { error: string } {
   const trimmed = arg?.trim();
   if (!trimmed) {
-    return [...PREBUILT_PERFORMER_SDKS];
+    return [...SDKS];
   }
 
   const sdk = sdkByValue(trimmed) ?? sdkByPerformerImageBasename(trimmed);
   if (!sdk) {
-    const supported = PREBUILT_PERFORMER_SDKS.map((s) => s.value).join(", ");
-    return { error: `Unknown SDK "${trimmed}". SDKs with prebuilt performer images: ${supported}.` };
-  }
-  if (!sdkPublishesPerformerImage(sdk)) {
-    const supported = PREBUILT_PERFORMER_SDKS.map((s) => s.value).join(", ");
-    return {
-      error: `${sdk.name} (${sdk.value}) does not publish a prebuilt performer image. Pick one of: ${supported}.`,
-    };
+    const supported = SDKS.map((s) => s.value).join(", ");
+    return { error: `Unknown SDK "${trimmed}". Supported SDKs: ${supported}.` };
   }
   return [sdk];
 }
@@ -131,7 +124,7 @@ export async function listPerformerContainers(arg: string | undefined, limit: nu
 }
 
 function helpText(): string {
-  const sdks = PREBUILT_PERFORMER_SDKS.map((s) => s.value).join(", ");
+  const sdks = SDKS.map((s) => s.value).join(", ");
   return `List the prebuilt performer container images published to GHCR for an SDK.
 
 Usage:
