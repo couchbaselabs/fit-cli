@@ -56,8 +56,6 @@ test("createLocalFitExecutionContext builds local docker run args with host-gate
 test("remotePerformerArgs add the host-gateway alias and publish the performer port", () => {
   assert.deepEqual(remotePerformerArgs("performer-node-main", 8060), [
     "run",
-    "--platform",
-    "linux/amd64",
     "--detach",
     "--add-host",
     "host.docker.internal:host-gateway",
