@@ -140,7 +140,8 @@ test("interactive mode writes prompt responses to a log file", async () => {
 });
 
 test("interactive mode is the default outside definition runs", async () => {
-  const session = PromptSession.fromArgv([]);
+  // Empty env, not the ambient one: CI sets CI=true, which forces non-interactive.
+  const session = PromptSession.fromArgv([], {}, { env: {} });
 
   const response = await session.resolvePrompt(
     "fit.grpc.build-now",
