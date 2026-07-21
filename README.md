@@ -114,6 +114,8 @@ User-facing (using the installed binary):
 - `fit performer metadata <sdk> [version]` — pull a performer image and print all its metadata: Docker image labels (build time, revision, source, PR, CI run) and everything it reports over the `performerCapsFetch` gRPC call (user agent, library version, transactions protocol, and every capability).
 - `fit caps table | sync` — show which FIT capabilities each SDK's performer reports (see Capabilities).
 - `fit ingest situational` drains the situational results uploaded to `s3://fit-cli/incoming/` into the perf Postgres database, moving each run to `processed/` or `failed/`. A run is only taken once it holds a `.done` marker, which the uploader writes as the last object of the run, so a half-uploaded run is never read. Meant for the cron on the database host, which connects as the `results_ingester` role and reads its password from the AWS Secrets Manager secret `performance-sdk/results-ingester` using its own IAM role (see `--help`).
+- `fit external-services otel start | stop` — start or stop the local otel stack (an OTel collector, Jaeger and Prometheus) for manual testing. A functional `fit run` already does this automatically.
+- `fit external-services otel replay <dump-dir>` — bring the Jaeger and Prometheus UIs back up over a finished run's traces and metrics.
 
 For development (from source with Bun):
 - `bun run typecheck` — type-check without emitting.

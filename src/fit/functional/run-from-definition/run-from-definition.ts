@@ -98,6 +98,8 @@ import {
 import type { PieceData } from "../../../util/non-fit/config-pieces.js";
 import { generateFitConfiguration } from "../../shared/fit-configuration/generate-fit-configuration.js";
 import { resourceCreationPiece, type ClusterCreatingConfig } from "../util/build-fit-configuration.js";
+import { EXTERNAL_SERVICES } from "../../external-services/registered-external-services.js";
+import { externalServicesConfigPiece, findExternalService, stopExternalServices, type ExternalService, type ExternalServiceHandle } from "../../external-services/external-service.js";
 import { generateSituationalConfiguration } from "../../situational/configuration/generate-situational-configuration.js";
 import { RESULTS_BUCKET, uploadSituationalResults } from "../../situational/upload-results/upload-results.js";
 import { artifactUploadEnabled } from "../../util/aws/upload-run-artifacts.js";
@@ -143,11 +145,6 @@ import {
   STANDARD_QE_REBALANCE_CLASS,
   type FitTestSelection,
 } from "../../shared/select-fit-tests/select-fit-tests.js";
-import {
-  checkObservabilityCollectorConnectivity,
-  OBSERVABILITY_COLLECTOR_HOST,
-  OBSERVABILITY_COLLECTOR_PORT,
-} from "../util/check-observability-collector.js";
 import {
   detectClusterDockerEnvironment,
   runPerformerClusterSanityCheck,
@@ -793,6 +790,7 @@ export async function runTests(
   dependencies: RunTestsDependencies = {},
   clusterVersion?: string,
   instanceKind: "aws" | "gcp" | "localhost" = execution.kind === "remote" ? "aws" : "localhost",
+  externalServices: readonly ExternalServiceHandle[] = [],
 ): Promise<RunOutput> {
   if (!run.cluster) {
     fitCliWarn(missingClusterMessage(clusterMode));
@@ -843,6 +841,10 @@ export async function runTests(
       `→ Enabling cluster-creating functional tests (cbdinocluster=${cbdinoclusterPath}, version=${version}).`,
     );
     effectiveFitConfig = withClusterCreating(run.fitConfig, { cbdinoclusterPath, version });
+  }
+  if (externalServices.length > 0) {
+    const piece = effectiveFitConfig?.config ?? {};
+    effectiveFitConfig = { ...effectiveFitConfig, config: { ...piece, ...externalServicesConfigPiece(EXTERNAL_SERVICES, externalServices) } };
   }
 
   const fitConfig = generateFitConfigurationFn(
@@ -1305,10 +1307,12 @@ interface IterationInputs {
   functionalClusterVersion?: string;
   existingPerformer?: RunningPerformer;
   instanceKind?: "aws" | "gcp" | "localhost";
+  /** The box's active external services (e.g. otel), if any were started for this box. */
+  externalServices?: readonly ExternalServiceHandle[];
 }
 
 async function runIteration(inputs: IterationInputs): Promise<{ output: RunOutput; performer?: RunningPerformer }> {
-  const { execution, functionalClusterMode, fitPerformerGerritRef, run, setupPerformerPhase, savedState, globalIterationIndex, definitionPath, recordResult, situationalRunId, functionalClusterVersion, existingPerformer, instanceKind } = inputs;
+  const { execution, functionalClusterMode, fitPerformerGerritRef, run, setupPerformerPhase, savedState, globalIterationIndex, definitionPath, recordResult, situationalRunId, functionalClusterVersion, existingPerformer, instanceKind, externalServices = [] } = inputs;
   const artifacts: Artifact[] = [];
   const details: Detail[] = [];
 
@@ -1339,7 +1343,7 @@ async function runIteration(inputs: IterationInputs): Promise<{ output: RunOutpu
       output = await runSituationalTests(execution, run, { recordResult, situationalRunId }, instanceKind);
     } else {
       const clusterMode: ResolvedFunctionalExecutionGroup["clusterMode"] = functionalClusterMode ?? "useExisting";
-      output = await runTests(execution, clusterMode, run, performer, { recordResult }, functionalClusterVersion, instanceKind);
+      output = await runTests(execution, clusterMode, run, performer, { recordResult }, functionalClusterVersion, instanceKind, externalServices);
     }
   } catch (err) {
     // When we started this performer ourselves and a FatalToSession error escapes, stop
@@ -1537,6 +1541,8 @@ interface TeardownInputs {
   capellaKeyPool?: { cbdinoclusterCommand: string };
   performers: readonly RunningPerformer[];
   performerStates: readonly ResumePerformerState[];
+  /** The box's active external services (e.g. otel), if any were started for this box. */
+  externalServices: readonly ExternalServiceHandle[];
   /** Per-run pass/fail outcomes so far, shown as a summary before the leave-up prompt. */
   results: readonly RunResultSummary[];
   cbcollect?: boolean;
@@ -1627,19 +1633,21 @@ async function disposeGroupClusterAndPerformers(
 
 /**
  * Tear down a single execution group's resources without prompting: stop its performers,
- * remove a cluster it allocated, and terminate an instance fit-cli provisioned for
- * it. Used at the end of the last execution group sharing a box (when it isn't the
- * one we might leave up for debugging).
+ * remove a cluster it allocated, stop any external services (e.g. otel), and terminate an
+ * instance fit-cli provisioned for it. Used at the end of the last execution group sharing 
+ * a box (when it isn't the one we might leave up for debugging).
  */
 async function disposeCycleResources(
   execution: FitExecutionContext | undefined,
   teardown: ExecutionTargetTeardown,
   clusterState: ResumeClusterState | undefined,
   performers: readonly RunningPerformer[],
+  externalServices: readonly ExternalServiceHandle[],
   cbcollect = false,
   capellaKeyPool?: { cbdinoclusterCommand: string },
-): Promise<void> {
+): Promise<RunOutput> {
   await disposeGroupClusterAndPerformers(execution, clusterState, performers, cbcollect);
+  const stopped = await stopExternalServices(execution, EXTERNAL_SERVICES, externalServices);
   // The box goes next, so the pool has to go first.
   if (execution) {
     await removeCapellaKeyPool(clusterState, capellaKeyPool, execution);
@@ -1647,6 +1655,7 @@ async function disposeCycleResources(
   if (teardown.terminate) {
     await terminateInstanceWithGuidance(teardown);
   }
+  return stopped;
 }
 
 /**
@@ -1728,13 +1737,29 @@ function printRunResultsTables(results: readonly RunResultSummary[]): void {
  * otherwise stop the performers, remove an allocated cluster, and terminate an
  * instance fit-cli provisioned. The execution context may be absent (the run
  * failed before it came up); only the instance is then up to leave or terminate.
+ *
+ * Unless everything is being left up, every active external service is always dumped
+ * and stopped — including when there was nothing to leave up at all — and the dump's
+ * artifacts and details are returned so they reach the run's output.
  */
-async function teardownRun(inputs: TeardownInputs): Promise<{ leftUp: boolean }> {
-  const { definitionPath, runDir, executionGroupIndex, runIndex, resumePath, execution, teardown, forceLocalhost, forceAws, clusterState, capellaKeyPool, performers, performerStates, results, cbcollect = false, promptScope, situationalRunId } = inputs;
+export async function teardownRun(
+  inputs: TeardownInputs,
+  overrides: { stopExternalServiceFn?: ExternalService["stop"] } = {},
+): Promise<{ leftUp: boolean; output: RunOutput }> {
+  const { definitionPath, runDir, executionGroupIndex, runIndex, resumePath, execution, teardown, forceLocalhost, forceAws, clusterState, capellaKeyPool, performers, performerStates, externalServices, results, cbcollect = false, promptScope, situationalRunId } = inputs;
+  const stopExternalServicesForThisRun = (): Promise<RunOutput> =>
+    stopExternalServices(execution, EXTERNAL_SERVICES, externalServices, overrides.stopExternalServiceFn);
 
   const nothingToLeaveUp = !teardown.terminate && !clusterState && performerStates.length === 0;
   if (nothingToLeaveUp) {
-    return { leftUp: false };
+    // Nothing to leave up, so nothing worth a prompt — but an active external service
+    // still has to be dumped and stopped. This branch is reached by exactly the runs
+    // whose traces and metrics someone will want: a failure can leave no instance,
+    // cluster or performer behind (a pre-existing cluster allocates nothing, and a
+    // performer fit-cli started is already stopped by the FatalToSession path) while
+    // the service is still up. Returning early without dumping leaked the containers
+    // and lost the only record of what they collected.
+    return { leftUp: false, output: await stopExternalServicesForThisRun() };
   }
 
   // The run is over (this is the only teardown, run from the outer finally). Make
@@ -1805,20 +1830,34 @@ async function teardownRun(inputs: TeardownInputs): Promise<{ leftUp: boolean }>
         `\nResume after a manual fix with:\n  ${formatResumeCommand(lastSuggestion, resumeDefinitionPath, resumeSelectorFromPath(resumePath, true))}`,
       );
     }
+    if (externalServices.length > 0) {
+      // A service left running with no visible access is worthless for debugging.
+      for (const handle of externalServices) {
+        console.log(`\n${handle.service} left running on the box:`);
+        for (const line of findExternalService(EXTERNAL_SERVICES, handle).describeLeaveUp(handle)) {
+          console.log(`  ${line}`);
+        }
+      }
+      if (teardown.kind === "remote") {
+        console.log(`  (these are only reachable from the box itself — use the debug access command below, or an SSM port-forwarding session, to reach them from here)`);
+      }
+    }
     if (teardown.terminate && teardown.instanceId) {
       fitCliWarn(`\nInstance ${teardown.instanceId} is still running — remember to terminate it when done.`);
       console.log(`\nDebug access:\n  ${debugAccessCommandFor(teardown)}`);
       console.log(`\nTerminate it with:\n  ${terminateCommandFor(teardown)}`);
     }
-    return { leftUp: true };
+    return { leftUp: true, output: { artifacts: [], details: [] } };
   }
 
   // Performer and cluster cleanup need the context; skipped if it never came up.
+  let externalServicesOutput: RunOutput = { artifacts: [], details: [] };
   if (execution) {
     for (const performer of performers) {
       await stopManagedPerformer(execution, performer);
     }
     popLogContext("performer", "run");
+    externalServicesOutput = await stopExternalServicesForThisRun();
     if (clusterState?.allocated && clusterState.clusterId && clusterState.cbdinoclusterCommand) {
       if (clusterState.logsDir && cbcollect) {
         await collectClusterLogsIfSupported(clusterState, execution);
@@ -1836,7 +1875,7 @@ async function teardownRun(inputs: TeardownInputs): Promise<{ leftUp: boolean }>
   if (teardown.terminate) {
     await terminateInstanceWithGuidance(teardown);
   }
-  return { leftUp: false };
+  return { leftUp: false, output: externalServicesOutput };
 }
 
 /**
@@ -2181,6 +2220,13 @@ export async function runFromDefinition(
   // box is shared, activeExecution/activeTeardown persist across cycles;
   // currentBoxInstanceIndex says which definition instance that box belongs to.
   let activeExecution: FitExecutionContext | undefined;
+  // The registered external services (currently just otel: collector/Jaeger/Prometheus)
+  // for the current box. Started lazily the first time a functional group runs on it
+  // (see the group.type === "functional" block below), reused across every
+  // later functional group sharing the box, and stopped at exactly the same
+  // sites the box itself is torn down — never in disposeGroupClusterAndPerformers,
+  // which keeps the box up for the next group.
+  let activeExternalServices: ExternalServiceHandle[] = [];
   // Keeps the box's AWS credentials current for the whole run. Credentials assumed from a
   // temporary identity (SSO, instance profile, an already-assumed role) are capped at 1h, so
   // a multi-hour situational/PE suite outlives its own credentials without this. Restarted
@@ -2296,21 +2342,21 @@ export async function runFromDefinition(
       const cyclePerformerStates: ResumePerformerState[] = [];
 
       try {
-        // Functional observability tests (ClusterLabelsTest, GetOrNullObservabilityTest,
-        // etc.) send traces/metrics to a shared collector and then poll it back; if it's
-        // unreachable from wherever the tests actually run, every one of those tests only
-        // discovers that after burning its full 60s-per-assertion retry budget. Check from
-        // the box itself (local or remote) so this fails in seconds instead.
-        if (group.type === "functional") {
-          console.log(`\nChecking observability collector connectivity from the ${execution.kind === "remote" ? "remote instance" : "local machine"}...`);
-          if (!(await checkObservabilityCollectorConnectivity((cmd, args) => execution.capture(cmd, args)))) {
-            throwFatalToCluster(
-              `Cannot reach the observability collector at ${OBSERVABILITY_COLLECTOR_HOST}:${OBSERVABILITY_COLLECTOR_PORT} ` +
-                `from the ${execution.kind === "remote" ? "remote instance" : "local machine"}. Functional observability ` +
-                `tests will hang until they time out if it's unreachable.`,
-            );
+        // Functional observability tests send traces/metrics to a collector and then
+        // poll it back. fit-cli spins up its own ephemeral external services (otel:
+        // collector/Jaeger/Prometheus) for this box (replacing the old shared
+        // performance-sdk.couchbase.com box) — start them once per box, before any
+        // functional group needs them, so a broken stack fails fast here instead of
+        // 60s-per-assertion into the test run.
+        if (group.type === "functional" && activeExternalServices.length === 0) {
+          for (const service of EXTERNAL_SERVICES) {
+            console.log(`\nStarting ${service.name} on ${execution.description}...`);
+            const handle = await service.start(execution, instanceRunDir(group.path), loadEnvironments().externalServices);
+            activeExternalServices.push(handle);
+            artifacts.push(...handle.artifacts);
+            instanceDetails.push(...handle.details);
+            console.log(`  ✓ ${service.name} is up.`);
           }
-          console.log(`  ✓ Reached ${OBSERVABILITY_COLLECTOR_HOST}.`);
         }
 
         if (group.type === "functional") {
@@ -2544,6 +2590,7 @@ export async function runFromDefinition(
               functionalClusterVersion: clusterVersionLabel(activeCycle),
               existingPerformer: sessionPerformer,
               instanceKind: activeCycle.instance.kind,
+              externalServices: activeExternalServices,
             });
             artifacts.push(...output.artifacts);
             details.push(...output.details);
@@ -2633,8 +2680,11 @@ export async function runFromDefinition(
             activePerformerStates = [];
           } else {
             // The next group stands up its own box: tear this whole box down.
-            await disposeCycleResources(execution, cycleTeardown, clusterState, cyclePerformers, cbcollect, capellaKeyPool);
+            const disposed = await disposeCycleResources(execution, cycleTeardown, clusterState, cyclePerformers, activeExternalServices, cbcollect, capellaKeyPool);
+            artifacts.push(...disposed.artifacts);
+            details.push(...disposed.details);
             activeExecution = undefined;
+            activeExternalServices = [];
             activeTeardown = { kind: "local" };
             currentBoxInstanceIndex = undefined;
             activeClusterState = undefined;
@@ -2662,9 +2712,13 @@ export async function runFromDefinition(
         activePerformerStates = cyclePerformerStates;
       } else if (isLastGroupOnBox) {
         // Last group on this box, but more groups follow on a fresh box: tear the
-        // whole box down — its cluster, performers and the instance itself.
-        await disposeCycleResources(execution, cycleTeardown, clusterState, cyclePerformers, cbcollect, capellaKeyPool);
+        // whole box down — its cluster, performers, external services and the
+        // instance itself.
+        const disposed = await disposeCycleResources(execution, cycleTeardown, clusterState, cyclePerformers, activeExternalServices, cbcollect, capellaKeyPool);
+        artifacts.push(...disposed.artifacts);
+        details.push(...disposed.details);
         activeExecution = undefined;
+        activeExternalServices = [];
         activeTeardown = { kind: "local" };
         currentBoxInstanceIndex = undefined;
         activeClusterState = undefined;
@@ -2713,7 +2767,7 @@ export async function runFromDefinition(
       details.push({ label: "AWS credential refresh", value: message, callToAction: true });
       tracker.record("NonFatal", message, activeResumePath ? failureContextFromPath(activeResumePath) : { instanceIndex: 0 });
     }
-    const { leftUp } = await teardownRun({
+    const { leftUp, output: teardownOutput } = await teardownRun({
       definitionPath,
       runDir,
       executionGroupIndex: activeCycleIndex,
@@ -2728,10 +2782,13 @@ export async function runFromDefinition(
       performers: activePerformers,
       performerStates: activePerformerStates,
       situationalRunId,
+      externalServices: activeExternalServices,
       results: runResults,
       cbcollect,
       ...(promptScope ? { promptScope } : {}),
     });
+    artifacts.push(...teardownOutput.artifacts);
+    details.push(...teardownOutput.details);
     if (leftUp) {
       details.push(...instanceDetails);
     }

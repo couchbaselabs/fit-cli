@@ -8,6 +8,7 @@ import type { ClusterCommandExecutor } from "../../../../cluster/cluster-create/
 import type { SelectedCluster } from "../../../../cluster/cluster-select/cluster-select.js";
 import type { ResolvedFunctionalExecutionGroup, ResolvedSituationalExecutionRun } from "../../../shared/definition/resolve-definition.js";
 import type { FitExecutionContext } from "../../../shared/util/remote-fit-run.js";
+import type { OtelContainerHandle, OtelStackHandle } from "../../../external-services/otel/start/start-otel-stack.js";
 import {
   cbdinoclusterSetupFailed,
   finalizeRunFromDefinition,
@@ -16,6 +17,7 @@ import {
   scopedPromptId,
   setupCluster,
   situationalCbdinoSettings,
+  teardownRun,
   testFailureFacts,
 } from "../run-from-definition.js";
 import { formatRunLabel } from "../../../shared/util/run-labels.js";
@@ -410,6 +412,44 @@ function situationalRun(overrides: Partial<ResolvedSituationalExecutionRun> = {}
   };
 }
 
+function otelStackHandle(): OtelStackHandle {
+  const container = (name: string): OtelContainerHandle => ({
+    containerId: `${name}-container`,
+    logFile: `/tmp/run/instances/0/otel/${name}.log`,
+    logStream: { drain: () => Promise.resolve() },
+  });
+  return {
+    service: "otel",
+    collector: container("collector"),
+    jaeger: container("jaeger"),
+    prometheus: container("prometheus"),
+    endpoints: {
+      collector: { otlpGrpc: "http://host.docker.internal:4317", otlpHttp: "http://host.docker.internal:4318" },
+      jaeger: { queryGrpc: "localhost:16685" },
+      prometheus: { baseUrl: "http://localhost:9090" },
+    },
+    artifacts: [],
+    details: [],
+  };
+}
+
+function teardownInputs(overrides: Partial<Parameters<typeof teardownRun>[0]> = {}): Parameters<typeof teardownRun>[0] {
+  return {
+    definitionPath: "/tmp/fit.json5",
+    executionGroupIndex: 0,
+    runIndex: 0,
+    execution: fitExecutionContext(),
+    teardown: { kind: "local" },
+    forceLocalhost: false,
+    forceAws: false,
+    performers: [],
+    performerStates: [],
+    externalServices: [],
+    results: [],
+    ...overrides,
+  };
+}
+
 test("a situational run's label names the cluster its test-driver will create, by version", () => {
   // A situational run has no cluster in the definition, so without the version the two runs of a
   // release preset — same preset, one server version each — end up labelled identically.
@@ -435,4 +475,42 @@ test("a CNG situational run is labelled with CNG's pinned version, and isn't a C
 test("a fitConfig override of situational.cbdino.version is what the label reports", () => {
   const run = situationalRun({ version: "8.0", fitConfig: { config: { situational: { cbdino: { version: "8.0.2-5503" } } } } });
   assert.equal(runLabelParts("aws", undefined, run).clusterVersion, "8.0.2-5503");
+});
+
+// A run against a pre-existing cluster whose performer the failure path already stopped
+// leaves nothing to prompt about, and used to return before the external service was
+// dumped — leaking the containers and losing the run's traces and metrics, on exactly the
+// failing runs where they're wanted.
+test("teardownRun dumps and stops every active external service even when there is nothing to leave up", async () => {
+  let stopped = 0;
+  const { leftUp, output } = await teardownRun(teardownInputs({ externalServices: [otelStackHandle()] }), {
+    stopExternalServiceFn: () => {
+      stopped++;
+      return Promise.resolve({
+        artifacts: [{ filename: "/tmp/run/instances/0/otel/metrics.json", explanation: "metrics" }],
+        details: [{ label: "Replay this run's traces/metrics", value: "fit external-services otel replay /tmp/run" }],
+      });
+    },
+  });
+
+  assert.equal(stopped, 1);
+  assert.equal(leftUp, false);
+  // The dump's artifacts and details have to reach the caller, or the replay command
+  // never makes it into the run's output.
+  assert.deepEqual(output.artifacts.map((a) => a.filename), ["/tmp/run/instances/0/otel/metrics.json"]);
+  assert.deepEqual(output.details.map((d) => d.label), ["Replay this run's traces/metrics"]);
+});
+
+test("teardownRun has nothing to stop when the run never started an external service", async () => {
+  let stopped = 0;
+  const { leftUp, output } = await teardownRun(teardownInputs(), {
+    stopExternalServiceFn: () => {
+      stopped++;
+      return Promise.resolve({ artifacts: [], details: [] });
+    },
+  });
+
+  assert.equal(stopped, 0);
+  assert.equal(leftUp, false);
+  assert.deepEqual(output, { artifacts: [], details: [] });
 });
