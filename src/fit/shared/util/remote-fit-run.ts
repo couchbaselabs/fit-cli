@@ -98,7 +98,7 @@ export interface FitExecutionContext {
   collectJunitArtifacts(sourceDir: string, path: DefinitionRunPath): Promise<Artifact[]>;
   pathExists(path: string): Promise<boolean>;
   commandAvailable(command: string): Promise<boolean>;
-  performerRunArgs(imageName: string, hostPort?: number, dockerNetwork?: string): string[];
+  performerRunArgs(imageName: string, hostPort?: number): string[];
 }
 
 export function remoteFitRootDir(user: string = FIT_INSTANCE_USER): string {
@@ -345,14 +345,12 @@ export function backgroundShellCommand(command: string, path: string): string {
 export function remotePerformerArgs(
   imageName: string,
   hostPort: number = DEFAULT_PERFORMER_PORT,
-  dockerNetwork?: string,
 ): string[] {
   return [
     "run",
     "--detach",
     "--add-host",
     REMOTE_DOCKER_HOST_ALIAS,
-    ...(dockerNetwork ? ["--network", dockerNetwork] : []),
     "--publish",
     `${hostPort}:${DEFAULT_PERFORMER_PORT}`,
     "--env",
@@ -430,14 +428,13 @@ export function createLocalFitExecutionContext(): FitExecutionContext {
     // Performer images are only published for linux/amd64; pin the platform explicitly
     // so Docker pulls/runs it under emulation on an Arm host instead of erroring with
     // "no matching manifest" (a no-op on a native amd64 host).
-    performerRunArgs: (imageName, hostPort = DEFAULT_PERFORMER_PORT, dockerNetwork) => [
+    performerRunArgs: (imageName, hostPort = DEFAULT_PERFORMER_PORT) => [
       "run",
       "--platform",
       "linux/amd64",
       "--detach",
       "--add-host",
       REMOTE_DOCKER_HOST_ALIAS,
-      ...(dockerNetwork ? ["--network", dockerNetwork] : []),
       "--publish",
       `${hostPort}:${DEFAULT_PERFORMER_PORT}`,
       "--env",

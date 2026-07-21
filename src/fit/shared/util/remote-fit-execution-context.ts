@@ -323,8 +323,7 @@ export async function createRemoteFitExecutionContext(
         .capture("sh", ["-lc", `command -v ${posixQuote(command)} >/dev/null && printf yes || printf no`], undefined, { quiet: true })
         .then((output) => output.trim() === "yes")
         .catch(() => false),
-    performerRunArgs: (imageName, hostPort = DEFAULT_PERFORMER_PORT, dockerNetwork) =>
-      remotePerformerArgs(imageName, hostPort, dockerNetwork),
+    performerRunArgs: (imageName, hostPort = DEFAULT_PERFORMER_PORT) => remotePerformerArgs(imageName, hostPort),
   };
 }
 

@@ -31,18 +31,14 @@ test("checkBuildAndRunPerformerArgs publishes a custom host port for tagged imag
   ]);
 });
 
-test("checkBuildAndRunPerformerArgs can attach the performer to a Docker network", () => {
+test("checkBuildAndRunPerformerArgs leaves the performer on the default Docker network", () => {
   const sdk = sdkByValue("cpp");
   assert.ok(sdk);
-  assert.deepEqual(checkBuildAndRunPerformerArgs(sdk, undefined, DEFAULT_PERFORMER_PORT, "fit-net"), [
-    "run",
-    "--detach",
-    "--network",
-    "fit-net",
-    "--publish",
-    "8060:8060",
-    "ghcr.io/couchbase/cxx-fit-performer:main",
-  ]);
+  // --publish sets the port the test-driver reaches the performer on, and it does nothing on
+  // the ipvlan networks cbdinocluster puts clusters on - so the performer should be left
+  // on the default network
+  const args = checkBuildAndRunPerformerArgs(sdk, undefined, DEFAULT_PERFORMER_PORT);
+  assert.ok(!args.includes("--network"), `expected no --network in ${args.join(" ")}`);
 });
 
 test("performerLogStem puts the normalized tag under the session path (numeric fallback)", () => {

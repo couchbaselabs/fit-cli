@@ -53,17 +53,14 @@ test("createLocalFitExecutionContext builds local docker run args with host-gate
   ]);
 });
 
-test("createLocalFitExecutionContext can attach the performer to a cluster Docker network", () => {
-  const execution = createLocalFitExecutionContext();
-  assert.deepEqual(execution.performerRunArgs("performer-node-main", 8060, "fit-net"), [
+test("remotePerformerArgs add the host-gateway alias and publish the performer port", () => {
+  assert.deepEqual(remotePerformerArgs("performer-node-main", 8060), [
     "run",
     "--platform",
     "linux/amd64",
     "--detach",
     "--add-host",
     "host.docker.internal:host-gateway",
-    "--network",
-    "fit-net",
     "--publish",
     "8060:8060",
     "--env",
@@ -72,20 +69,17 @@ test("createLocalFitExecutionContext can attach the performer to a cluster Docke
   ]);
 });
 
-test("remotePerformerArgs add the host-gateway alias and can join a Docker network", () => {
-  assert.deepEqual(remotePerformerArgs("performer-node-main", 8060, "fit-net"), [
-    "run",
-    "--detach",
-    "--add-host",
-    "host.docker.internal:host-gateway",
-    "--network",
-    "fit-net",
-    "--publish",
-    "8060:8060",
-    "--env",
-    "LOG_LEVEL=debug",
-    "performer-node-main",
-  ]);
+test("performer run args never join another Docker network, so the published port keeps working", () => {
+  // The test-driver is a host process dialling localhost:<port>, so it depends on the
+  // publish. Joining a cluster's network silently breaks it: --publish does nothing on
+  // the ipvlan networks cbdinocluster uses.
+  for (const args of [
+    remotePerformerArgs("performer-node-main", 18060),
+    createLocalFitExecutionContext().performerRunArgs("performer-node-main", 18060),
+  ]) {
+    assert.ok(!args.includes("--network"), `expected no --network in ${args.join(" ")}`);
+    assert.ok(args.includes("18060:8060"), `expected the port to be published in ${args.join(" ")}`);
+  }
 });
 
 test("pathPrefixedCommand exports PATH before running the command", () => {

@@ -75,17 +75,50 @@ function performerLogFile(path: DefinitionRunPath, sdk: Sdk, version?: string): 
   return createLogFile(performerLogStem(path, sdk, version));
 }
 
+/**
+ * Attach an already running performer to the cluster's Docker network, so it can
+ * reach the cluster's containers.
+ *
+ * This is deliberately a second step rather than a `--network` on `docker run`,
+ * because `--network` replaces the default bridge rather than adding to it, and
+ * the published port the test-driver connects on only exists if the container has
+ * a bridge endpoint. If `--network` is set to the cluster's network instead,
+ * the port set by `--publish` is not reachable by the driver. Starting on the default
+ * bridge and attaching to the cluster's network afterwards leaves the container on both,
+ * with the port binding intact.
+ */
+async function connectPerformerToClusterNetwork(
+  execution: FitExecutionContext,
+  dockerNetwork: string,
+  containerId: string,
+): Promise<boolean> {
+  const args = ["network", "connect", dockerNetwork, containerId];
+  console.log(
+    `\n→ Attaching the performer to Docker network ${dockerNetwork} so it can reach the cluster ` +
+      `(its published port stays on the default network):\n  docker ${args.join(" ")}\n`,
+  );
+  try {
+    await execution.run(execution.dockerCommand, args);
+    console.log(`✓ Attached the performer to ${dockerNetwork}`);
+    return true;
+  } catch (err) {
+    console.error(
+      `\n✗ Couldn't attach the performer to Docker network ${dockerNetwork}, so it won't be able to ` +
+        `reach the cluster: ${(err as Error).message}`,
+    );
+    return false;
+  }
+}
+
 /** Build the docker args needed to run a performer locally for FIT. */
 export function checkBuildAndRunPerformerArgs(
   sdk: Sdk,
   version?: string,
   hostPort: number = DEFAULT_PERFORMER_PORT,
-  dockerNetwork?: string,
 ): string[] {
   return [
     "run",
     "--detach",
-    ...(dockerNetwork ? ["--network", dockerNetwork] : []),
     "--publish",
     `${hostPort}:${DEFAULT_PERFORMER_PORT}`,
     performerImageName(sdk, version),
@@ -102,6 +135,9 @@ export function checkBuildAndRunPerformerArgs(
  *   {@link DEFAULT_PERFORMER_PORT}. The container always listens on
  *   {@link DEFAULT_PERFORMER_PORT} internally; this is the published host port
  *   that test-driver connects to.
+ * @param dockerNetwork The cluster's Docker network, which the performer is
+ *   attached to, in addition to the default bridge network. See
+ *   {@link connectPerformerToClusterNetwork} for why the order matters.
  */
 export async function checkBuildAndRunPerformer(
   execution: FitExecutionContext,
@@ -168,15 +204,18 @@ export async function checkBuildAndRunPerformer(
   }
 
   const imageName = performerImageName(sdk, version);
-  if (dockerNetwork) {
-    console.log(`\n→ Starting the performer on Docker network ${dockerNetwork} so it can reach the cluster container.`);
-  }
-  const args = execution.performerRunArgs(imageName, hostPort, dockerNetwork);
+  const args = execution.performerRunArgs(imageName, hostPort);
   console.log(`\nStarting performer with:\n  docker ${args.join(" ")}\n`);
 
   try {
     const containerId = (await execution.capture(execution.dockerCommand, args)).trim();
     console.log(`\n✓ Started the ${sdk.name} performer in container ${containerId}`);
+
+    if (dockerNetwork && !(await connectPerformerToClusterNetwork(execution, dockerNetwork, containerId))) {
+      await execution.run(execution.dockerCommand, ["rm", "--force", containerId]).catch(() => {});
+      return undefined;
+    }
+
     const logFile = performerLogFile(path, sdk, version);
     const targetLogFile = execution.targetFilePath(logFile);
     const logStream = await execution.streamToArtifactFileInBackground(
