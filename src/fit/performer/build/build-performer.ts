@@ -22,11 +22,15 @@ export interface PerformerBuildFamily {
   workflow: string;
 }
 
-// Only the JVM SDKs (Java, Scala, Kotlin) plus the Java Columnar performer are built
-// this way today, all from couchbase-jvm-clients' single matrixed workflow. Add
-// entries here as other repos grow an equivalent workflow.
+// The JVM SDKs (Java, Scala, Kotlin) plus the Java Columnar performer are built from
+// couchbase-jvm-clients' single matrixed workflow. analytics-dotnet builds from its
+// own repo's publish workflow. Add entries here as other repos grow an equivalent
+// workflow. Each workflow must set `run-name: ${{ inputs.ref }}` (so pickDispatchedRun
+// can match the run by its ref) and name its build job(s) `publish (<sdk>)` (so
+// summariseBuildJobs can map each back to an SDK — see parseMatrixJobSdk).
 export const PERFORMER_BUILD_FAMILIES: readonly PerformerBuildFamily[] = [
   { value: "jvm", repo: "couchbase/couchbase-jvm-clients", workflow: "build-fit-performer.yml" },
+  { value: "analytics-dotnet", repo: "couchbase/analytics-dotnet-client", workflow: "publish-fit-performer.yml" },
 ];
 
 export function performerBuildFamilyByValue(value: string): PerformerBuildFamily | undefined {

@@ -21,18 +21,20 @@ export const SDKS = [
   // Analytics SDKs — tested via the columnar-test-driver (`analytics-functional`
   // runs). Two families exist: "Columnar SDK" (recommended for Capella Analytics) and
   // "Enterprise Analytics SDK" (recommended for Enterprise Analytics + a load balancer).
-  // Two prebuilt performer images are published, both JVM-style under
-  // couchbase/couchbase-jvm-clients:
-  //   - columnar-java (family "columnar"):
+  // Prebuilt performer images published so far:
+  //   - columnar-java (family "columnar"), JVM, from couchbase/couchbase-jvm-clients:
   //     https://github.com/couchbase/couchbase-jvm-clients/pkgs/container/columnar-java-fit-performer
-  //   - analytics-java (family "enterprise-analytics"):
+  //   - analytics-java (family "enterprise-analytics"), JVM, from couchbase/couchbase-jvm-clients:
   //     https://github.com/couchbase/couchbase-jvm-clients/pkgs/container/analytics-java-fit-performer
+  //   - analytics-dotnet (family "enterprise-analytics"), from couchbase/analytics-dotnet-client:
+  //     https://github.com/orgs/couchbase/packages/container/package/analytics-dotnet-fit-performer
   // The Go/Node/Python columnar+analytics performers in transactions-fit-performer are
   // not published. Add entries here as more images ship.
   // Enterprise Analytics SDK first — it's the standard/recommended choice for the
   // (self-managed Enterprise Analytics) clusters fit-cli allocates; the Columnar SDK
   // is mainly for Capella Analytics or the odd cross-combination.
   { name: "Java Enterprise Analytics", value: "analytics-java", jvm: true, performer: "analytics/java", family: "enterprise-analytics" },
+  { name: ".NET Enterprise Analytics", value: "analytics-dotnet", jvm: false, performer: "analytics/dotnet", family: "enterprise-analytics" },
   { name: "Java Columnar", value: "columnar-java", jvm: true, performer: "columnar/java", family: "columnar" },
 ] as const;
 
