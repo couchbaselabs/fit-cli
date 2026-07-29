@@ -10,7 +10,8 @@
  * terminate it, so you can poke at it; tear it down with the printed command):
  *   bun src/fit/util/aws/fit-instance.ts
  */
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { artifactFromPath, type Artifact, type Detail } from "../../../util/non-fit/artifacts.js";
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
@@ -174,14 +175,26 @@ export async function provisionFitInstance(options: ProvisionOptions = {}): Prom
   const instancePathObj = { instanceIndex: instanceIdx, dirSegments: { instance: instanceLabel({ instanceIndex: instanceIdx }, "aws") } };
   const instanceDir = instanceRunDir(instancePathObj);
   mkdirSync(instanceDir, { recursive: true, mode: 0o700 });
-  // The SSH private key must NOT be uploaded: the whole run dir is collected into CI
-  // artifacts (public) and S3. Keep it in the per-instance _internal dir, which both
+  // The SSH private key should not be uploaded, in case the artifact ever ends up
+  // public (which it will not with the current setup).  The key is useless since the
+  // instance is removed before the end of the run, but it is not a good look to have
+  // keys in artifacts.
+  // Keep it in the per-instance _internal dir, which both
   // artifact sinks exclude. Local debug/resume tooling still finds it via the keyPath
   // recorded in ec2-instance.json.
-  const internalDir = instanceInternalRunDir(instancePathObj);
-  mkdirSync(internalDir, { recursive: true, mode: 0o700 });
-  const keyPath = join(internalDir, `${keyName}.pem`);
+
+  // In non-interactive (CI) runs we go further still and delete the key as part of
+  // standard flow to add a redundant layer that it doesn't end up in the artifact.
+  const keyIsEphemeral = !options.interactive;
+  const keyDir = keyIsEphemeral
+    ? mkdtempSync(join(tmpdir(), "fit-cli-key-"))
+    : instanceInternalRunDir(instancePathObj);
+  mkdirSync(keyDir, { recursive: true, mode: 0o700 });
+  const keyPath = join(keyDir, `${keyName}.pem`);
   await createKeyPair(keyName, keyPath);
+  const cleanupKeyFile = (): void => {
+    if (keyIsEphemeral) rmSync(keyDir, { recursive: true, force: true });
+  };
 
   // Install EC2 Instance Connect so any team member with the
   // ec2-instance-connect:SendSSHPublicKey IAM permission can SSH mid-run:
@@ -233,6 +246,7 @@ export async function provisionFitInstance(options: ProvisionOptions = {}): Prom
     const terminate = async (): Promise<void> => {
       await terminateInstance(id);
       await deleteKeyPair(keyName).catch(() => {});
+      cleanupKeyFile();
     };
 
     const vpcId = info?.vpcId;
@@ -282,6 +296,7 @@ export async function provisionFitInstance(options: ProvisionOptions = {}): Prom
       await terminateInstance(id).catch(() => {});
     }
     await deleteKeyPair(keyName).catch(() => {});
+    cleanupKeyFile();
     throw err;
   }
 }
