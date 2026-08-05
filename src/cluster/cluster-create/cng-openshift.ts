@@ -33,11 +33,10 @@ import { isMain, runCli } from "../../util/non-fit/cli.js";
 import { fitCliError } from "../../util/non-fit/fit-cli-log.js";
 import type { PieceData } from "../../util/non-fit/config-pieces.js";
 import type { RunOptions } from "../../util/non-fit/proc.js";
-import { posixQuote, RemoteTarget } from "../../util/non-fit/remote-target.js";
-import { waitForSsh, type RemoteHost } from "../../util/non-fit/ssh.js";
+import { posixQuote } from "../../util/non-fit/remote-target.js";
+import { SsmTarget, waitForSsmReady } from "../../util/non-fit/ssm-target.js";
+import { ssmStartSessionCommand } from "../../fit/util/aws/lifecycle-warning.js";
 import { prepareAwsCli } from "../../cloud/util/aws/aws-cli.js";
-import { AWS_REGION } from "../../cloud/util/aws/aws-target.js";
-import { describeInstance } from "../../cloud/util/aws/describe-instance.js";
 import { resolveRosaCredentials, type ResolvedRosaCredentials } from "../../fit/util/config.js";
 import { throwFatalToCluster } from "../../fit/shared/failure-classification.js";
 import { CAO_TOOLS_VERSION, installCaoToolsRemote } from "./install-cao-tools.js";
@@ -473,26 +472,18 @@ if (isMain(import.meta.url)) {
     const instanceDir = flag(argv, "dir");
     const user = flag(argv, "user") ?? DEFAULT_INSTANCE_USER;
     let instanceId = flag(argv, "instance");
-    let identityFile = flag(argv, "key");
-    let address: string | undefined;
     if (instanceDir) {
-      const info = JSON.parse(readFileSync(join(instanceDir, "ec2-instance.json"), "utf8")) as {
-        instanceId?: string;
-        keyPath?: string;
-        address?: string;
-      };
+      const info = JSON.parse(readFileSync(join(instanceDir, "ec2-instance.json"), "utf8")) as { instanceId?: string };
       instanceId ??= info.instanceId;
-      identityFile ??= info.keyPath;
-      address = info.address;
     }
-    if (!instanceId || !identityFile) {
+    if (!instanceId) {
       fitCliError(
         "Usage:\n" +
           "  cng-openshift.ts print-oc-install [--version 4.10.67]\n" +
           "  cng-openshift.ts print-preflight\n" +
           "  cng-openshift.ts k8s-block <home-dir> <context>\n" +
           "  cng-openshift.ts --dir <instance-dir> [--user ubuntu] [--version 4.10.67] [--required-nodes 3]\n" +
-          "  cng-openshift.ts --instance <ec2-id> --key <path.pem> [--user ubuntu] [--version 4.10.67] [--required-nodes 3]",
+          "  cng-openshift.ts --instance <ec2-id> [--user ubuntu] [--version 4.10.67] [--required-nodes 3]",
       );
       process.exit(1);
     }
@@ -503,32 +494,24 @@ if (isMain(import.meta.url)) {
       process.exit(1);
     }
 
-    if (!address) {
-      await prepareAwsCli();
-      const info = await describeInstance(instanceId);
-      if (!info) throw new Error(`No EC2 instance found with id ${instanceId} (in ${AWS_REGION}).`);
-      address = info.publicDns || info.publicIp;
-      if (!address) throw new Error(`Instance ${instanceId} is ${info.state} and has no public address to SSH to.`);
-    }
-
-    const host: RemoteHost = { host: address, user, identityFile };
-    process.stdout.write(`Connecting to ${user}@${address} over SSH...`);
-    if (!(await waitForSsh(host))) {
+    await prepareAwsCli();
+    process.stdout.write(`Waiting for ${instanceId} to register with SSM...`);
+    if (!(await waitForSsmReady(instanceId))) {
       console.log(" unreachable");
-      throw new Error(`Couldn't reach ${user}@${address} over SSH.`);
+      throw new Error(`Couldn't reach ${instanceId} over SSM.`);
     }
     console.log(" ready");
 
-    const target = new RemoteTarget(host);
+    const target = new SsmTarget(instanceId, user);
     const home = `/home/${user}`;
     const { context } = await provisionRemoteOpenShift(target, home, creds, version, requiredNodes);
     return {
       details: [
-        { label: "Instance", value: `${instanceId} (${user}@${address})` },
+        { label: "Instance", value: instanceId },
         { label: "oc version", value: version },
         { label: "kube context", value: context },
         { label: "k8s block", value: YAML.stringify(buildOpenShiftK8sBlock(home, context)).trim() },
-        { label: "SSH debug command", value: `ssh -i ${identityFile} ${user}@${address}` },
+        { label: "Debug access (SSM)", value: ssmStartSessionCommand(instanceId) },
       ],
     };
   });

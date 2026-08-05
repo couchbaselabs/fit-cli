@@ -55,6 +55,12 @@ export interface AwsDefaults {
    * instances need to be in it too (see `aws.privateEndpoint` on an instance).
    */
   privateEndpointVpcSgId?: string | null;
+  /**
+   * IAM instance profile (name) attached to FIT-launched instances so the SSM
+   * Agent can register and send command output to CloudWatch Logs. Unset until
+   * the profile exists in AWS — see fit-instance.ts.
+   */
+  ssmInstanceProfileName?: string | null;
 }
 
 /** Global version defaults for cbdinocluster and related tools (not per-environment). */

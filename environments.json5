@@ -96,6 +96,10 @@
       // passed to AWS's CreateVpcEndpoint, so it defaults to the VPC's default SG), so
       // instances doing private endpoint testing need to be in it too to reach the cluster.
       privateEndpointVpcSgId: "sg-0d7f0565513f225f1",
+
+      // fit-cli-ssm-instance-role (terraform/ssm-instance-role.tf) — the instance profile
+      // attached to EC2 instances so their SSM Agent can register and run commands.
+      ssmInstanceProfileName: "fit-cli-ssm-instance-role",
     },
   },
 

@@ -12,7 +12,7 @@
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { isMain, runCli } from "../../util/non-fit/cli.js";
+import { formatUncaughtError, isMain, runCli } from "../../util/non-fit/cli.js";
 import { extractCbcollectFlag, extractInteractiveFlag, extractReplayFlag, markNonInteractiveByDefault } from "../../util/non-fit/replay.js";
 import { runFromDefinition, type RunFromDefinitionOptions } from "../functional/run-from-definition/run-from-definition.js";
 import {
@@ -310,8 +310,31 @@ export async function runDispatch(argv: string[]): Promise<RunOutput | void> {
       // Presets in a group run in one process, so scope per-run prompt ids by preset
       // name — otherwise the second preset's teardown reuses the leave-up prompt id and
       // trips the replay "used more than once" guard. Single-preset runs stay unscoped.
-      const output = await runFromDefinition(definitionPath, types.length > 1 ? { ...runOpts, promptScope: type } : runOpts);
-      if (output) outputs.push(output);
+      if (types.length > 1) {
+        // A crash mid-preset (e.g. an unmodeled AWS SDK error) must not take the rest of
+        // the group down with it — one bad preset shouldn't cost the results of every
+        // preset after it. Single-preset runs keep propagating straight to runCli's own
+        // handler, which is the more useful behaviour there (full stack trace, exit 1).
+        try {
+          const output = await runFromDefinition(definitionPath, { ...runOpts, promptScope: type });
+          if (output) outputs.push(output);
+        } catch (err) {
+          console.error(`\nPreset ${type} crashed and did not produce a result; continuing with the remaining presets.\n${formatUncaughtError(err)}`);
+          outputs.push({
+            artifacts: [],
+            details: [],
+            worstFailure: {
+              classification: "FatalToAll",
+              message: err instanceof Error ? err.message : String(err),
+              context: { instanceIndex: 0, label: type },
+            },
+            failureCount: 1,
+          });
+        }
+      } else {
+        const output = await runFromDefinition(definitionPath, runOpts);
+        if (output) outputs.push(output);
+      }
     }
     return combineRunOutputs(...outputs);
   }

@@ -116,8 +116,8 @@ function printAwsProfileSummary(profiles: AwsProfilesInfo): void {
   console.log("  fit-cli will try and assume the role 'fit-cli-role' from the cb-sdk account, which has all AWS permissions needed.");
   console.log("  This is done both on localhost testing and when run on a GHA, so that the two environments are similar and isolated from user's setup.");
   console.log("  There are some limits on how long a role can be assumed: 1-12 hours, depending on how logged in.  But fit-cli should automatically refresh the role as needed.");
-  console.log("  'fit-cli-role' can only be assumed from these two AWS accounts: cb-sdk (958525475024) and cb-qe (516524556673).");
-  console.log("  E.g. you must be on one of these two accounts: if not, create an IT ticket.");
+  console.log("  'fit-cli-role' can only be assumed from specific repos (for CI) and these two AWS accounts (for local testing): cb-sdk (958525475024) and cb-qe (516524556673).");
+  console.log("  E.g. you must be on one of these two accounts for local testing: if not, create an IT ticket.");
   console.log("  Instances are always created on us-west-2 and in VPC `fit-cli-vpc` for several reasons (see README).");
   console.log("AWS profile:");
   const activeEntry = profiles.profiles.find((p) => p.name === profiles.active);
@@ -371,6 +371,7 @@ function simulatedOptions(scenario: Scenario): CheckAwsCredentialsOptions {
             preAssumeIdentity: { account: "958525475024", arn: "arn:aws:iam::958525475024:user/some.user@couchbase.com", userId: "AIDAEXAMPLE" },
             identity: { account: "958525475024", arn: "arn:aws:sts::958525475024:assumed-role/fit-cli-role/fit-cli-some-user", userId: "" },
             sessionExpiry: "2026-07-01T12:00:00.000Z",
+            isChained: false,
           }),
       };
   }

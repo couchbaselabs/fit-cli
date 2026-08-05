@@ -19,14 +19,10 @@ import type { SelectedCluster } from "../../../cluster/cluster-select/cluster-se
 /** How to reconnect to the execution target a previous run used. */
 export interface ResumeTargetState {
   kind: "local" | "remote";
-  /** EC2 instance id, for teardown on a later run. */
+  /** EC2 instance id — reconnect to it over SSM, and terminate it on later teardown. */
   instanceId?: string;
-  /** Public DNS/IP to SSH back into. */
-  address?: string;
-  /** SSH login user. */
-  user?: string;
-  /** Path to the SSH private key the earlier run generated. */
-  identityFile?: string;
+  /** Whether fit-cli provisioned this instance (vs. the user bringing an existing one) — governs whether resume attaches a terminate handle. */
+  owned?: boolean;
 }
 
 /** The shared cluster a previous run stood up (or resolved). */

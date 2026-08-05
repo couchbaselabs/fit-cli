@@ -26,16 +26,14 @@
  *   bun src/cluster/cluster-create/install-cbdinocluster.ts --dir /tmp/fit-cli/<run>/instances/0 --branch my-fix
  *   # With explicit flags:
  *   bun src/cluster/cluster-create/install-cbdinocluster.ts \
- *     --instance i-0123456789abcdef0 --key ~/.ssh/my-key.pem [--user ubuntu] [--pr 123]
+ *     --instance i-0123456789abcdef0 [--user ubuntu] [--pr 123]
  */
 import { readFileSync } from "fs";
 import { join } from "path";
 import { isMain, runCli } from "../../util/non-fit/cli.js";
 import { prepareAwsCli } from "../../cloud/util/aws/aws-cli.js";
-import { AWS_REGION } from "../../cloud/util/aws/aws-target.js";
-import { describeInstance } from "../../cloud/util/aws/describe-instance.js";
-import { RemoteTarget } from "../../util/non-fit/remote-target.js";
-import { waitForSsh, type RemoteHost } from "../../util/non-fit/ssh.js";
+import { SsmTarget, waitForSsmReady } from "../../util/non-fit/ssm-target.js";
+import { ssmStartSessionCommand } from "../../fit/util/aws/lifecycle-warning.js";
 import type { RunOptions } from "../../util/non-fit/proc.js";
 import { fitCliError } from "../../util/non-fit/fit-cli-log.js";
 import { CBDINOCLUSTER_URL } from "../../fit/util/config.js";
@@ -237,8 +235,6 @@ if (isMain(import.meta.url)) {
     }
 
     let instanceId = flag(argv, "instance");
-    let identityFile = flag(argv, "key");
-    let address: string | undefined;
     const user = flag(argv, "user") ?? DEFAULT_INSTANCE_USER;
     const prStr = flag(argv, "pr");
     const branch = flag(argv, "branch");
@@ -251,47 +247,28 @@ if (isMain(import.meta.url)) {
 
     const instanceDir = flag(argv, "dir");
     if (instanceDir) {
-      const info = JSON.parse(readFileSync(join(instanceDir, "ec2-instance.json"), "utf8")) as {
-        instanceId?: string;
-        keyPath?: string;
-        address?: string;
-      };
+      const info = JSON.parse(readFileSync(join(instanceDir, "ec2-instance.json"), "utf8")) as { instanceId?: string };
       instanceId ??= info.instanceId;
-      identityFile ??= info.keyPath;
-      address = info.address;
     }
 
-    if (!instanceId || !identityFile) {
+    if (!instanceId) {
       fitCliError(
         "Usage:\n" +
           "  install-cbdinocluster.ts --dir <instance-dir> [--user ubuntu] [--pr <N>]\n" +
-          "  install-cbdinocluster.ts --instance <ec2-id> --key <path.pem> [--user ubuntu] [--pr <N>]",
+          "  install-cbdinocluster.ts --instance <ec2-id> [--user ubuntu] [--pr <N>]",
       );
       process.exit(1);
     }
 
-    if (!address) {
-      await prepareAwsCli();
-      console.log(`Looking up EC2 instance ${instanceId}...`);
-      const info = await describeInstance(instanceId);
-      if (!info) {
-        throw new Error(`No EC2 instance found with id ${instanceId} (in ${AWS_REGION}).`);
-      }
-      address = info.publicDns || info.publicIp;
-      if (!address) {
-        throw new Error(`Instance ${instanceId} is ${info.state} and has no public address to SSH to.`);
-      }
-    }
-
-    const host: RemoteHost = { host: address, user, identityFile };
-    process.stdout.write(`Connecting to ${user}@${address} over SSH...`);
-    if (!(await waitForSsh(host))) {
+    await prepareAwsCli();
+    process.stdout.write(`Waiting for ${instanceId} to register with SSM...`);
+    if (!(await waitForSsmReady(instanceId))) {
       console.log(" unreachable");
-      throw new Error(`Couldn't reach ${user}@${address} over SSH. Check the key, user, and that the box is up.`);
+      throw new Error(`Couldn't reach ${instanceId} over SSM. Check the instance id and that it's up.`);
     }
     console.log(" ready");
 
-    const target = new RemoteTarget(host);
+    const target = new SsmTarget(instanceId, user);
 
     let installedPath: string;
     if (prStr !== undefined) {
@@ -309,13 +286,13 @@ if (isMain(import.meta.url)) {
 
     // Sanity-check the binary actually runs on this box.
     await target.capture(installedPath, ["--help"]);
-    console.log(`\n✓ cbdinocluster is ready on ${instanceId} (${user}@${address}) at ${installedPath}`);
+    console.log(`\n✓ cbdinocluster is ready on ${instanceId} at ${installedPath}`);
 
     return {
       details: [
-        { label: "Instance", value: `${instanceId} (${user}@${address})` },
+        { label: "Instance", value: instanceId },
         { label: "cbdinocluster path", value: installedPath },
-        { label: "SSH debug command", value: `ssh -i ${identityFile} ${user}@${address}` },
+        { label: "Debug access (SSM)", value: ssmStartSessionCommand(instanceId) },
         ...(prStr ? [{ label: "Built from PR", value: `${repo ?? CBDINOCLUSTER_CANONICAL_REPO}#${prStr}` }] : []),
         ...(branch ? [{ label: "Built from branch", value: `${repo ?? CBDINOCLUSTER_CANONICAL_REPO}@${branch}` }] : []),
       ],

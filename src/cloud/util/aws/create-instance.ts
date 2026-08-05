@@ -27,7 +27,8 @@ export interface BlockDeviceMapping {
 export interface CreateInstanceSpec {
   amiId: string;
   instanceType: string;
-  keyName: string;
+  /** EC2 key pair name (SSH). Omit for instances reached over SSM instead. */
+  keyName?: string;
   securityGroupId: string;
   /** Additional security groups to attach alongside `securityGroupId`. */
   additionalSecurityGroupIds?: string[];
@@ -35,6 +36,8 @@ export interface CreateInstanceSpec {
   subnetId?: string;
   /** Cloud-init / shell user-data run at first boot (plain text). */
   userData?: string;
+  /** IAM instance profile (name) to attach — needed for the SSM Agent to register. */
+  iamInstanceProfileName?: string;
   /** Tags applied to the instance, e.g. { "fit-cli": "owned" }. */
   tags?: Record<string, string>;
   /** EBS block-device mappings (e.g. root volume size & type). */
@@ -47,13 +50,14 @@ export async function createInstance(spec: CreateInstanceSpec): Promise<string> 
   const response = await ec2Client.send(new RunInstancesCommand({
     ImageId: spec.amiId,
     InstanceType: spec.instanceType as _InstanceType,
-    KeyName: spec.keyName,
     SecurityGroupIds: allSgIds,
     MinCount: 1,
     MaxCount: 1,
+    ...(spec.keyName ? { KeyName: spec.keyName } : {}),
     ...(spec.subnetId ? { SubnetId: spec.subnetId } : {}),
     // The SDK expects user data as base64 (the CLI encoded it for us automatically).
     ...(spec.userData ? { UserData: Buffer.from(spec.userData).toString("base64") } : {}),
+    ...(spec.iamInstanceProfileName ? { IamInstanceProfile: { Name: spec.iamInstanceProfileName } } : {}),
     ...(spec.tags && Object.keys(spec.tags).length > 0
       ? {
           TagSpecifications: [{

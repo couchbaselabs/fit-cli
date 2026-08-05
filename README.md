@@ -74,6 +74,8 @@ The AWS region and VPC are fixed (region `us-west-2`, VPC `fit-cli-vpc`, managed
 * Simplifies and derisks where to look for user's instances for cleanup.
 * It means we always have a VPC and avoid hitting VPCIdNotSpecified if the user specifies a region that does not have a default one.
 
+`--private-endpoint` mode (testing Capella PrivateLink connectivity) is wired up in `fit-cli-vpc`, but has not yet been proven on a live run there. It works by way of the VPC's default security group: `cbdinocluster private-endpoints setup-link` creates the endpoint without specifying a security group, so it lands in that SG, and the instance joins the same SG (`defaults.aws.privateEndpointVpcSgId`) so it can reach it.
+
 ### Resuming
 The output will guide you through how to resume where a failure happened, something like:
 

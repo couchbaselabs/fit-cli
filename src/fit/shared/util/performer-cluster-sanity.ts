@@ -86,8 +86,14 @@ export function parseDockerPsIds(output: string): string[] {
     .filter(Boolean);
 }
 
+const DOCKER_INSPECT_FORMAT =
+  '{"Id":{{json .Id}},"Name":{{json .Name}},' +
+  '"Config":{"Hostname":{{json .Config.Hostname}}},' +
+  '"HostConfig":{"NetworkMode":{{json .HostConfig.NetworkMode}}},' +
+  '"NetworkSettings":{"Networks":{{json .NetworkSettings.Networks}}}}';
+
 export function dockerInspectArgs(containerIds: readonly string[]): string[] {
-  return ["inspect", ...containerIds];
+  return ["inspect", `--format=${DOCKER_INSPECT_FORMAT}`, ...containerIds];
 }
 
 /** Parse CLI args for the standalone performer-cluster sanity mini CLI. */
@@ -143,7 +149,14 @@ function stringArray(value: unknown): string[] {
 
 /** Parse the subset of `docker inspect` output used by the sanity check. */
 export function parseDockerInspect(output: string): DockerContainerInspection[] {
-  const parsed = JSON.parse(output) as unknown;
+  const trimmed = output.trim();
+  const parsed: unknown = trimmed.startsWith("[")
+    ? JSON.parse(trimmed)
+    : trimmed
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as unknown);
   if (!Array.isArray(parsed)) {
     return [];
   }
@@ -277,7 +290,11 @@ export async function detectClusterDockerEnvironment(
     }
     const containers = parseDockerInspect(await captureCommand(dockerCommand, dockerInspectArgs(runningContainerIds)));
     return describeClusterDockerEnvironment(cluster, containers);
-  } catch {
+  } catch (err) {
+    fitCliWarn(
+      `Couldn't inspect the local Docker containers, so the performer can't be placed on the cluster's Docker ` +
+        `network. Expect the SDK to fail to reach ${clusterHost(cluster.defaultHostname)}. Cause: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return undefined;
   }
 }

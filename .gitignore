@@ -16,3 +16,6 @@ working/
 .local/
 CLAUDE.local.md
 tests
+
+terraform/terraform.tfstate.backup
+terraform/.terraform/providers

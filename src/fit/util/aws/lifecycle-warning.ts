@@ -25,6 +25,16 @@ export function terminateInstanceCommand(instanceId: string): string {
   return `bun src/cloud/util/aws/terminate-instance.ts --id ${instanceId}`;
 }
 
+/**
+ * The human debug-access command: a real interactive shell over SSM Session
+ * Manager. No SSH key, no open port — just `ssm:StartSession` IAM permission
+ * and the `session-manager-plugin` binary (fine for a human at a terminal;
+ * fit-cli's own automation uses SendCommand instead, which needs neither).
+ */
+export function ssmStartSessionCommand(instanceId: string): string {
+  return `aws ssm start-session --target ${instanceId} --region ${AWS_REGION}`;
+}
+
 export function formatEc2DeletionResponsibilityBanner(
   instanceId: string,
   address?: string,

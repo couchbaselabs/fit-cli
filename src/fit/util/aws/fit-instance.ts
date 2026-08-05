@@ -1,17 +1,15 @@
 /**
  * fit-instance — provision a clean EC2 instance for a FIT run. This is the
- * FIT-specific glue that composes the generic AWS/SSH plumbing in
- * cloud/util/aws and util/non-fit/ssh into "give me a box I can run FIT on,
- * and a handle to tear it down". The reusable, FIT-agnostic pieces stay in
- * util/non-fit; only the opinions (instance defaults, the fit-cli ownership
- * tag, where the key lands) live here.
+ * FIT-specific glue that composes the generic AWS plumbing in cloud/util/aws
+ * into "give me a box I can run FIT on, and a handle to tear it down". The
+ * reusable, FIT-agnostic pieces stay in util/non-fit; only the opinions
+ * (instance defaults, the fit-cli ownership tag) live here.
  *
  * Run on its own (provisions a box and prints how to reach it — does NOT
  * terminate it, so you can poke at it; tear it down with the printed command):
  *   bun src/fit/util/aws/fit-instance.ts
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { artifactFromPath, type Artifact, type Detail } from "../../../util/non-fit/artifacts.js";
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
@@ -22,27 +20,25 @@ import { checkAwsCredentials } from "../../../cloud/util/aws/identity.js";
 import { findUbuntuAmi } from "../../../cloud/util/aws/image.js";
 import { createInstance, waitForInstanceRunning, type BlockDeviceMapping } from "../../../cloud/util/aws/create-instance.js";
 import { describeInstance } from "../../../cloud/util/aws/describe-instance.js";
-import { findInstancesByKeyName } from "../../../cloud/util/aws/list-instances.js";
+import { listInstances } from "../../../cloud/util/aws/list-instances.js";
 import { type InstanceInfo } from "../../../cloud/util/aws/parse-instance.js";
 import { terminateInstance } from "../../../cloud/util/aws/terminate-instance.js";
-import { createKeyPair, deleteKeyPair } from "../../../cloud/util/aws/key-pair.js";
 import { ensureSecurityGroup } from "../../../cloud/util/aws/security-group.js";
-import { instanceRunDir, instanceInternalRunDir } from "../../../util/non-fit/replay.js";
+import { instanceRunDir } from "../../../util/non-fit/replay.js";
 import { instanceLabel } from "../../shared/util/run-labels.js";
-import { waitForSsh, type RemoteHost } from "../../../util/non-fit/ssh.js";
-import { RemoteTarget } from "../../../util/non-fit/remote-target.js";
+import { SsmTarget, waitForSsmReady } from "../../../util/non-fit/ssm-target.js";
 import { forceNtpSync } from "../../../util/non-fit/ntp-sync.js";
 import { fitCliWarn } from "../../../util/non-fit/fit-cli-log.js";
-import { formatBanner, formatEc2DeletionResponsibilityBanner, terminateInstanceCommand } from "./lifecycle-warning.js";
+import { formatBanner, formatEc2DeletionResponsibilityBanner, ssmStartSessionCommand, terminateInstanceCommand } from "./lifecycle-warning.js";
 import { warnAboutExistingInstances } from "./warn-existing-instances.js";
 
-/** Security group fit-cli reuses across runs (port 22 open). */
+/** Security group fit-cli reuses across runs (no ports open — SSM needs none). */
 export const FIT_SECURITY_GROUP = "fit-cli";
 
 /** Tag stamped on every box fit-cli launches, so they can be found later. */
 export const FIT_OWNER_TAG = { key: "fit-cli", value: "owned" } as const;
 
-/** Login user for manual SSH. */
+/** The box's normal login user — commands run as this user (via SsmTarget's sudo -u), not root. */
 export const FIT_INSTANCE_USER = "ubuntu";
 
 /**
@@ -92,17 +88,13 @@ export interface ProvisionedInstance {
   instanceId: string;
   /** Address used to reach it (public DNS, or public IP if DNS is absent). */
   address: string;
-  /** Path to the generated private key on this machine. */
-  keyPath: string;
-  /** The host descriptor used for SSH. */
-  host: RemoteHost;
-  /** An ExecutionTarget that runs commands on this instance. */
-  target: RemoteTarget;
-  /** Files produced (the key, an instance-info record) for the run summary. */
+  /** An ExecutionTarget that runs commands on this instance over SSM. */
+  target: SsmTarget;
+  /** Files produced (an instance-info record) for the run summary. */
   artifacts: Artifact[];
   /** Useful commands and facts for debugging and cleanup. */
   details: Detail[];
-  /** Terminate the instance and delete its key pair. Safe to call once. */
+  /** Terminate the instance. Safe to call once. */
   terminate: () => Promise<void>;
 }
 
@@ -121,10 +113,10 @@ export interface ProvisionOptions {
 }
 
 /**
- * Provision a fresh EC2 instance suitable for a FIT run: latest Ubuntu LTS, the
- * shared fit-cli security group and a freshly-minted key pair. Waits until the
- * box is running and accepting SSH before returning. If anything fails after
- * the instance launches, it's terminated so we don't leak a paid box.
+ * Provision a fresh EC2 instance suitable for a FIT run: latest Ubuntu LTS and
+ * the shared fit-cli security group. Waits until the box is running and
+ * registered with SSM before returning. If anything fails after the instance
+ * launches, it's terminated so we don't leak a paid box.
  */
 export async function provisionFitInstance(options: ProvisionOptions = {}): Promise<ProvisionedInstance> {
   const creds = await checkAwsCredentials();
@@ -158,7 +150,7 @@ export async function provisionFitInstance(options: ProvisionOptions = {}): Prom
 
   const amiId = await findUbuntuAmi();
   const securityGroupId = await ensureSecurityGroup(
-    { name: FIT_SECURITY_GROUP, description: "fit-cli ephemeral test instances", ingressPorts: [22], vpcId: AWS_VPC_ID },
+    { name: FIT_SECURITY_GROUP, description: "fit-cli ephemeral test instances", ingressPorts: [], vpcId: AWS_VPC_ID },
   );
 
   // Private endpoint mode: also attach the VPC default SG (opened for intra-VPC traffic)
@@ -170,36 +162,21 @@ export async function provisionFitInstance(options: ProvisionOptions = {}): Prom
     console.log(`  private endpoint: VPC default SG ${peVpcSgId ?? "(not configured in environments.json5)"}`);
   }
 
-  const keyName = `fit-cli-${Date.now().toString(36)}`;
+  const ssmInstanceProfileName = loadEnvironments().defaults.aws.ssmInstanceProfileName ?? undefined;
+  if (!ssmInstanceProfileName) {
+    fitCliWarn(
+      "\nWarning: defaults.aws.ssmInstanceProfileName isn't configured in environments.json5 — the launched " +
+        "instance won't register with SSM and commands on it will fail. See the SSM migration plan for the AWS-side setup.",
+    );
+  }
+
+  // Unique per launch attempt: lets a failed launch be swept even if we never
+  // captured the instance id (e.g. the RunInstances call threw mid-request).
+  const launchId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const instanceIdx = options.instanceIndex ?? 0;
   const instancePathObj = { instanceIndex: instanceIdx, dirSegments: { instance: instanceLabel({ instanceIndex: instanceIdx }, "aws") } };
   const instanceDir = instanceRunDir(instancePathObj);
   mkdirSync(instanceDir, { recursive: true, mode: 0o700 });
-  // The SSH private key should not be uploaded, in case the artifact ever ends up
-  // public (which it will not with the current setup).  The key is useless since the
-  // instance is removed before the end of the run, but it is not a good look to have
-  // keys in artifacts.
-  // Keep it in the per-instance _internal dir, which both
-  // artifact sinks exclude. Local debug/resume tooling still finds it via the keyPath
-  // recorded in ec2-instance.json.
-
-  // In non-interactive (CI) runs we go further still and delete the key as part of
-  // standard flow to add a redundant layer that it doesn't end up in the artifact.
-  const keyIsEphemeral = !options.interactive;
-  const keyDir = keyIsEphemeral
-    ? mkdtempSync(join(tmpdir(), "fit-cli-key-"))
-    : instanceInternalRunDir(instancePathObj);
-  mkdirSync(keyDir, { recursive: true, mode: 0o700 });
-  const keyPath = join(keyDir, `${keyName}.pem`);
-  await createKeyPair(keyName, keyPath);
-  const cleanupKeyFile = (): void => {
-    if (keyIsEphemeral) rmSync(keyDir, { recursive: true, force: true });
-  };
-
-  // Install EC2 Instance Connect so any team member with the
-  // ec2-instance-connect:SendSSHPublicKey IAM permission can SSH mid-run:
-  //   aws ec2-instance-connect ssh --instance-id <id> --os-user ubuntu --region <region>
-  const userData = "#!/bin/bash\napt-get update -y\napt-get install -y ec2-instance-connect";
 
   let instanceId: string | undefined;
   try {
@@ -207,15 +184,15 @@ export async function provisionFitInstance(options: ProvisionOptions = {}): Prom
       {
         amiId,
         instanceType,
-        keyName,
         securityGroupId,
         additionalSecurityGroupIds,
         subnetId: AWS_SUBNET_ID,
-        userData,
+        ...(ssmInstanceProfileName ? { iamInstanceProfileName: ssmInstanceProfileName } : {}),
         tags: {
           Name: fitInstanceName(creatorTag),
           [FIT_OWNER_TAG.key]: FIT_OWNER_TAG.value,
           "created-by": creatorTag,
+          "fit-cli-launch-id": launchId,
         },
         blockDeviceMappings: fitBlockDeviceMappings(),
       },
@@ -229,14 +206,13 @@ export async function provisionFitInstance(options: ProvisionOptions = {}): Prom
       throw new Error(`Instance ${instanceId} is running but has no public address.`);
     }
 
-    const host: RemoteHost = { host: address, user: FIT_INSTANCE_USER, identityFile: keyPath, agentForwarding: false };
-    process.stdout.write("  waiting for SSH...");
-    if (!(await waitForSsh(host))) {
-      throw new Error(`Timed out waiting for SSH on ${address}.`);
+    process.stdout.write("  waiting for SSM to register...");
+    if (!(await waitForSsmReady(instanceId))) {
+      throw new Error(`Timed out waiting for ${instanceId} to register with SSM.`);
     }
     console.log(" ready");
 
-    const target = new RemoteTarget(host);
+    const target = new SsmTarget(instanceId, FIT_INSTANCE_USER);
     // A fresh box's clock can be off until chrony's first sync settles, which is enough to trip
     // tests with a tight elapsed-time margin (see forceNtpSync's doc comment). Best-effort: never
     // blocks provisioning on failure.
@@ -245,58 +221,39 @@ export async function provisionFitInstance(options: ProvisionOptions = {}): Prom
     const id = instanceId;
     const terminate = async (): Promise<void> => {
       await terminateInstance(id);
-      await deleteKeyPair(keyName).catch(() => {});
-      cleanupKeyFile();
     };
 
     const vpcId = info?.vpcId;
     const infoPath = join(instanceDir, "ec2-instance.json");
     writeFileSync(
       infoPath,
-      `${JSON.stringify({ instanceId: id, address, region: AWS_REGION, instanceType, keyPath, ...(vpcId ? { vpcId } : {}) }, null, 2)}\n`,
+      `${JSON.stringify({ instanceId: id, address, region: AWS_REGION, instanceType, ...(vpcId ? { vpcId } : {}) }, null, 2)}\n`,
     );
     const artifacts = [
       artifactFromPath(infoPath, "EC2 test instance details (id, address, region)"),
     ];
-    const ec2icCommand = `aws ec2-instance-connect ssh --instance-id ${id} --os-user ${FIT_INSTANCE_USER} --region ${AWS_REGION}`;
+    const ssmCommand = ssmStartSessionCommand(id);
     const details = [
-      {
-        label: "SSH debug command",
-        value: `ssh -i ${keyPath} ${FIT_INSTANCE_USER}@${address}`,
-      },
-      {
-        label: "EC2 Instance Connect (no key needed — requires ec2-instance-connect:SendSSHPublicKey IAM permission)",
-        value: ec2icCommand,
-      },
-      {
-        label: "Terminate instance command",
-        value: terminateInstanceCommand(id),
-      },
+      { label: "Debug access (SSM)", value: ssmCommand },
+      { label: "Terminate instance command", value: terminateInstanceCommand(id) },
     ];
 
     console.log(`\n✓ EC2 instance ${id} is ready at ${address}${vpcId ? `  (VPC: ${vpcId})` : ""}`);
     fitCliWarn(`\n${formatEc2DeletionResponsibilityBanner(id, address, existingInstances, { account: creds.identity.account, creator: creatorTag }, options.interactive)}\n`);
-    console.log(formatBanner("SSH ACCESS", [
-      "Direct (requires key):",
-      `  ssh -i ${keyPath} ${FIT_INSTANCE_USER}@${address}`,
-      "Via EC2 Instance Connect (no key needed — requires ec2-instance-connect:SendSSHPublicKey):",
-      `  ${ec2icCommand}`,
-    ]));
-    return { instanceId: id, address, keyPath, host, target, artifacts, details, terminate };
+    console.log(formatBanner("DEBUG ACCESS (SSM)", [`  ${ssmCommand}`]));
+    return { instanceId: id, address, target, artifacts, details, terminate };
   } catch (err) {
-    // Don't leave a paid box (or its key) lying around if bring-up failed. If we
-    // never captured the instance id (e.g. launch threw mid-call), sweep by the
-    // run's unique key name so an instance AWS created anyway can't leak.
+    // Don't leave a paid box lying around if bring-up failed. If we never
+    // captured the instance id (e.g. launch threw mid-call), sweep by the
+    // run's unique launch-id tag so an instance AWS created anyway can't leak.
     const leaked = instanceId
       ? [instanceId]
-      : await findInstancesByKeyName(keyName)
+      : await listInstances({ key: "fit-cli-launch-id", value: launchId })
           .then((found) => found.map((i) => i.instanceId))
           .catch(() => []);
     for (const id of leaked) {
       await terminateInstance(id).catch(() => {});
     }
-    await deleteKeyPair(keyName).catch(() => {});
-    cleanupKeyFile();
     throw err;
   }
 }

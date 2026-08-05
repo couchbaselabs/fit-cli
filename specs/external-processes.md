@@ -14,11 +14,23 @@ The models:
 
 ## Logging
 For the logged-step models above, stdout/stderr from the process can be either:
-LogType1: Added to stdout/stderr of this process.
+LogType1: Streamed to stdout/stderr of this process.
 LogType2: Hidden as unimportant noise, and only shown on failure.  Also now included in a debug `session.debug.log` artifact version of the log.
 LogType3: Sent to a separate artifact, for important but large logs.  For proof-of-life, the last line of the log is output to stdout/stderr every N seconds.
 LogType4: Sent to a separate artifact in the background without blocking.  The process self-terminates when its subject (e.g. a Docker container) exits.  A `BackgroundStream.drain()` handle is returned for the caller to await after stopping the subject.  Used for performer logs so they're available even if the run is interrupted.
 Generally we want those logtypes to behave the same on local or remote runs.  Agents, you will likely need to change both paths. 
+
+### AWS SSM logging
+Moving to using AWS SSM for running commands brings some odd constraints.  GetCommandInvocation will give only the first 24,000 chars of stdout and 8,000 chars of stderr.
+So for some LogTypes we use what appears to be the standard workaround: direct the logs to a transient AWS CloudWatch, and poll that.
+Nb AWS on the instance will only send logs to CloudWatch after 30s or when its buffer exceeds 200kb.  
+Nb we intentionally avoid using AWS Session Manager, which would work better for this, as it brings in an external dependency.  SSM works from the AWS SDK.
+So under AWS SSM:
+LogType1: Uses the CloudWatch approach above.
+LogType2: CloudWatch is used.  Read at end of process.
+LogType3: File continues to be sent to separate artifact.  The 30s proof-of-life lines go to Cloudwatch.
+LogType4: Similar to LogType3.
+
 
 ## Failures
 Failing processes are defined as returning non-zero, and are classified as FatalToAll, FatalToInstance, FatalToCluster, FatalToSession or NonFatal.  The names mirror the definition-file hierarchy: an instance holds clusters, a cluster holds sessions.

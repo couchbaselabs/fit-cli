@@ -7,7 +7,7 @@
  * CNG allocation fails later when cbdinocluster goes looking for `cao` there.
  *
  * The work is one remote shell script (see {@link caoToolsInstallScript}) so it
- * runs through any executor that can `run` a command — a {@link RemoteTarget} for
+ * runs through any executor that can `run` a command — an {@link SsmTarget} for
  * the standalone CLI below, or the cluster executor that setup-cluster already
  * uses for {@link provisionRemoteK3d}.
  *
@@ -24,18 +24,17 @@
  *   bun src/cluster/cluster-create/install-cao-tools.ts --dir /tmp/fit-cli/<run>/instances/0 --deploy
  *   # Install with explicit flags:
  *   bun src/cluster/cluster-create/install-cao-tools.ts \
- *     --instance i-0123456789abcdef0 --key ~/.ssh/my-key.pem [--user ubuntu] [--region eu-west-1] [--version 2.8.0]
+ *     --instance i-0123456789abcdef0 [--user ubuntu] [--version 2.8.0]
  */
 import { readFileSync } from "fs";
 import { join } from "path";
 import { isMain, runCli } from "../../util/non-fit/cli.js";
 import { prepareAwsCli } from "../../cloud/util/aws/aws-cli.js";
-import { AWS_REGION } from "../../cloud/util/aws/aws-target.js";
-import { describeInstance } from "../../cloud/util/aws/describe-instance.js";
 import { fitCliError } from "../../util/non-fit/fit-cli-log.js";
 import type { RunOptions } from "../../util/non-fit/proc.js";
-import { posixQuote, RemoteTarget } from "../../util/non-fit/remote-target.js";
-import { waitForSsh, type RemoteHost } from "../../util/non-fit/ssh.js";
+import { posixQuote } from "../../util/non-fit/remote-target.js";
+import { SsmTarget, waitForSsmReady } from "../../util/non-fit/ssm-target.js";
+import { ssmStartSessionCommand } from "../../fit/util/aws/lifecycle-warning.js";
 import { loadEnvironments } from "../../fit/util/environments.js";
 
 /**
@@ -188,25 +187,19 @@ if (isMain(import.meta.url)) {
     }
 
     let instanceId = flag(argv, "instance");
-    let identityFile = flag(argv, "key");
-    let address: string | undefined;
     const user = flag(argv, "user") ?? DEFAULT_INSTANCE_USER;
 
     const instanceDir = flag(argv, "dir");
     if (instanceDir) {
-      const info = JSON.parse(
-        readFileSync(join(instanceDir, "ec2-instance.json"), "utf8"),
-      ) as { instanceId?: string; keyPath?: string; address?: string };
+      const info = JSON.parse(readFileSync(join(instanceDir, "ec2-instance.json"), "utf8")) as { instanceId?: string };
       instanceId ??= info.instanceId;
-      identityFile ??= info.keyPath;
-      address = info.address;
     }
 
-    if (!instanceId || !identityFile) {
+    if (!instanceId) {
       fitCliError(
         "Usage:\n" +
           "  install-cao-tools.ts --dir <instance-dir> [--user ubuntu] [--version 2.8.0] [--cao-dir <cao-tools-dir>] [--deploy]\n" +
-          "  install-cao-tools.ts --instance <ec2-id> --key <path.pem> [--user ubuntu] [--version 2.8.0] [--cao-dir <cao-tools-dir>] [--deploy]\n" +
+          "  install-cao-tools.ts --instance <ec2-id> [--user ubuntu] [--version 2.8.0] [--cao-dir <cao-tools-dir>] [--deploy]\n" +
           "  install-cao-tools.ts --print [--cao-dir <cao-tools-dir>] [--version 2.8.0]\n" +
           "\n--deploy also installs the Couchbase CRDs + admission controller (needs cbdinocluster + a CNG-ready ~/.cbdinocluster on the box).",
       );
@@ -214,43 +207,30 @@ if (isMain(import.meta.url)) {
     }
     const caoToolsDir = flag(argv, "cao-dir") ?? defaultCaoToolsDir(user, version);
 
-    if (!address) {
-      await prepareAwsCli();
-      console.log(`Looking up EC2 instance ${instanceId}...`);
-      const info = await describeInstance(instanceId);
-      if (!info) {
-        throw new Error(`No EC2 instance found with id ${instanceId} (in ${AWS_REGION}).`);
-      }
-      address = info.publicDns || info.publicIp;
-      if (!address) {
-        throw new Error(`Instance ${instanceId} is ${info.state} and has no public address to SSH to.`);
-      }
-    }
-
-    const host: RemoteHost = { host: address, user, identityFile };
-    process.stdout.write(`Connecting to ${user}@${address} over SSH...`);
-    if (!(await waitForSsh(host))) {
+    await prepareAwsCli();
+    process.stdout.write(`Waiting for ${instanceId} to register with SSM...`);
+    if (!(await waitForSsmReady(instanceId))) {
       console.log(" unreachable");
-      throw new Error(`Couldn't reach ${user}@${address} over SSH. Check the key, user, and that the box is up.`);
+      throw new Error(`Couldn't reach ${instanceId} over SSM. Check the instance id and that it's up.`);
     }
     console.log(" ready");
 
-    const target = new RemoteTarget(host);
+    const target = new SsmTarget(instanceId, user);
     await installCaoToolsRemote(target, caoToolsDir, version);
-    console.log(`\n✓ cao tools (${version}) are ready on ${instanceId} (${user}@${address}) at ${caoToolsDir}`);
+    console.log(`\n✓ cao tools (${version}) are ready on ${instanceId} at ${caoToolsDir}`);
 
     // --deploy also installs the CRDs + admission controller into the box's k8s
     // cluster. Needs cbdinocluster + a CNG-ready ~/.cbdinocluster already on the
     // box (k8s + github blocks); override the binary with --cbdinocluster.
     const details = [
-      { label: "Instance", value: `${instanceId} (${user}@${address})` },
+      { label: "Instance", value: instanceId },
       { label: "cao tools dir", value: caoToolsDir },
-      { label: "SSH debug command", value: `ssh -i ${identityFile} ${user}@${address}` },
+      { label: "Debug access (SSM)", value: ssmStartSessionCommand(instanceId) },
     ];
     if (argv.includes("--deploy")) {
       const cbdinocluster = flag(argv, "cbdinocluster") ?? "cbdinocluster";
       await installCaoCrdsAndAdmission(target, cbdinocluster);
-      console.log(`\n✓ Couchbase CRDs + admission controller installed on ${instanceId} (${user}@${address})`);
+      console.log(`\n✓ Couchbase CRDs + admission controller installed on ${instanceId}`);
       details.push({ label: "cao deploy", value: "CRDs + admission controller installed" });
     }
 

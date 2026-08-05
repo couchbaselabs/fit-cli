@@ -70,6 +70,45 @@ export function isMain(metaUrl: string): boolean {
 }
 
 /**
+ * Format an uncaught error for the final terminal line: the stack trace (which
+ * includes the message) when available, plus any AWS SDK error metadata
+ * (request id, service error code) that isn't part of `.message` — AWS SDK v3
+ * collapses unmodeled service exceptions down to a bare "UnknownError" message,
+ * so the metadata is often the only clue to what actually failed.
+ */
+export function formatUncaughtError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const parts = [err.stack ?? err.message];
+  if (err.cause !== undefined) parts.push(`cause: ${String(err.cause)}`);
+  // AWS SDK v3 errors carry extra own-enumerable properties (name, $metadata, $fault, Code,
+  // __type, etc.) beyond the standard Error shape — dump anything present rather than
+  // guessing which fields a given service/exception happens to use, since unmodeled service
+  // exceptions can otherwise surface as a bare "Error" with no message and no clue why.
+  const skip = new Set(["stack", "message", "cause"]);
+  const extra = Object.getOwnPropertyNames(err)
+    .filter((key) => !skip.has(key))
+    .map((key) => [key, (err as unknown as Record<string, unknown>)[key]] as const)
+    .filter(([, value]) => value !== undefined);
+  for (const [key, value] of extra) {
+    let rendered: string;
+    if (typeof value === "string") {
+      rendered = value;
+    } else {
+      try {
+        rendered = JSON.stringify(value);
+      } catch {
+        // Some error properties (e.g. Bun's source-mapped stack frames) can be
+        // cyclic, which JSON.stringify rejects outright — fall back to String()
+        // rather than letting the formatter itself crash and hide the real error.
+        rendered = String(value);
+      }
+    }
+    parts.push(`${key}: ${rendered}`);
+  }
+  return parts.join("\n");
+}
+
+/**
  * Run a step's CLI entry point with consistent error handling: a clean Ctrl-C /
  * Esc from @inquirer throws ExitPromptError and exits quietly, anything else
  * prints and exits non-zero.
@@ -117,7 +156,7 @@ export function runCli(main: () => Promise<void | Partial<RunOutput>>): void {
       // falling back to whatever artifacts we have (at least the session/debug
       // logs; reconcileArtifactsWithDir discovers the rest from the run dir).
       await renderRunSummary(promptSession.runDir, runOutput ?? { artifacts: logArtifacts, details: [] });
-      console.error(err instanceof Error ? err.message : err);
+      console.error(formatUncaughtError(err));
       // Flush tee'd logs before exiting so the final error line is persisted.
       await Promise.all([sessionLog.flush(), debugLog.flush()]);
       process.exit(1);

@@ -90,6 +90,15 @@ function appendToDebugLog(content: string): void {
   currentDebugLog.write(stripAnsi(formatTimestampedChunk(ensureTrailingNewline(content), true).text));
 }
 
+/**
+ * Append output captured outside a subprocess spawn (e.g. SsmTarget's SendCommand
+ * output) to the debug log, if one is active. Mirrors what capture() does for its
+ * own subprocess output, for callers that can't go through capture() itself.
+ */
+export function writeCommandOutputToDebugLog(content: string): void {
+  appendToDebugLog(content);
+}
+
 /** Knobs shared by every command-runner for how the command is announced. */
 export interface RunOptions {
   /**

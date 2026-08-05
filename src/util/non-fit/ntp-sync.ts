@@ -11,18 +11,14 @@
  *
  * Run on its own against an existing EC2 instance:
  *   bun src/util/non-fit/ntp-sync.ts --dir /tmp/fit-cli/<run>/instances/0
- *   bun src/util/non-fit/ntp-sync.ts --instance i-0123456789abcdef0 --key ~/.ssh/my-key.pem [--user ubuntu]
+ *   bun src/util/non-fit/ntp-sync.ts --instance i-0123456789abcdef0 [--user ubuntu]
  */
 import { readFileSync } from "fs";
 import { join } from "path";
 import { isMain, runCli } from "./cli.js";
-import { prepareAwsCli } from "../../cloud/util/aws/aws-cli.js";
-import { AWS_REGION } from "../../cloud/util/aws/aws-target.js";
-import { describeInstance } from "../../cloud/util/aws/describe-instance.js";
-import { RemoteTarget } from "./remote-target.js";
-import { waitForSsh, type RemoteHost } from "./ssh.js";
-import type { ExecutionTarget } from "./target.js";
 import { fitCliError } from "./fit-cli-log.js";
+import { SsmTarget, waitForSsmReady } from "./ssm-target.js";
+import type { ExecutionTarget } from "./target.js";
 
 /**
  * The shell script that forces a clock sync. Tries chrony first (what the
@@ -68,13 +64,12 @@ if (isMain(import.meta.url)) {
       console.log(
         "Usage:\n" +
           "  ntp-sync.ts --dir <instance-dir>\n" +
-          "  ntp-sync.ts --instance <ec2-id> --key <path.pem> [--user ubuntu]\n" +
+          "  ntp-sync.ts --instance <ec2-id> [--user ubuntu]\n" +
           "\n" +
           "Options:\n" +
-          "  --dir        path to an instance dir (reads ec2-instance.json + .pem automatically)\n" +
+          "  --dir        path to an instance dir (reads ec2-instance.json automatically)\n" +
           "  --instance   EC2 instance ID (e.g. i-0123456789abcdef0)\n" +
-          "  --key        path to SSH private key (.pem)\n" +
-          "  --user       SSH user on the box (default: ubuntu)\n",
+          "  --user       login user on the box (default: ubuntu)\n",
       );
       process.exit(0);
     }
@@ -89,56 +84,34 @@ if (isMain(import.meta.url)) {
     };
 
     let instanceId = flag("instance");
-    let identityFile = flag("key");
-    let address: string | undefined;
     const user = flag("user") ?? "ubuntu";
 
     const instanceDir = flag("dir");
     if (instanceDir) {
-      const info = JSON.parse(readFileSync(join(instanceDir, "ec2-instance.json"), "utf8")) as {
-        instanceId?: string;
-        keyPath?: string;
-        address?: string;
-      };
+      const info = JSON.parse(readFileSync(join(instanceDir, "ec2-instance.json"), "utf8")) as { instanceId?: string };
       instanceId ??= info.instanceId;
-      identityFile ??= info.keyPath;
-      address = info.address;
     }
 
-    if (!instanceId || !identityFile) {
+    if (!instanceId) {
       fitCliError(
         "Usage:\n" +
           "  ntp-sync.ts --dir <instance-dir>\n" +
-          "  ntp-sync.ts --instance <ec2-id> --key <path.pem> [--user ubuntu]",
+          "  ntp-sync.ts --instance <ec2-id> [--user ubuntu]",
       );
       process.exit(1);
     }
 
-    if (!address) {
-      await prepareAwsCli();
-      console.log(`Looking up EC2 instance ${instanceId}...`);
-      const info = await describeInstance(instanceId);
-      if (!info) {
-        throw new Error(`No EC2 instance found with id ${instanceId} (in ${AWS_REGION}).`);
-      }
-      address = info.publicDns || info.publicIp;
-      if (!address) {
-        throw new Error(`Instance ${instanceId} is ${info.state} and has no public address to SSH to.`);
-      }
-    }
-
-    const host: RemoteHost = { host: address, user, identityFile };
-    process.stdout.write(`Connecting to ${user}@${address} over SSH...`);
-    if (!(await waitForSsh(host))) {
+    process.stdout.write(`Waiting for ${instanceId} to register with SSM...`);
+    if (!(await waitForSsmReady(instanceId))) {
       console.log(" unreachable");
-      throw new Error(`Couldn't reach ${user}@${address} over SSH. Check the key, user, and that the box is up.`);
+      throw new Error(`Couldn't reach ${instanceId} over SSM. Check the instance id and that it's up.`);
     }
     console.log(" ready");
 
-    await forceNtpSync(new RemoteTarget(host));
+    await forceNtpSync(new SsmTarget(instanceId, user));
 
     return {
-      details: [{ label: "Instance", value: `${instanceId} (${user}@${address})` }],
+      details: [{ label: "Instance", value: instanceId }],
     };
   });
 }

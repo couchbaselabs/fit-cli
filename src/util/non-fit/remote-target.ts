@@ -1,14 +1,10 @@
 /**
- * remote-target — an ExecutionTarget backed by SSH/SCP (ssh.ts). Commands run on
- * the remote host; files are moved with scp. To honour `cwd` (and to keep
- * arguments intact across the extra shell hop that ssh introduces) the command
- * and its arguments are POSIX-quoted into a single remote command string.
+ * remote-target — command-string building helpers shared by every "run this on
+ * a remote box" transport (SsmTarget today; formerly also an SSH-backed
+ * RemoteTarget, removed once nothing used it). To honour `cwd` the command and
+ * its arguments are POSIX-quoted into a single remote command string, since a
+ * remote transport has no native cwd of its own.
  */
-import { commandOn, formatCommandLine } from "./fit-cli-log.js";
-import { runHiddenUntilFailure, type RunOptions } from "./proc.js";
-import type { RemoteHost } from "./ssh.js";
-import { buildSshArgs, DEFAULT_SSH_USER, scpDown, scpUp, sshCapture, sshRun } from "./ssh.js";
-import type { ExecutionTarget } from "./target.js";
 
 /**
  * Quote a single token for a POSIX shell. Bare tokens made of safe characters
@@ -39,43 +35,4 @@ export function buildRemoteCommand(command: string, args: readonly string[], cwd
  */
 export function teeToFileCommand(command: string, path: string): string {
   return `set -o pipefail; ${command} 2>&1 | tee ${posixQuote(path)}`;
-}
-
-export class RemoteTarget implements ExecutionTarget {
-  readonly kind = "remote" as const;
-  readonly description: string;
-
-  constructor(private readonly host: RemoteHost) {
-    this.description = `${host.user ?? DEFAULT_SSH_USER}@${host.host}`;
-  }
-
-  /**
-   * Echo the *logical* command and host, not the ssh transport. Callers that
-   * already wrapped a command (e.g. in `sh -lc`) pass their own clean `display`,
-   * which we leave untouched.
-   */
-  private displayFor(command: string, args: readonly string[], opts?: RunOptions): RunOptions {
-    return { ...opts, display: opts?.display ?? commandOn(formatCommandLine(command, args), this.description) };
-  }
-
-  run(command: string, args: string[], cwd?: string, opts?: RunOptions): Promise<void> {
-    return sshRun(this.host, buildRemoteCommand(command, args, cwd), [], this.displayFor(command, args, opts));
-  }
-
-  capture(command: string, args: string[], cwd?: string, opts?: RunOptions): Promise<string> {
-    return sshCapture(this.host, buildRemoteCommand(command, args, cwd), [], this.displayFor(command, args, opts));
-  }
-
-  runHiddenUntilFailure(command: string, args: string[], cwd?: string, opts?: RunOptions): Promise<void> {
-    const remoteCmd = buildRemoteCommand(command, args, cwd);
-    return runHiddenUntilFailure("ssh", buildSshArgs(this.host, remoteCmd), undefined, this.displayFor(command, args, opts));
-  }
-
-  putFile(localPath: string, remotePath: string): Promise<void> {
-    return scpUp(this.host, localPath, remotePath);
-  }
-
-  getFile(remotePath: string, localPath: string, sizeBytes?: number): Promise<void> {
-    return scpDown(this.host, remotePath, localPath, sizeBytes);
-  }
 }

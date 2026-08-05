@@ -67,7 +67,13 @@ export async function freshCallerIdentity(): Promise<CredentialsCheck> {
 
 /** The outcome of {@link assumeFitCliRole}. */
 export type AssumeRoleOutcome =
-  | { ok: true; preAssumeIdentity: CallerIdentity; identity: CallerIdentity; sessionExpiry: string }
+  | {
+      ok: true;
+      preAssumeIdentity: CallerIdentity;
+      identity: CallerIdentity;
+      sessionExpiry: string;
+      isChained: boolean;
+    }
   | { ok: false; preAssumeIdentity?: CallerIdentity; message: string };
 
 let cachedAssumeResult: AssumeRoleOutcome | undefined;
@@ -145,6 +151,7 @@ export async function assumeFitCliRole(): Promise<AssumeRoleOutcome> {
       preAssumeIdentity: pre.identity,
       identity: pre.identity,
       sessionExpiry: "already active",
+      isChained: true,
     };
     return cachedAssumeResult;
   }
@@ -160,10 +167,17 @@ export async function assumeFitCliRole(): Promise<AssumeRoleOutcome> {
   }
 
   // AWS caps "role chaining" — assuming a role using credentials that are themselves
-  // temporary (SSO, an EC2 instance profile, an already-assumed role) — at 1 hour,
-  // hard-erroring if DurationSeconds is set higher. Only a direct long-term IAM user
-  // (arn contains ":user/") can be granted the longer session requested below.
-  const isChained = !pre.identity.arn.includes(":user/");
+  // temporary (SSO, an EC2 instance profile, an already-assumed role, or a custom
+  // credential_process/provider that mints a session token) — at 1 hour, hard-erroring
+  // if DurationSeconds is set higher. This is a property of the *credentials*
+  // (presence of a session token), not the caller identity's ARN shape: some
+  // credential providers (e.g. custom SSO-like login tools) return temporary,
+  // session-token-backed credentials for an IAM user ARN, which would falsely look
+  // "long-term" if we pattern-matched on ":user/" instead of checking the credentials
+  // themselves.
+  const currentCreds = await fromNodeProviderChain()();
+  const isChained = Boolean(currentCreds.sessionToken);
+  console.log(`  chained credentials (session token present): ${isChained}`);
 
   try {
     const freshSts = new STSClient({ region: AWS_REGION });
@@ -195,6 +209,7 @@ export async function assumeFitCliRole(): Promise<AssumeRoleOutcome> {
         userId: "",
       },
       sessionExpiry,
+      isChained,
     };
     return cachedAssumeResult;
   } catch (err) {

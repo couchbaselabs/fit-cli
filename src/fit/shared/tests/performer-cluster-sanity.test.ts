@@ -49,8 +49,32 @@ test("parseDockerPsIds extracts non-empty ids", () => {
   assert.deepEqual(parseDockerPsIds("abc123\n\ndef456\n"), ["abc123", "def456"]);
 });
 
-test("dockerInspectArgs inspect the requested containers", () => {
-  assert.deepEqual(dockerInspectArgs(["abc123", "def456"]), ["inspect", "abc123", "def456"]);
+test("dockerInspectArgs inspect the requested containers, projected to the fields we parse", () => {
+  const args = dockerInspectArgs(["abc123", "def456"]);
+  assert.equal(args[0], "inspect");
+  assert.deepEqual(args.slice(2), ["abc123", "def456"]);
+  // A full inspect is far larger than a remote transport reliably returns, so the
+  // projection is the point of this call - assert it asks for one and only pulls the
+  // fields parseDockerInspect reads.
+  assert.ok(args[1].startsWith("--format="));
+  for (const field of ["Id", "Name", "Hostname", "NetworkMode", "Networks"]) {
+    assert.ok(args[1].includes(field), `expected --format to project ${field}`);
+  }
+});
+
+test("parseDockerInspect accepts the one-object-per-line form --format emits", () => {
+  const line = (id: string, network: string): string =>
+    JSON.stringify({
+      Id: id,
+      Name: `/${id}`,
+      Config: { Hostname: id },
+      HostConfig: { NetworkMode: "fit" },
+      NetworkSettings: { Networks: { [network]: { IPAddress: "172.18.0.2", Aliases: [] } } },
+    });
+
+  const parsed = parseDockerInspect(`${line("abc", "fit")}\n${line("def", "fit")}\n`);
+  assert.deepEqual(parsed.map((container) => container.id), ["abc", "def"]);
+  assert.deepEqual(parsed[0].networks, [{ name: "fit", ipAddress: "172.18.0.2", aliases: [] }]);
 });
 
 test("parsePerformerClusterSanityCliArgs shows help when no args are given", () => {

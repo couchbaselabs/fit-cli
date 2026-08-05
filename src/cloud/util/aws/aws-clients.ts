@@ -7,6 +7,7 @@
  */
 import { EC2Client } from "@aws-sdk/client-ec2";
 import { SSMClient } from "@aws-sdk/client-ssm";
+import { CloudWatchLogsClient } from "@aws-sdk/client-cloudwatch-logs";
 import { S3Client } from "@aws-sdk/client-s3";
 import { AWS_REGION } from "./aws-target.js";
 import { fitCliCredentialsProvider } from "./aws-cli.js";
@@ -18,6 +19,9 @@ const credentials = () => fitCliCredentialsProvider();
 
 export const ec2Client = new EC2Client({ region: AWS_REGION, credentials });
 export const ssmClient = new SSMClient({ region: AWS_REGION, credentials });
+// Backs SsmTarget's SendCommand output (CloudWatchOutputConfig) — GetCommandInvocation
+// truncates inline stdout/stderr, so full output is read back from here.
+export const cloudWatchLogsClient = new CloudWatchLogsClient({ region: AWS_REGION, credentials });
 // 5-minute request timeout to accommodate large artifact uploads.
 export const s3Client = new S3Client({
   region: AWS_REGION,

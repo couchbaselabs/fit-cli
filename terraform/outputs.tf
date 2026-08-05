@@ -16,3 +16,8 @@ output "fit_cli_subnet_id" {
   description = "Paste into environments.json5 -> defaults.aws.subnetId"
   value       = aws_subnet.fit_cli_public.id
 }
+
+output "ssm_instance_profile_name" {
+  description = "Paste into environments.json5 -> defaults.aws.ssmInstanceProfileName"
+  value       = aws_iam_instance_profile.fit_cli_ssm_instance_profile.name
+}

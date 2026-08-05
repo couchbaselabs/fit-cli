@@ -1,9 +1,9 @@
 /**
  * target — an execution target: somewhere commands run and files live. The point
  * of the abstraction is that a workflow can be handed a target and not care
- * whether it's the local machine or a remote box over SSH. Two implementations
- * live alongside this file: LocalTarget (local-target.ts) and RemoteTarget
- * (remote-target.ts).
+ * whether it's the local machine or a remote box. Two implementations live
+ * alongside this file: LocalTarget (local-target.ts) and SsmTarget
+ * (ssm-target.ts, backed by AWS SSM SendCommand).
  *
  * This is deliberately generic — nothing AWS- or FIT-specific. It mirrors the
  * shape of proc.ts (run / capture) plus file transfer, so a caller currently
@@ -13,7 +13,7 @@ import type { RunOptions } from "./proc.js";
 
 /** Somewhere commands run and files can be put/fetched. */
 export interface ExecutionTarget {
-  /** "local" for this machine, "remote" for a box reached over SSH. */
+  /** "local" for this machine, "remote" for a box reached over SSM. */
   readonly kind: "local" | "remote";
   /** Short human-readable description, e.g. "this machine" or "ubuntu@1.2.3.4". */
   readonly description: string;

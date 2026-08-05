@@ -8,7 +8,7 @@ import { commandOn, formatBytes, formatCommandLine, runScriptPrefix } from "../.
 import { ensureRunDir, instanceInternalRunDir, type DefinitionRunPath } from "../../../util/non-fit/replay.js";
 import { announceArtifactStream, type BackgroundStream } from "../../../util/non-fit/proc.js";
 import { posixQuote, teeToFileCommand } from "../../../util/non-fit/remote-target.js";
-import { RemoteTarget } from "../../../util/non-fit/remote-target.js";
+import { SsmTarget, waitForSsmReady } from "../../../util/non-fit/ssm-target.js";
 import type { ExecutionTarget } from "../../../util/non-fit/target.js";
 import { resolveGithubTokenFromAws } from "../../util/config.js";
 import { FIT_PERFORMER, repoPath } from "../../util/repos.js";
@@ -328,16 +328,17 @@ export async function createRemoteFitExecutionContext(
 }
 
 /**
- * Mini CLI: prepare a remote FIT execution context against an SSH host and,
- * optionally, run one operation against it. Run with --help for the flags, or:
+ * Mini CLI: prepare a remote FIT execution context against an EC2 instance
+ * (over SSM) and, optionally, run one operation against it. Run with --help
+ * for the flags, or:
  *
  *   bun src/fit/shared/util/remote-fit-execution-context.ts --help
  *   # Prepare (full flow): install deps + clone repos on the box.
- *   bun src/fit/shared/util/remote-fit-execution-context.ts --host 1.2.3.4 --sdk python --key ~/.ssh/id
+ *   bun src/fit/shared/util/remote-fit-execution-context.ts --instance i-0123456789abcdef0 --sdk python
  *   # Reuse an already-prepared box, then run one command against the context.
- *   bun src/fit/shared/util/remote-fit-execution-context.ts --host 1.2.3.4 --sdk python --skip-preparation capture -- ls
+ *   bun src/fit/shared/util/remote-fit-execution-context.ts --instance i-0123456789abcdef0 --sdk python --skip-preparation capture -- ls
  *
- * Needs an SSH host you can already reach (e.g. an EC2 box left running). This is
+ * Needs an EC2 instance registered with SSM (e.g. a box left running). This is
  * for debugging/development of createRemoteFitExecutionContext, not end-users.
  */
 const REMOTE_CLI_ACTIONS = ["run", "capture", "path-exists", "command-available", "remove-tree"] as const;
@@ -347,19 +348,18 @@ function isRemoteCliAction(value: string | undefined): value is RemoteCliAction 
   return REMOTE_CLI_ACTIONS.includes(value as RemoteCliAction);
 }
 
-const REMOTE_CLI_HELP = `Prepare a remote FIT execution context (createRemoteFitExecutionContext) over SSH.
+const REMOTE_CLI_HELP = `Prepare a remote FIT execution context (createRemoteFitExecutionContext) over SSM.
 
 Usage:
-  tsx src/workflows/fit-shared/util/remote-fit-execution-context.ts --host <ip> --sdk <sdk> [options] [<subcommand> [args]]
+  tsx src/workflows/fit-shared/util/remote-fit-execution-context.ts --instance <ec2-id> --sdk <sdk> [options] [<subcommand> [args]]
 
 Required:
-  --host <ip|dns>                  SSH host to prepare the FIT workspace on.
+  --instance <ec2-id>               EC2 instance id to prepare the FIT workspace on.
   --sdk <${SDKS.map((s) => s.value).join("|")}>
                                    Which SDK's repos to clone.
 
 Options:
-  --user <name>                    SSH login user (default: ubuntu).
-  --key <path>                     Private key for SSH (-i).
+  --user <name>                    Login user on the box (default: ubuntu).
   --skip-preparation               Reuse an already-prepared box (skip apt install + clones).
   --help, -h                       Show this help.
 
@@ -395,20 +395,27 @@ if (isMain(import.meta.url)) {
       return;
     }
 
-    const hostFlag = takeFlag(rawArgs, "--host");
-    const sdkFlag = takeFlag(hostFlag.rest, "--sdk");
+    const instanceFlag = takeFlag(rawArgs, "--instance");
+    const sdkFlag = takeFlag(instanceFlag.rest, "--sdk");
     const userFlag = takeFlag(sdkFlag.rest, "--user");
-    const keyFlag = takeFlag(userFlag.rest, "--key");
-    const skipFlag = takeBoolFlag(keyFlag.rest, "--skip-preparation");
+    const skipFlag = takeBoolFlag(userFlag.rest, "--skip-preparation");
 
-    const host = hostFlag.value;
+    const instanceId = instanceFlag.value;
     const sdk = sdkFlag.value ? sdkByValue(sdkFlag.value) : undefined;
-    if (!host || !sdk) {
-      console.error(`Missing --host and/or a valid --sdk.\n\n${REMOTE_CLI_HELP}`);
+    if (!instanceId || !sdk) {
+      console.error(`Missing --instance and/or a valid --sdk.\n\n${REMOTE_CLI_HELP}`);
       process.exit(2);
     }
 
-    const target = new RemoteTarget({ host, user: userFlag.value, identityFile: keyFlag.value });
+    process.stdout.write(`Waiting for ${instanceId} to register with SSM...`);
+    if (!(await waitForSsmReady(instanceId))) {
+      console.log(" unreachable");
+      console.error(`Couldn't reach ${instanceId} over SSM. Check the instance id and that it's up.`);
+      process.exit(1);
+    }
+    console.log(" ready");
+
+    const target = new SsmTarget(instanceId, userFlag.value);
     const execution = await createRemoteFitExecutionContext(target, sdk, skipFlag.present);
 
     // Drop the optional `--` separator so its only job is shielding the inner
