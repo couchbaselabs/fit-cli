@@ -50,6 +50,15 @@ test("~/.aws/config points at the credential_process, not static keys", () => {
   assert.doesNotMatch(config, /aws_access_key_id/);
 });
 
+test("~/.aws/config rejects a credential_process path with whitespace", () => {
+  // The SDK splits the value as a command line, and quoting rules vary between SDKs, so a
+  // path with spaces must fail loudly rather than produce a config that resolves nothing.
+  assert.throws(
+    () => remoteAwsConfigFile("/home/ubuntu/fit workspace/fit-aws-creds-fetch.sh"),
+    /must not contain whitespace/,
+  );
+});
+
 test("fetch script execs cat on the payload path", () => {
   const script = awsCredsFetchScript("/home/ubuntu/fit-workspace/fit-aws-creds.json");
   assert.ok(script.startsWith("#!/bin/sh\n"));

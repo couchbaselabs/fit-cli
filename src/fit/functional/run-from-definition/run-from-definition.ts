@@ -2424,11 +2424,13 @@ export async function runFromDefinition(
       // Surface this loudly. A stale-credentials run fails much later and much less
       // legibly — as `RequestExpired` inside cbdinocluster, typically in
       // `private-endpoints setup-link` — so without this the real cause is easy to miss.
+      // Counts every failure over the run, so a later attempt may well have succeeded — hence
+      // "during this run" rather than a claim about the credentials' state right now.
       const message =
-        `AWS credentials on the test instance could not be kept fresh ` +
-        `(${credsRefreshFailures} failed refresh attempt(s)). ` +
-        `Any 'RequestExpired' errors from cbdinocluster are caused by this, not by the SDK under test. ` +
-        `Last error: ${credsRefreshLastError ?? "unknown"}`;
+        `${credsRefreshFailures} attempt(s) to refresh AWS credentials on the test instance ` +
+        `failed during this run. Any 'RequestExpired' errors from cbdinocluster are caused by ` +
+        `this, not by the SDK under test. ` +
+        `Most recent failure: ${credsRefreshLastError ?? "unknown"}`;
       details.push({ label: "AWS credential refresh", value: message, callToAction: true });
       tracker.record("NonFatal", message, activeResumePath ? failureContextFromPath(activeResumePath) : { instanceIndex: 0 });
     }

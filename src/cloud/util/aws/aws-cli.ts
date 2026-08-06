@@ -279,7 +279,7 @@ export interface ForwardableCredentials {
  *
  * The forwarded values are still a point-in-time snapshot that expires on the box, so the box
  * needs to re-read them rather than bake them into an environment — see
- * `uploadRemoteAwsCredentials` in `fit/shared/util/remote-fit-run.ts`, which installs them
+ * `uploadRemoteAwsCredentials` in `fit/shared/util/remote-aws-creds.ts`, which installs them
  * behind a `credential_process` and keeps the file refreshed for the life of the run.
  */
 export async function freshAssumedCredentials(marginMs?: number): Promise<ForwardableCredentials | undefined> {

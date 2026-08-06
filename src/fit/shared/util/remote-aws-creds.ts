@@ -94,8 +94,20 @@ export function awsCredsFetchScript(jsonPath: string): string {
 /**
  * `~/.aws/config` contents. `credential_process` is re-run by every new process, which is
  * exactly what the old `~/.profile` exports could not do.
+ *
+ * The value is a command line the AWS SDK splits on whitespace, and quoting rules differ
+ * between SDKs, so rather than guess at an escaping that works everywhere we require a path
+ * with no whitespace. In practice it is always `<remote home>/fit-workspace/…`, built from a
+ * constant; this only fires if that assumption is ever broken, and fails loudly rather than
+ * writing a config that silently resolves no credentials.
  */
 export function remoteAwsConfigFile(fetchScriptPath: string, region: string = AWS_REGION): string {
+  if (/\s/.test(fetchScriptPath)) {
+    throw new Error(
+      `credential_process path must not contain whitespace (the AWS SDK splits the value as a ` +
+      `command line): ${fetchScriptPath}`,
+    );
+  }
   return `# Written by fit-cli. Credentials come from a process so each cbdinocluster\n# invocation re-reads them; fit-cli keeps the underlying file refreshed.\n[default]\nregion = ${region}\ncredential_process = ${fetchScriptPath}\n`;
 }
 
@@ -143,8 +155,10 @@ async function stageRemoteFile(
  * half-written one. That matters because the refresher rewrites the payload underneath a
  * running test-driver.
  *
- * `dest` is passed through unquoted so callers can use `~`; `tmpPath` is always an absolute
- * path we built, so it is quoted normally.
+ * `dest` is deliberately NOT quoted here, so a caller can pass `~/.aws/config` and have the
+ * shell expand it. Callers passing anything else must pre-quote it themselves (as the callers
+ * below do, with `posixQuote`). `tmpPath` is always an absolute path we built, so it is quoted
+ * for them.
  */
 function installCommand(tmpPath: string, dest: string, mode: "600" | "700"): string {
   return `chmod ${mode} ${posixQuote(tmpPath)} && mv -f ${posixQuote(tmpPath)} ${dest}`;
@@ -231,7 +245,11 @@ export interface RemoteAwsCredsRefresher {
   stop(): void;
   /** Refresh attempts that failed. Non-zero means the box may be running on stale credentials. */
   readonly failures: number;
-  /** Why the most recent attempt failed, for the end-of-run summary. */
+  /**
+   * Why the most recent *failed* attempt failed, for the end-of-run summary. Deliberately not
+   * cleared by a later success, so it stays paired with the cumulative {@link failures} count —
+   * clearing it would leave the summary reporting failures with no reason attached.
+   */
   readonly lastError: string | undefined;
 }
 
@@ -353,6 +371,10 @@ function runLocalCli(): void {
         process.exit(2);
       }
       const expiry = new Date(iso);
+      if (Number.isNaN(expiry.getTime())) {
+        console.error(`'${iso}' is not a valid ISO date.\n\n${LOCAL_CLI_HELP}`);
+        process.exit(2);
+      }
       const now = new Date();
       console.log(
         `expires ${expiry.toISOString()}, now ${now.toISOString()}, ` +
