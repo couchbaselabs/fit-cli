@@ -24,13 +24,7 @@
               tests: {
                 presets: ['{{environments.testSets.SITUATIONAL_SET_RELEASE}}'],
               },
-              situational: {
-                database: {
-                  mode: 'hosted',
-                  // used to go to 'dev'
-                  resultsEnvironment: 'prod',
-                },
-              },
+              situational: {},
               versions: ['{{environments.defaults.capellaClusterVersion}}', '{{environments.defaults.capellaPreviousClusterVersion}}'],
             },
           ],

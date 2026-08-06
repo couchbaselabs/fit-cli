@@ -7,7 +7,7 @@ import type { ClusterExistsPolicy } from "../../../cluster/cluster-create/cluste
 import type { PieceData } from "../../../util/non-fit/config-pieces.js";
 
 export const FIT_DEFINITION_TYPE = "fit";
-export const CURRENT_FIT_DEFINITION_VERSION = 1;
+export const CURRENT_FIT_DEFINITION_VERSION = 2;
 export const FIT_RUN_TYPES = ["functional", "situational", "analytics-functional"] as const;
 
 export type FitRunType = (typeof FIT_RUN_TYPES)[number];
@@ -198,24 +198,10 @@ export interface TestsSection {
   maven?: MavenOptions;
 }
 
-export const SITUATIONAL_DATABASE_MODES = ["hosted", "local"] as const;
-export type SituationalDatabaseMode = (typeof SITUATIONAL_DATABASE_MODES)[number];
-
-export interface SituationalDatabaseSetup {
-  mode: SituationalDatabaseMode;
-  /**
-   * Which results environment to store/view results in (a key under `results` in
-   * environments.json5 — e.g. "dev"=faas, "prod"=performance-sdk). Only meaningful
-   * when mode is "hosted". Defaults to "dev".
-   */
-  resultsEnvironment?: string;
-}
-
 /** Object marker, matching {@link PrivateEndpointSetup}'s empty-object convention. */
 export type SituationalCngSetup = Record<string, never>;
 
 export interface SituationalSection {
-  database: SituationalDatabaseSetup;
   /**
    * When present, situational's cbdino-managed cluster is built via the Couchbase
    * Autonomous Operator (CAO) / CNG gateway (OpenShift) instead of a Capella cloud

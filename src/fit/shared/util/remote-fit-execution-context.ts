@@ -15,6 +15,7 @@ import { FIT_PERFORMER, repoPath } from "../../util/repos.js";
 import { SDKS, sdkByValue, type Sdk } from "../../../util/sdk/sdks.js";
 import { DEFAULT_PERFORMER_PORT } from "../../performers/util/performer-port.js";
 import { collectJunitArtifactsFromTarget } from "../run-test-driver/collect-junit.js";
+import { collectResultsDirFromTarget } from "../run-test-driver/collect-results.js";
 import {
   backgroundShellCommand,
   configureRemoteGitCredentials,
@@ -316,6 +317,7 @@ export async function createRemoteFitExecutionContext(
     removeTree: (path) => target.run("rm", ["-rf", path]),
     collectJunitArtifacts: async (sourceDir, path) =>
       await collectJunitArtifactsFromTarget(target, sourceDir, path),
+    collectResultsDir: async (sourceDir, path) => await collectResultsDirFromTarget(target, sourceDir, path),
     pathExists: (path) => target.run("test", ["-e", path], undefined, { quiet: true }).then(() => true).catch(() => false),
     commandAvailable: (command) =>
       target

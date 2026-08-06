@@ -10,7 +10,7 @@
  */
 import { isMain, runCli } from "../../util/non-fit/cli.js";
 import { extractInteractiveFlag, extractReplayFlag, markNonInteractiveByDefault } from "../../util/non-fit/replay.js";
-import { cacheDefinition, definitionSummary, isDefinitionUrl, loadDefinition, resolveAndLoadDefinition } from "../shared/definition/parse-definition.js";
+import { cacheDefinition, definitionSummary, isDefinitionUrl, loadDefinition, resolveAndLoadDefinition, upgradeDefinitionFileInPlace } from "../shared/definition/parse-definition.js";
 import { describeDefinition } from "../shared/definition/generate-desc.js";
 import { runDispatch } from "../run/run.js";
 import { expandUsage, presetDispatch, runRawExpand } from "../preset/preset.js";
@@ -66,6 +66,7 @@ To list, expand or generate presets, use \`${preset}\` instead.
 
 Usage:
   ${def} validate <file.json5>
+  ${def} upgrade <file.json5>
   ${def} generate-desc <file.json5>
   ${def} --help
 

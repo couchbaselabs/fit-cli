@@ -37,16 +37,6 @@ export function surefireReportsDir(fitPerformerDir: string, testDriverModule: st
   return join(fitPerformerDir, testDriverModule, "target", "surefire-reports");
 }
 
-/**
- * Absolute path to the CSV of situational test results the test-driver writes
- * (one row per scenario: timestamp, test case, status, results-viewer link).
- * Written by RunnerUtils.writeCsvRow relative to the JVM's cwd, which Maven/Surefire's
- * forked-JVM default sets to the module's basedir — a sibling of target/surefire-reports.
- */
-export function testResultsCsvPath(fitPerformerDir: string, testDriverModule: string = "test-driver"): string {
-  return join(fitPerformerDir, testDriverModule, "test_results.csv");
-}
-
 /** The surefire XML report files (TEST-*.xml) found in `sourceDir`. */
 function junitXmlFiles(sourceDir: string): string[] {
   if (!existsSync(sourceDir)) {

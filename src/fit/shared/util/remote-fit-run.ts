@@ -13,6 +13,7 @@ import { FIT_INSTANCE_USER } from "../../util/aws/fit-instance.js";
 import { FIT_PERFORMER, repoPath, type Repo } from "../../util/repos.js";
 import { ensureRepo } from "../../util/ensure-repo.js";
 import { collectJunitArtifacts } from "../run-test-driver/collect-junit.js";
+import { collectResultsDir } from "../run-test-driver/collect-results.js";
 import type { Sdk } from "../../../util/sdk/sdks.js";
 import type { AwsCredentials } from "../../../cloud/util/aws/identity.js";
 import { freshAssumedCredentials } from "../../../cloud/util/aws/aws-cli.js";
@@ -98,6 +99,14 @@ export interface FitExecutionContext {
    */
   runArtifactsDir(path: DefinitionRunPath): string;
   collectJunitArtifacts(sourceDir: string, path: DefinitionRunPath): Promise<Artifact[]>;
+  /**
+   * Collect the test-driver's whole `results/<runUuid>/` tree (situational
+   * runs only — see collect-results.ts) from `sourceDir` into this run's local
+   * artifact tree. Returns the local dir, or undefined if `sourceDir` doesn't
+   * exist (an old test-driver checkout without this feature, or a run that
+   * died before writing anything).
+   */
+  collectResultsDir(sourceDir: string, path: DefinitionRunPath): Promise<string | undefined>;
   pathExists(path: string): Promise<boolean>;
   commandAvailable(command: string): Promise<boolean>;
   performerRunArgs(imageName: string, hostPort?: number, dockerNetwork?: string): string[];
@@ -459,6 +468,7 @@ export function createLocalFitExecutionContext(): FitExecutionContext {
     },
     runArtifactsDir: (path) => runRunDir(path),
     collectJunitArtifacts: async (sourceDir, path) => await collectJunitArtifacts(sourceDir, path),
+    collectResultsDir: (sourceDir, path) => Promise.resolve(collectResultsDir(sourceDir, path)),
     pathExists: async (path) => target.capture("test", ["-e", path], undefined, { quiet: true }).then(() => true).catch(() => false),
     commandAvailable: async (command) =>
       target

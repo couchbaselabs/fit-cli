@@ -75,6 +75,53 @@ export function capellaDebugLinks(
   };
 }
 
+/** One entry in run.json5's `forDatabase.debug.items[]` array. */
+export interface DebugLink {
+  /** Rendered verbatim. */
+  label: string;
+  url?: string;
+  description?: string;
+  /** A shell command shown with a copy button, e.g. an archive-fetch command. */
+  command?: string;
+  imageUrl?: string;
+}
+
+/**
+ * Build the `forDatabase.debug.items[]` entries for a Capella cluster from
+ * {@link capellaDebugLinks}, plus (when `archiveZipKey` is given) a link to fetch
+ * the run's archived artifacts. Returns an empty array when `environment` isn't
+ * configured in environments.json5.
+ */
+export function buildDebugLinks(
+  environment: string,
+  couchbaseClusterUuid: string,
+  archiveZipKey?: string,
+  environments: EnvironmentsFile = loadEnvironments(),
+): DebugLink[] {
+  const links = capellaDebugLinks(environment, couchbaseClusterUuid, environments);
+  const result: DebugLink[] = [];
+  if (links?.capellaUiUrl) {
+    result.push({ label: "Capella UI", url: links.capellaUiUrl });
+  }
+  if (links) {
+    result.push({
+      label: "Fleet Manager",
+      url: links.fleetManagerUrl,
+      description: "Needs VPN access.",
+    });
+    result.push({ label: "DataDog logs", url: links.datadogLogsUrl });
+  }
+  if (archiveZipKey) {
+    result.push({
+      label: "Run archive",
+      url: `https://s3.console.aws.amazon.com/s3/object/${archiveZipKey.replace(/^s3:\/\//, "")}`,
+      description: "Zipped run artifacts (logs, JUnit reports, etc.), uploaded to S3.",
+      command: `fit archive fetch ${archiveZipKey}`,
+    });
+  }
+  return result;
+}
+
 /** Print the debug links (if any) for a Capella cluster, with the Fleet Manager caveat. */
 export function printCapellaDebugLinks(environment: string, couchbaseClusterUuid: string): void {
   const links = capellaDebugLinks(environment, couchbaseClusterUuid);

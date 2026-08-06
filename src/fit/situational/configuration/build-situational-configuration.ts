@@ -21,7 +21,6 @@
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { mergeConfigPieces, type ConfigPiece, type PieceData } from "../../../util/non-fit/config-pieces.js";
 import { DEFAULT_PERFORMER_PORT } from "../../performers/util/performer-port.js";
-import { type ResultsDatabase } from "../../shared/util/results-database.js";
 import { AUTO_GENERATED_MARKER } from "../../shared/fit-configuration/write-fit-configuration.js";
 
 /**
@@ -78,19 +77,19 @@ function baseConfigPiece(performerPort: number): ConfigPiece {
 }
 
 /**
- * The situational-specific part: don't exclude situational tests, add cbdino +
- * database. Analytics/Columnar situational tests (tagged "columnar", e.g.
- * ColumnarTest) are excluded by default — they need an Analytics performer and
- * fail against a plain operational one. A definition file can opt back in with
- * a `fitConfig.excludeTests` override, which replaces this array wholesale.
+ * The situational-specific part: don't exclude situational tests, add cbdino.
+ * Analytics/Columnar situational tests (tagged "columnar", e.g. ColumnarTest)
+ * are excluded by default — they need an Analytics performer and fail against
+ * a plain operational one. A definition file can opt back in with a
+ * `fitConfig.excludeTests` override, which replaces this array wholesale.
  *
- * The database block deliberately carries only the non-secret jdbc + username.
- * The password is NOT written here: FITConfiguration.json is collected into CI
- * artifacts, so a password in it leaks. fit-cli passes it to the test-driver via
- * the FIT_RESULTS_DB_PASSWORD environment variable instead (see runTestDriver),
- * and the driver rejects a password found in config.
+ * There's no results-database block: situational testing is file-only now —
+ * the test-driver always writes its per-run result files (run.json5,
+ * buckets.csv, events.csv, scores.json5 — scoring is the test-driver's own
+ * job, from those files), and uploading those files into a database is a
+ * separate piece, not fit-cli's job.
  */
-export function situationalConfigPiece(database: ResultsDatabase, cbdino: CbdinoSettings): ConfigPiece {
+export function situationalConfigPiece(cbdino: CbdinoSettings, capellaEnvironment: string): ConfigPiece {
   return {
     label: "situational",
     data: {
@@ -104,10 +103,10 @@ export function situationalConfigPiece(database: ResultsDatabase, cbdino: Cbdino
             ? { deployer: "cao", operatorVersion: cbdino.cao.operatorVersion, gatewayVersion: cbdino.cao.gatewayVersion }
             : {}),
         },
-        database: {
-          jdbc: database.jdbc,
-          username: database.username,
-        },
+        // Not used by cbdino allocation itself (the endpoint comes from cbdino's own
+        // credentials upload) — carried purely so the test-driver can echo it back in
+        // its per-run result files, for fit-cli to resolve forDatabase.debug.items[] against later.
+        capellaEnvironment,
       },
     },
   };
@@ -119,25 +118,21 @@ export function situationalConfigPiece(database: ResultsDatabase, cbdino: Cbdino
  * last so a definition file can override or extend any generated field.
  */
 export function buildSituationalConfiguration(
-  database: ResultsDatabase,
   cbdino: CbdinoSettings = DEFAULT_CBDINO_SETTINGS,
   performerPort: number = DEFAULT_PERFORMER_PORT,
   fitConfigPiece?: PieceData,
+  capellaEnvironment: string = "dev",
 ): Record<string, unknown> {
   return mergeConfigPieces([
     baseConfigPiece(performerPort),
-    situationalConfigPiece(database, cbdino),
+    situationalConfigPiece(cbdino, capellaEnvironment),
     ...(fitConfigPiece ? [{ label: "definition fitConfig piece", data: fitConfigPiece }] : []),
   ]);
 }
 
 if (isMain(import.meta.url)) {
   runCli(() => {
-    const sample = buildSituationalConfiguration({
-      jdbc: "jdbc:postgresql://performance-sdk.couchbase.com:5432/perf",
-      username: "results_writer",
-      password: "***",
-    });
+    const sample = buildSituationalConfiguration();
     console.log(JSON.stringify(sample, null, 2));
     return Promise.resolve();
   });

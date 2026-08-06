@@ -21,7 +21,6 @@ import {
   CURRENT_FIT_DEFINITION_VERSION,
   FIT_DEFINITION_TYPE,
   FIT_RUN_TYPES,
-  SITUATIONAL_DATABASE_MODES,
   TEST_PRESETS,
   type AwsInstanceSetup,
   type PrivateEndpointSetup,
@@ -46,8 +45,6 @@ import {
   type SchemeAndTls,
   type SessionLifetime,
   type SharedSetup,
-  type SituationalDatabaseMode,
-  type SituationalDatabaseSetup,
   type CapellaClusterSetup,
   type SituationalCngSetup,
   type SituationalSection,
@@ -467,12 +464,8 @@ function validateTestsSection(value: unknown, path: string): TestsSection {
   return tests;
 }
 
-function isSituationalDatabaseMode(value: unknown): value is SituationalDatabaseMode {
-  return isString(value) && (SITUATIONAL_DATABASE_MODES as readonly string[]).includes(value);
-}
-
 /**
- * Validate an optional environment-name selector (capellaEnvironment / resultsEnvironment).
+ * Validate an optional environment-name selector (capellaEnvironment).
  * Only checks it's a string here; whether the named environment actually exists is checked
  * at run time against environments.json5 (resolveCapellaConfig / resolveResultsDbCredentials).
  */
@@ -483,16 +476,6 @@ function optionalEnvironmentName(record: Record<string, unknown>, key: string, p
     throw new InvalidDefinitionError(`"${path}.${key}" must be a string; got ${JSON.stringify(value)}`);
   }
   return value;
-}
-
-function validateSituationalDatabase(value: unknown, path: string): SituationalDatabaseSetup {
-  const record = requireRecord(value, path);
-  rejectUnknown(record, ["mode", "resultsEnvironment"], path);
-  if (!isSituationalDatabaseMode(record.mode)) {
-    throw new InvalidDefinitionError(`"${path}.mode" must be one of ${SITUATIONAL_DATABASE_MODES.join(", ")}; got ${JSON.stringify(record.mode)}`);
-  }
-  const resultsEnvironment = optionalEnvironmentName(record, "resultsEnvironment", path);
-  return { mode: record.mode, ...(resultsEnvironment !== undefined ? { resultsEnvironment } : {}) };
 }
 
 function validateSituationalCng(value: unknown, path: string): SituationalCngSetup {
@@ -514,16 +497,18 @@ function validateSituationalVersion(record: Record<string, unknown>, path: strin
 
 function validateSituationalSection(value: unknown, path: string): SituationalSection {
   const record = requireRecord(value, path);
-  rejectUnknown(record, ["database", "cng", "privateEndpoint", "version"], path);
-  if (record.database === undefined) {
-    throw new InvalidDefinitionError(`Missing required field: ${path}.database`);
+  if (record.database !== undefined) {
+    throw new InvalidDefinitionError(
+      `"${path}.database" is no longer supported: situational testing is file-only now (results/<runUuid>/ files, always written) — ` +
+        `there's no hosted results database to configure from fit-cli. Uploading result files into a database is a separate piece. Remove "${path}.database".`,
+    );
   }
+  rejectUnknown(record, ["cng", "privateEndpoint", "version"], path);
   const version = validateSituationalVersion(record, path);
   if (version !== undefined && record.cng !== undefined) {
     throw new InvalidDefinitionError(`"${path}.version" and "${path}.cng" are mutually exclusive — CNG pins its own cluster version.`);
   }
   return {
-    database: validateSituationalDatabase(record.database, `${path}.database`),
     ...(record.cng !== undefined ? { cng: validateSituationalCng(record.cng, `${path}.cng`) } : {}),
     ...(record["privateEndpoint"] !== undefined
       ? { privateEndpoint: validatePrivateEndpointSetup(record["privateEndpoint"], `${path}.privateEndpoint`) }
@@ -872,6 +857,22 @@ function validateInstance(value: unknown, index: number): InstanceLifetime {
   return instance;
 }
 
+/**
+ * Upgrade a whole v1 definition object to v2 shape in-memory: just the version
+ * stamp bump. v1's `situational.database` block has no v2 equivalent (situational
+ * testing is file-only now, no hosted results database to configure), so it's
+ * left as-is here — {@link validateSituationalSection} rejects it with guidance
+ * either way, whether the file says version 1 or 2. Used both by
+ * `validateDefinition` (transparent upgrade-on-load) and by the `definition
+ * upgrade` CLI subcommand (in-place file rewrite).
+ */
+export function upgradeDefinitionV1ToV2(raw: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...raw,
+    version: CURRENT_FIT_DEFINITION_VERSION,
+  };
+}
+
 function validateVersion(version: unknown): number {
   if (typeof version !== "number" || !Number.isInteger(version)) {
     throw new InvalidDefinitionError(`Missing or invalid "version" (expected an integer); got ${JSON.stringify(version)}`);
@@ -889,10 +890,13 @@ function validateVersion(version: unknown): number {
   return version;
 }
 
-export function validateDefinition(raw: unknown): FitDefinition {
-  if (!isRecord(raw)) {
+export function validateDefinition(rawInput: unknown): FitDefinition {
+  if (!isRecord(rawInput)) {
     throw new InvalidDefinitionError("Definition file must be an object at the top level.");
   }
+  // Transparent upgrade-on-load: a v1 file validates and runs exactly as if it
+  // had been hand-upgraded to v2 (see upgradeDefinitionV1ToV2).
+  const raw = rawInput.version === 1 ? upgradeDefinitionV1ToV2(rawInput) : rawInput;
   rejectUnknown(raw, ["version", "type", "description", "setup", "instances", "clusterConfigs", "fitConfigs", "cycles", "iterations"], "(top level)");
   validateVersion(raw.version);
   if (raw.type !== FIT_DEFINITION_TYPE) {
@@ -984,6 +988,25 @@ export function parseDefinition(text: string, format?: DefinitionFormat): FitDef
 
 export function loadDefinition(path: string): FitDefinition {
   return parseDefinition(readFileSync(path, "utf8"), detectDefinitionFormat(path));
+}
+
+/**
+ * Upgrade an on-disk v1 definition file to v2 in place (see
+ * upgradeDefinitionV1ToV2). Returns false (no-op) if the file is already
+ * version 2 or newer. Note: like other generated definition output in this
+ * codebase, native comments aren't preserved through the rewrite.
+ */
+export function upgradeDefinitionFileInPlace(path: string): boolean {
+  const format = detectDefinitionFormat(path);
+  const raw = parseDefinitionRaw(readFileSync(path, "utf8"), format);
+  if (!isRecord(raw) || raw.version !== 1) {
+    return false;
+  }
+  const upgraded = upgradeDefinitionV1ToV2(raw);
+  validateDefinition(upgraded); // fail before writing if the upgraded shape doesn't validate
+  const text = format === "yaml" ? YAML.stringify(upgraded) : JSON5.stringify(upgraded, null, 2);
+  writeFileSync(path, text);
+  return true;
 }
 
 export function isDefinitionUrl(s: string): boolean {

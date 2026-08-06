@@ -450,7 +450,7 @@ test("versions expands a situational run into one copy per version with distinct
       {
         type: "situational",
         tests: { classes: ["com.example.MyTest"] },
-        situational: { database: { mode: "local" } },
+        situational: {},
         versions: ["8.0-stable", "7.6"],
       },
     ],
@@ -472,7 +472,7 @@ test("versions appends :v{version} to the run dir segment to avoid collisions", 
       {
         type: "situational",
         tests: { classes: ["com.example.MyTest"] },
-        situational: { database: { mode: "local" } },
+        situational: {},
         versions: ["8.0-stable", "7.6"],
       },
     ],

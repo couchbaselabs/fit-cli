@@ -95,9 +95,7 @@ instances:
           image: java-fit-performer:main
         runs:
           - type: situational
-            situational:
-              database:
-                mode: hosted
+            situational: {}
             tests:
               presets: [all]
 `);
@@ -322,9 +320,7 @@ instances:
           image: java-fit-performer:main
         runs:
           - type: situational
-            situational:
-              database:
-                mode: local
+            situational: {}
             tests:
               presets: [all]
 `);
@@ -336,6 +332,55 @@ test("rejects unsupported future versions", () => {
   assert.throws(
     () => parseDefinition(`version: ${CURRENT_FIT_DEFINITION_VERSION + 1}\ntype: fit\ninstances: []\n`),
     UnsupportedDefinitionVersionError,
+  );
+});
+
+test("rejects a leftover situational.database block with guidance to remove it (v1)", () => {
+  assert.throws(
+    () =>
+      parseDefinition(`
+version: 1
+type: fit
+instances:
+  - localhost: {}
+    clusters: []
+    clusterlessSessions:
+      - performer:
+          image: java-fit-performer:main
+        runs:
+          - type: situational
+            situational:
+              database:
+                mode: hosted
+                resultsEnvironment: prod
+            tests:
+              presets: [all]
+`),
+    (err: unknown) => err instanceof InvalidDefinitionError && /no longer supported/.test(err.message),
+  );
+});
+
+test("rejects a leftover situational.database block with guidance to remove it (v2)", () => {
+  assert.throws(
+    () =>
+      parseDefinition(`
+version: 2
+type: fit
+instances:
+  - localhost: {}
+    clusters: []
+    clusterlessSessions:
+      - performer:
+          image: java-fit-performer:main
+        runs:
+          - type: situational
+            situational:
+              database:
+                resultsEnvironment: [dev, file]
+            tests:
+              presets: [all]
+`),
+    (err: unknown) => err instanceof InvalidDefinitionError && /no longer supported/.test(err.message),
   );
 });
 
@@ -643,9 +688,7 @@ instances:
           image: java-fit-performer:main
         runs:
           - type: situational
-            situational:
-              database:
-                mode: hosted
+            situational: {}
             tests:
               presets: [all]
 `;
@@ -658,7 +701,7 @@ test("parses versions on a situational run, expanding to N sequential runs at re
 });
 
 test("parses situational.version", () => {
-  const def = parseDefinition(SITUATIONAL.replace("mode: hosted", "mode: hosted\n              version: 8.0-stable"));
+  const def = parseDefinition(SITUATIONAL.replace("situational: {}", "situational:\n              version: 8.0-stable"));
   const run = def.instances[0]?.clusterlessSessions?.[0]?.runs[0];
   assert.ok(run && run.type === "situational");
   assert.equal(run.situational.version, "8.0-stable");
@@ -682,7 +725,7 @@ test("rejects versions combined with situational.version", () => {
   assert.throws(
     () => parseDefinition(
       SITUATIONAL
-        .replace("mode: hosted", "mode: hosted\n              version: \"7.6\"")
+        .replace("situational: {}", "situational:\n              version: \"7.6\"")
         .replace("presets: [all]", "presets: [all]\n            versions: [8.0-stable]"),
     ),
     (err: unknown) => err instanceof InvalidDefinitionError && /mutually exclusive/.test(err.message),
@@ -693,7 +736,7 @@ test("rejects versions combined with situational.cng", () => {
   assert.throws(
     () => parseDefinition(
       SITUATIONAL
-        .replace("mode: hosted", "mode: hosted\n              cng: {}")
+        .replace("situational: {}", "situational:\n              cng: {}")
         .replace("presets: [all]", "presets: [all]\n            versions: [8.0-stable]"),
     ),
     (err: unknown) => err instanceof InvalidDefinitionError && /CNG pins its own cluster version/.test(err.message),
@@ -703,7 +746,7 @@ test("rejects versions combined with situational.cng", () => {
 test("rejects situational.version combined with situational.cng", () => {
   assert.throws(
     () => parseDefinition(
-      SITUATIONAL.replace("mode: hosted", "mode: hosted\n              version: 8.0-stable\n              cng: {}"),
+      SITUATIONAL.replace("situational: {}", "situational:\n              version: 8.0-stable\n              cng: {}"),
     ),
     (err: unknown) => err instanceof InvalidDefinitionError && /mutually exclusive/.test(err.message),
   );

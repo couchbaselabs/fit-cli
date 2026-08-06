@@ -16,7 +16,6 @@ import { type PieceData } from "../../../util/non-fit/config-pieces.js";
 import { printFileContent } from "../../../util/non-fit/fit-cli-log.js";
 import type { DefinitionRunPath } from "../../../util/non-fit/replay.js";
 import { DEFAULT_PERFORMER_PORT } from "../../performers/util/performer-port.js";
-import { type ResultsDatabase } from "../../shared/util/results-database.js";
 import {
   buildSituationalConfiguration,
   DEFAULT_CBDINO_SETTINGS,
@@ -26,21 +25,19 @@ import { fitConfigDocPath, writeFitConfiguration } from "../../shared/fit-config
 
 /** Build and write a situational FITConfiguration.json to the run directory. */
 export function generateSituationalConfiguration(
-  database: ResultsDatabase,
   cbdino: CbdinoSettings = DEFAULT_CBDINO_SETTINGS,
   fitPerformerDir: string,
   path: DefinitionRunPath,
   performerPort: number = DEFAULT_PERFORMER_PORT,
   fitConfigPiece?: PieceData,
+  capellaEnvironment: string = "dev",
 ): RunOutput & { path: string } {
-  const config = buildSituationalConfiguration(database, cbdino, performerPort, fitConfigPiece);
+  const config = buildSituationalConfiguration(cbdino, performerPort, fitConfigPiece, capellaEnvironment);
 
   console.log(
     `\nGenerating a situational FITConfiguration.json for you. You can also produce this by hand by ` +
       `following ${fitConfigDocPath(fitPerformerDir)} and the situational notes in SITUATIONAL_TESTING.md.`,
   );
-  // The config no longer contains the results-DB password (fit-cli passes it to
-  // the driver via the FIT_RESULTS_DB_PASSWORD env var), so it's safe to echo verbatim.
   const result = writeFitConfiguration(config, path);
   console.log(`\nWriting ${result.path}:\n`);
   printFileContent(JSON.stringify(config, null, 2));
@@ -51,11 +48,7 @@ export function generateSituationalConfiguration(
 
 if (isMain(import.meta.url)) {
   runCli(() => {
-    const sample = buildSituationalConfiguration({
-      jdbc: "jdbc:postgresql://performance-sdk.couchbase.com:5432/perf",
-      username: "results_writer",
-      password: "***",
-    });
+    const sample = buildSituationalConfiguration();
     console.log(JSON.stringify(sample, null, 2));
     return Promise.resolve();
   });

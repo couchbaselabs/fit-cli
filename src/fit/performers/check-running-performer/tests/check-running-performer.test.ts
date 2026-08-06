@@ -40,6 +40,7 @@ function fakeExecutionContext(): FitExecutionContext {
     removeTree: () => Promise.resolve(),
     runArtifactsDir: () => "/tmp/root/artifacts/run",
     collectJunitArtifacts: () => Promise.resolve([]),
+    collectResultsDir: () => Promise.resolve(undefined),
     pathExists: () => Promise.resolve(true),
     commandAvailable: () => Promise.resolve(true),
     performerRunArgs: (imageName) => ["run", imageName],

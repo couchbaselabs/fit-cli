@@ -16,7 +16,8 @@ import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { createLogFile } from "../../../util/non-fit/proc.js";
 import { sanitizePathSeg, type DefinitionRunPath } from "../../../util/non-fit/replay.js";
 import { ClassifiedFailure, throwFatalToRun } from "../failure-classification.js";
-import { surefireReportsDir, testResultsCsvPath } from "./collect-junit.js";
+import { surefireReportsDir } from "./collect-junit.js";
+import { situationalResultsDir } from "./collect-results.js";
 import { createLocalFitExecutionContext, type FitExecutionContext } from "../util/remote-fit-run.js";
 import { selectFitTests, type FitTestSelection } from "../select-fit-tests/select-fit-tests.js";
 
@@ -87,11 +88,12 @@ export interface TestRunResult extends RunOutput {
   /** Parsed JUnit counts for this run, when the test-driver produced reports. */
   summary?: FitTestDriverSummary;
   /**
-   * Local path to the collected situational-results CSV (timestamp, test case, status,
-   * results-viewer link), when `collectSituationalCsv` was requested and the test-driver
-   * produced one.
+   * Local path to the collected `results/` directory tree (one subdirectory per
+   * run — run.json5, buckets.csv, events.csv, scores.json5; see situational-results.ts),
+   * when `collectSituationalResults` was requested and the
+   * test-driver produced one.
    */
-  situationalResultsCsv?: string;
+  situationalResultsDir?: string;
 }
 
 export interface FitTestDriverSummary {
@@ -272,9 +274,9 @@ export async function runTestDriver(
   fitConfigPath?: string,
   extraMavenArgs: readonly string[] = DEFAULT_MAVEN_TEST_ARGS,
   testDriverModule: string = DEFAULT_TEST_DRIVER_MODULE,
-  // Only situational runs produce test_results.csv (RunnerUtils.writeCsvRow); skip the
-  // extra purge/collect round-trip on the much more common functional path.
-  collectSituationalCsv: boolean = false,
+  // Only situational runs produce a results/<runUuid>/ bundle; skip the extra
+  // purge/collect round-trip on the much more common functional path.
+  collectSituationalResults: boolean = false,
   // Extra env vars for the driver process (e.g. FIT_RESULTS_DB_PASSWORD). Passed via
   // the process environment rather than the config file or command line so secrets
   // don't leak into FITConfiguration.json (an artifact) or the echoed command.
@@ -297,11 +299,12 @@ export async function runTestDriver(
   const sourceSurefireDir = surefireReportsDir(execution.fitPerformerDir, testDriverModule);
   await execution.removeTree(sourceSurefireDir);
 
-  // Situational runs also write test_results.csv (RunnerUtils.writeCsvRow appends), so
-  // purge it too — otherwise a resumed/reused checkout carries rows from a previous run.
-  const sourceCsvPath = testResultsCsvPath(execution.fitPerformerDir, testDriverModule);
-  if (collectSituationalCsv) {
-    await execution.removeTree(sourceCsvPath);
+  // Situational runs also write results/<runUuid>/ (one subdirectory per run, written
+  // throughout the invocation) — purge it first, otherwise a resumed/reused checkout
+  // carries directories from a previous run.
+  const sourceResultsDir = situationalResultsDir(execution.fitPerformerDir, testDriverModule);
+  if (collectSituationalResults) {
+    await execution.removeTree(sourceResultsDir);
   }
 
   const targetFitConfigPath = fitConfigPath
@@ -331,21 +334,22 @@ export async function runTestDriver(
   const collectedLogFile = await execution.collectFile(targetLogFile, logFile);
   const logArtifact = artifactFromPath(collectedLogFile, "FIT test-driver stdout/stderr captured for this run");
 
-  // Best-effort: an old performer checkout without RunnerUtils.writeCsvRow, or a run
-  // that died before finalizeRun(), simply won't have this file — that must not fail
+  // Best-effort: an old checkout without this feature, or a run that died before
+  // finalizeRun() wrote anything, simply won't have this dir — that must not fail
   // the whole run.
-  let situationalResultsCsv: string | undefined;
-  if (collectSituationalCsv && (await execution.pathExists(sourceCsvPath))) {
-    const localCsvPath = join(dirname(logFile), "test_results.csv");
-    situationalResultsCsv = await execution.collectFile(sourceCsvPath, localCsvPath);
-  }
+  const situationalResultsDirLocal = collectSituationalResults
+    ? await execution.collectResultsDir(sourceResultsDir, path)
+    : undefined;
 
-  const csvArtifact = situationalResultsCsv
-    ? [artifactFromPath(situationalResultsCsv, "Situational test results (timestamp, test case, status, results-viewer link)")]
+  const resultsDirArtifact = situationalResultsDirLocal
+    ? [artifactFromPath(situationalResultsDirLocal, "Situational per-run result files (run.json5, buckets.csv, events.csv, scores.json5 — one subdirectory per run)")]
     : [];
   let artifacts: Artifact[];
   try {
-    artifacts = combineArtifacts([logArtifact, ...csvArtifact], await execution.collectJunitArtifacts(sourceSurefireDir, path));
+    artifacts = combineArtifacts(
+      [logArtifact, ...resultsDirArtifact],
+      await execution.collectJunitArtifacts(sourceSurefireDir, path),
+    );
   } catch (err) {
     // collectJunitArtifacts already classifies a report-less run as FatalToRun, but
     // its "no JUnit reports found" message masks the real cause when Maven itself
@@ -367,7 +371,7 @@ export async function runTestDriver(
     artifacts,
     details: summary ? fitTestDriverSummaryDetails(summary, path) : [],
     ...(summary ? { summary } : {}),
-    ...(situationalResultsCsv ? { situationalResultsCsv } : {}),
+    ...(situationalResultsDirLocal ? { situationalResultsDir: situationalResultsDirLocal } : {}),
   };
 }
 

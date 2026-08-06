@@ -62,17 +62,41 @@ test("renderRunSummaryBlock: junitMarkdown appears inside the outer details, str
   assert.ok(outerOpen < innerOpen && innerOpen < innerClose && innerClose < outerClose, "inner block must nest fully inside outer block");
 });
 
-test("renderRunSummaryBlock: situationalMarkdown appears after junitMarkdown when both present", () => {
-  const junit = "![badge](url)";
-  const situational = "### 📊 Situational Test Results";
-  const block = renderRunSummaryBlock({ pathLabel: "aws1", sdk: "Java", ok: true, junitMarkdown: junit, situationalMarkdown: situational });
-  assert.ok(block.indexOf(junit) < block.indexOf(situational), "junit table should come before situational table");
+test("renderRunSummaryBlock: with situationalScores renders one row per bundle", () => {
+  const block = renderRunSummaryBlock({
+    pathLabel: "aws1",
+    sdk: "Java",
+    ok: true,
+    situationalScores: [
+      { label: "Sanity test", scores: { score: 100, reasons: ["100 for Starting with perfect score"], errors: { sdk: 1, server: 2 } } },
+      { label: "Rebalance test", scores: { reasons: ["Not applicable: no situation was executed during this run."], errors: { sdk: 0, server: 0 } } },
+    ],
+  });
+  assert.ok(block.includes("| Test Case | Score | SDK Errors | Server Errors |"));
+  assert.ok(block.includes("| Sanity test | 100 | 1 | 2 |"));
+  assert.ok(block.includes("| Rebalance test | N/A | 0 | 0 |"));
 });
 
-test("renderRunSummaryBlock: situationalMarkdown alone (no junitMarkdown) still renders", () => {
-  const situational = "### 📊 Situational Test Results";
-  const block = renderRunSummaryBlock({ pathLabel: "aws1", sdk: "Java", ok: true, situationalMarkdown: situational });
-  assert.ok(block.includes(situational));
+test("renderRunSummaryBlock: summary table and situationalScores table are both present, distinct", () => {
+  const block = renderRunSummaryBlock({
+    pathLabel: "aws1",
+    sdk: "Java",
+    ok: true,
+    summary: { testsRun: 1, failures: 0, errors: 0, skipped: 0 },
+    situationalScores: [{ label: "Sanity test", scores: { score: 100, reasons: [], errors: { sdk: 0, server: 0 } } }],
+  });
+  assert.ok(block.includes("| Metric | Value |"), "JUnit summary table should still render");
+  assert.ok(block.includes("| Test Case | Score | SDK Errors | Server Errors |"), "situational scores table should also render");
+});
+
+test("renderRunSummaryBlock: without situationalScores, no scores table", () => {
+  const block = renderRunSummaryBlock({ pathLabel: "aws1", sdk: "Java", ok: true });
+  assert.ok(!block.includes("Test Case"));
+});
+
+test("renderRunSummaryBlock: empty situationalScores array renders no scores table", () => {
+  const block = renderRunSummaryBlock({ pathLabel: "aws1", sdk: "Java", ok: true, situationalScores: [] });
+  assert.ok(!block.includes("Test Case"));
 });
 
 test("renderRunSummaryBlock: all-absent case produces a clean minimal block", () => {

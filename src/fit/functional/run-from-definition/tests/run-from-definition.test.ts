@@ -5,11 +5,13 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { sdkByValue } from "../../../../util/sdk/sdks.js";
 import type { ClusterCommandExecutor } from "../../../../cluster/cluster-create/allocate-cluster.js";
-import type { ResolvedFunctionalExecutionGroup } from "../../../shared/definition/resolve-definition.js";
+import type { ResolvedExecutionGroup, ResolvedFunctionalExecutionGroup } from "../../../shared/definition/resolve-definition.js";
 import type { FitExecutionContext } from "../../../shared/util/remote-fit-run.js";
+import type { ExecutionOverride } from "../../select-execution-target/select-execution-target.js";
 import {
   cbdinoclusterSetupFailed,
   finalizeRunFromDefinition,
+  repoDirOverrideConflictsWithRemote,
   runTests,
   scopedPromptId,
   setupCluster,
@@ -131,6 +133,7 @@ function fitExecutionContext(): FitExecutionContext {
     removeTree: () => Promise.resolve(),
     runArtifactsDir: () => "/tmp/root/artifacts/run",
     collectJunitArtifacts: () => Promise.resolve([]),
+    collectResultsDir: () => Promise.resolve(undefined),
     pathExists: () => Promise.resolve(true),
     commandAvailable: () => Promise.resolve(true),
     performerRunArgs: () => [],
@@ -256,6 +259,54 @@ test("runTests throws FatalToSession when performer sanity fails", async () => {
   );
 });
 
+
+function groupWithKind(kind: "aws" | "localhost"): ResolvedExecutionGroup {
+  return { instance: { kind } } as unknown as ResolvedExecutionGroup;
+}
+
+const DEFINITION_OVERRIDE: ExecutionOverride = { kind: "definition" };
+const LOCALHOST_OVERRIDE: ExecutionOverride = { kind: "localhost" };
+const AWS_OVERRIDE: ExecutionOverride = { kind: "aws" };
+const EXISTING_OVERRIDE: ExecutionOverride = { kind: "existing", existing: { host: "h", user: "u", identityFile: "/tmp/id" } };
+
+test("repoDirOverrideConflictsWithRemote is true when the definition puts an AWS group on it and the override honours the definition", () => {
+  assert.equal(
+    repoDirOverrideConflictsWithRemote(["transactions-fit-performer"], DEFINITION_OVERRIDE, [groupWithKind("aws")]),
+    true,
+  );
+});
+
+test("repoDirOverrideConflictsWithRemote is false with no active overrides, even against an AWS instance", () => {
+  assert.equal(repoDirOverrideConflictsWithRemote([], DEFINITION_OVERRIDE, [groupWithKind("aws")]), false);
+});
+
+test("repoDirOverrideConflictsWithRemote is false when every group's declared instance is localhost", () => {
+  assert.equal(
+    repoDirOverrideConflictsWithRemote(["transactions-fit-performer"], DEFINITION_OVERRIDE, [groupWithKind("localhost")]),
+    false,
+  );
+});
+
+test("repoDirOverrideConflictsWithRemote is false when an interactive run overrides an AWS-declared group onto localhost", () => {
+  assert.equal(
+    repoDirOverrideConflictsWithRemote(["transactions-fit-performer"], LOCALHOST_OVERRIDE, [groupWithKind("aws")]),
+    false,
+  );
+});
+
+test("repoDirOverrideConflictsWithRemote is true when an interactive run forces a fresh EC2 instance, even if every group is declared localhost", () => {
+  assert.equal(
+    repoDirOverrideConflictsWithRemote(["transactions-fit-performer"], AWS_OVERRIDE, [groupWithKind("localhost")]),
+    true,
+  );
+});
+
+test("repoDirOverrideConflictsWithRemote is true when an interactive run forces an existing EC2 instance", () => {
+  assert.equal(
+    repoDirOverrideConflictsWithRemote(["transactions-fit-performer"], EXISTING_OVERRIDE, [groupWithKind("localhost")]),
+    true,
+  );
+});
 
 test("scopedPromptId leaves ids unscoped for single-preset runs", () => {
   // No scope: id must stay byte-for-byte identical so existing replay logs still match.

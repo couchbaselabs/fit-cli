@@ -22,11 +22,6 @@
                 classes: ['{{environments.testSets.SITUATIONAL_CNG_SET_SANITY}}'],
               },
               situational: {
-                database: {
-                  mode: 'hosted',
-                  // used to go to 'dev'
-                  resultsEnvironment: 'prod',
-                },
                 cng: {},
               },
             },

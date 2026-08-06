@@ -30,7 +30,6 @@ Definition file rules while generating:
 - But, wherever possible, try and automatically upgrade previous versions to new versions, major by major.  Add unit tests for this.
 - Generally do this upgrade in-memory but also provide a mini CLI tool that does an inplace upgrade of the definition file.
 - In the rare case auto-upgrade isn't possible, explicitly fail fast with an unsupported version error and provide guidance on how the user can resolve it.
-  Important note: version bumps are currently suspended as we are actively developing.  Do NOT change the version.
 
 ## yaml and json5
 We support both as input and output formats.  YAML is a little more concise, JSON5 is easier to read (IMO).  Users: use whichever you prefer.

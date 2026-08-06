@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { capellaDebugLinks } from "../capella-debug-links.js";
+import { buildDebugLinks, capellaDebugLinks } from "../capella-debug-links.js";
 import type { EnvironmentsFile } from "../../../fit/util/environments.js";
 
 const environments: EnvironmentsFile = {
@@ -64,4 +64,25 @@ test("capellaDebugLinks omits capellaUiUrl when the environment has no oid", () 
 
 test("capellaDebugLinks returns undefined for an unconfigured environment", () => {
   assert.equal(capellaDebugLinks("staging", uuid, environments), undefined);
+});
+
+test("buildDebugLinks builds the debug.items[] shape for a configured environment", () => {
+  const links = buildDebugLinks("dev", uuid, undefined, environments);
+  assert.deepEqual(
+    links.map((l) => l.label),
+    ["Capella UI", "Fleet Manager", "DataDog logs"],
+  );
+  assert.equal(links[0]?.url, "https://dev.nonprod-project-avengers.com/databases?oid=6af08c0a-8cab-4c1c-b257-b521575c16d0");
+  assert.equal(links[1]?.description, "Needs VPN access.");
+});
+
+test("buildDebugLinks returns an empty array for an unconfigured environment", () => {
+  assert.deepEqual(buildDebugLinks("staging", uuid, undefined, environments), []);
+});
+
+test("buildDebugLinks appends a run-archive link when archiveZipKey is given", () => {
+  const links = buildDebugLinks("dev", uuid, "s3://fit-cli/runs/20260713-120000-ab12.zip", environments);
+  const archiveLink = links.find((l) => l.label === "Run archive");
+  assert.ok(archiveLink);
+  assert.equal(archiveLink.command, "fit archive fetch s3://fit-cli/runs/20260713-120000-ab12.zip");
 });

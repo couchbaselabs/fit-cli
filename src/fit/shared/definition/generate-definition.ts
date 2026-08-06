@@ -26,7 +26,6 @@ import {
   type InstanceLifetime,
   type InstanceMode,
   type SessionLifetime,
-  type SituationalDatabaseMode,
   type TestsSection,
 } from "./types.js";
 import { describeDefinition } from "./generate-desc.js";
@@ -81,9 +80,6 @@ export interface SituationalDefinitionInputs {
   gerritRef?: string;
   onPortInUse?: PortInUsePolicy;
   selection: FitTestSelection;
-  databaseMode: SituationalDatabaseMode;
-  /** Results environment for the hosted DB (key under `results` in environments.json5). Omitted ⇒ "dev". */
-  resultsEnvironment?: string;
   /** Capella environment to create clusters in (key under `capella` in environments.json5). Omitted ⇒ "dev". */
   capellaEnvironment?: string;
   instance?: InstanceMode;
@@ -246,7 +242,6 @@ function buildFunctionalInstance(inputs: DefinitionInputs): BuiltFunctionalInsta
 function buildSituationalInstance(inputs: SituationalDefinitionInputs): InstanceLifetime {
   // Emit whatever was explicitly chosen (the builder always asks now), so the file
   // records the selection even when it's the default.
-  const includeResultsEnv = inputs.resultsEnvironment !== undefined;
   const includeCapellaEnv = inputs.capellaEnvironment !== undefined;
   return {
     ...(inputs.instance ?? { localhost: {} }),
@@ -263,10 +258,6 @@ function buildSituationalInstance(inputs: SituationalDefinitionInputs): Instance
             type: "situational",
             tests: buildTests(inputs.selection),
             situational: {
-              database: {
-                mode: inputs.databaseMode,
-                ...(includeResultsEnv ? { resultsEnvironment: inputs.resultsEnvironment } : {}),
-              },
               ...(inputs.privateEndpoint ? { privateEndpoint: {} } : {}),
             },
           },

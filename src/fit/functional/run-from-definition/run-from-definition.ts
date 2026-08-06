@@ -55,7 +55,7 @@ import {
 } from "../../../util/non-fit/replay.js";
 import { clusterLabel as clusterSegmentLabel, formatRunLabel, instanceLabel, performerLabel, runLabel, type RunLabelParts } from "../../shared/util/run-labels.js";
 import { confirm, select } from "../../../util/non-fit/prompts.js";
-import { DEFAULT_CAPELLA_ENV, resolveCapellaConfig, resolveFitPerformerDir, resolveGithubCredentials, resolveResultsDbCredentials, resolveRosaCredentials } from "../../util/config.js";
+import { DEFAULT_CAPELLA_ENV, resolveCapellaConfig, resolveFitPerformerDir, resolveGithubCredentials, resolveRosaCredentials } from "../../util/config.js";
 import { terminateInstanceCommand } from "../../util/aws/lifecycle-warning.js";
 import { maybeUploadRunArtifacts } from "../../util/aws/upload-run-artifacts.js";
 import { AWS_REGION } from "../../../cloud/util/aws/aws-target.js";
@@ -103,6 +103,7 @@ import {
   type FitExecutionContext,
 } from "../../shared/util/remote-fit-run.js";
 import { loadDefinition } from "../../shared/definition/parse-definition.js";
+import { activeRepoDirOverrideNames } from "../../util/repo-dir-overrides.js";
 import {
   buildExecutionGroups,
   resolveDefinition,
@@ -131,16 +132,11 @@ import {
   type FitTestSelection,
 } from "../../shared/select-fit-tests/select-fit-tests.js";
 import {
-  checkResultsDatabaseConnectivity,
-  resolveResultsDatabase,
-  resultsHostFromJdbc,
-  situationalResultsUrl,
-} from "../../situational/choose-results-database/choose-results-database.js";
-import {
   checkObservabilityCollectorConnectivity,
   OBSERVABILITY_COLLECTOR_HOST,
   OBSERVABILITY_COLLECTOR_PORT,
 } from "../util/check-observability-collector.js";
+import { checkLocalCapellaEndpointReachable } from "../util/check-local-capella-control-plane.js";
 import {
   detectClusterDockerEnvironment,
   runPerformerClusterSanityCheck,
@@ -179,7 +175,15 @@ import {
 } from "./resume-state.js";
 import { appendRunSummaryToGhaSummary } from "../../util/gha.js";
 import { junitToPlainTextFromDir } from "../../shared/run-test-driver/junit-to-markdown.js";
-import { readSituationalResultsCsv, renderSituationalResultsPlainText } from "../../shared/run-test-driver/situational-results.js";
+import {
+  listSituationalRunBundles,
+  renderBundleFilesTable,
+  renderScoresTable,
+  situationalScoreRows,
+  type SituationalRunBundle,
+  type SituationalScoreRow,
+} from "../../shared/run-test-driver/situational-results.js";
+import { writeDebugLinksFromBundles } from "../../situational/update-run-debug-links/update-run-debug-links.js";
 
 /**
  * A freshly-linked AWS PrivateLink connection can take longer than the default
@@ -502,9 +506,6 @@ function announce(
   }
   console.log(`  SDK:     ${run.sdk.name}`);
   console.log(`  Tests:   ${testsLabel}`);
-  if (run.type === "situational") {
-    console.log(`  Results database: ${run.databaseMode}`);
-  }
   console.log(`  Performer port: ${run.performerPort}`);
   if (run.performerVersion) {
     console.log(`  Performer version: ${run.performerVersion}`);
@@ -726,8 +727,14 @@ export interface RunResultSummary {
   summary?: FitTestDriverSummary;
   /** Local path to the surefire-reports dir for this run; absent if no test driver ran. */
   surefireDir?: string;
-  /** Local path to the collected situational-results CSV; set only for situational runs. */
-  situationalResultsCsv?: string;
+  /** Local path to the collected results/ directory tree; set only for situational runs. */
+  situationalResultsDir?: string;
+  /**
+   * One row per situational `results/<runUuid>/` bundle produced by this run's test-driver
+   * invocation (commonly more than one — e.g. the op-capella-sit-lite/-release presets run many
+   * `@Test` methods in one invocation); set only for situational runs.
+   */
+  situationalScores?: readonly SituationalScoreRow[];
 }
 
 /** Sink the run loop passes down so each run records its result as it finishes. */
@@ -990,13 +997,8 @@ export async function runSituationalTests(
       "(usually `dinonet`) so it can reach the cluster cbdino creates.",
   );
 
-  const database = await resolveResultsDatabase(run.databaseMode, run.resultsEnvironment);
-  if (!database.ready) {
-    return { artifacts: database.artifacts, details: database.details };
-  }
-
-  const artifacts: Artifact[] = [...database.artifacts];
-  const details: Detail[] = [...database.details];
+  const artifacts: Artifact[] = [];
+  const details: Detail[] = [];
 
   // Resolve cbdinocluster to its absolute path on the execution host so the FIT
   // test driver can invoke it even when its environment doesn't inherit the same PATH.
@@ -1005,12 +1007,12 @@ export async function runSituationalTests(
   const resolvedVersion = run.version !== undefined && isAlias(run.version) ? await resolveAlias(run.version) : run.version;
 
   const fitConfig = generateSituationalConfiguration(
-    database.database,
     situationalCbdinoSettings(run.cng, run.privateEndpoint !== undefined, resolvedVersion),
     execution.fitPerformerDir,
     run.path,
     run.performerPort,
     fitConfigPiece.config,
+    run.capellaEnvironment,
   );
   artifacts.push(...fitConfig.artifacts);
   details.push(...fitConfig.details);
@@ -1024,9 +1026,6 @@ export async function runSituationalTests(
     run.extraMavenArgs,
     DEFAULT_TEST_DRIVER_MODULE,
     true,
-    // The results-DB password goes to the driver via the environment, not the
-    // config file — so it can't leak into the collected FITConfiguration.json.
-    { FIT_RESULTS_DB_PASSWORD: database.database.password },
   );
   artifacts.push(...testRun.artifacts);
   const pathLabel = formatRunLabel(
@@ -1040,11 +1039,33 @@ export async function runSituationalTests(
     ...testRun.details,
   );
 
-  // Derive the UI URL from the chosen database's host so it matches where data
-  // actually lands (dev vs prod), rather than a fixed constant.
-  const resultsUrl = situationalResultsUrl(resultsHostFromJdbc(database.database.jdbc));
-  console.log(`\nWhen this run produces data, view it at:\n  ${resultsUrl}`);
-  details.push({ label: "Results UI", value: resultsUrl, callToAction: true });
+  // Best-effort: resolve and merge forDatabase.debug.items[] (DataDog, Fleet Manager, Capella UI) into
+  // each run's run.json5 now that we know the real cbdino cluster id(s) — never let this
+  // fail the run itself. Done before recordResult so it's visible before the results
+  // tables recordResult prints. Also print what the test-driver actually wrote per run —
+  // its own logs get swallowed by its 30s proof-of-life log lines, so this is the only
+  // place that's reliably visible.
+  // A single test-driver invocation commonly runs many situational @Test methods in one go
+  // (e.g. the op-capella-sit-lite/-release presets), each writing its own results/<runUuid>/
+  // bundle — so this is a table of rows, not a single score.
+  let situationalScores: SituationalScoreRow[] = [];
+  if (testRun.situationalResultsDir) {
+    const bundles = listSituationalRunBundles(testRun.situationalResultsDir);
+    if (bundles.length > 0) {
+      try {
+        writeDebugLinksFromBundles(bundles);
+      } catch (err) {
+        fitCliWarn(`Could not write debug links for "${pathLabel}": ${err instanceof Error ? err.message : String(err)}`);
+      }
+      for (const bundle of bundles) {
+        console.log(renderBundleFilesTable(bundle));
+      }
+    }
+    // Not printed here — recordResult (right below) prints it, matching how the JUnit table
+    // is handled (printed once, from recordResult/printRunResultsTables, not at collection time).
+    situationalScores = situationalScoreRows(bundles);
+  }
+
   dependencies.recordResult?.({
     path: run.path,
     pathLabel,
@@ -1053,8 +1074,10 @@ export async function runSituationalTests(
     ok: testRun.ok,
     ...(testRun.summary ? { summary: testRun.summary } : {}),
     surefireDir: join(dirname(testRun.logFile), "surefire-reports"),
-    ...(testRun.situationalResultsCsv ? { situationalResultsCsv: testRun.situationalResultsCsv } : {}),
+    ...(testRun.situationalResultsDir ? { situationalResultsDir: testRun.situationalResultsDir } : {}),
+    ...(situationalScores.length > 0 ? { situationalScores } : {}),
   });
+
   if (!testRun.ok) {
     throwFatalToSession("FIT tests failed — check the test-driver log for details.");
   }
@@ -1474,12 +1497,8 @@ function printRunResultsTables(results: readonly RunResultSummary[]): void {
     } else {
       console.log(`${result.ok ? "PASS" : "FAIL"} — no test report available`);
     }
-    if (result.situationalResultsCsv) {
-      const rows = readSituationalResultsCsv(result.situationalResultsCsv);
-      if (rows) {
-        console.log("");
-        process.stdout.write(renderSituationalResultsPlainText(rows));
-      }
+    if (result.situationalScores && result.situationalScores.length > 0) {
+      process.stdout.write(renderScoresTable(result.situationalScores));
     }
   }
 }
@@ -1699,6 +1718,33 @@ export interface RunFromDefinitionOptions {
   promptScope?: string;
 }
 
+/**
+ * `--repo-dir` only affects localhost execution (it's read via
+ * `resolveFitPerformerDir`) — a remote/AWS instance always clones
+ * transactions-fit-performer fresh from GitHub (`ensureRemoteRepos`) and
+ * silently ignores it. True when that mismatch is present, so the caller can
+ * fast-fail instead of letting the override look like it worked.
+ *
+ * Takes the *resolved* `executionOverride` rather than each group's raw
+ * `instance:` setting, since an interactive run can override the definition's
+ * declared destination (e.g. force everything onto localhost) — this must
+ * reflect where execution actually ends up, not just what the definition
+ * file says, or `--interactive` runs would fast-fail before the user even
+ * gets a chance to pick localhost. Mirrors the same override precedence as
+ * `resolveExecutionGroupTarget` (existing/aws override -> always remote;
+ * localhost override -> never remote; definition -> per-group instance kind).
+ */
+export function repoDirOverrideConflictsWithRemote(
+  repoDirOverrides: readonly string[],
+  executionOverride: ExecutionOverride,
+  groups: readonly ResolvedExecutionGroup[],
+): boolean {
+  if (repoDirOverrides.length === 0) return false;
+  if (executionOverride.kind === "localhost") return false;
+  if (executionOverride.kind === "aws" || executionOverride.kind === "existing") return true;
+  return groups.some((g) => g.instance.kind === "aws");
+}
+
 /** Run FIT functional tests as described by the definition file at `definitionPath`. */
 export async function runFromDefinition(
   definitionPath: string,
@@ -1716,6 +1762,7 @@ export async function runFromDefinition(
   }
 
   const preconditionCtx: FailureContext = { instanceIndex: 0 };
+  const repoDirOverrides = activeRepoDirOverrideNames();
   const savedState = resumeAt ? readRunState(dirname(resolve(definitionPath))) : undefined;
   if (resumeAt) {
     if (!savedState) {
@@ -1779,6 +1826,22 @@ export async function runFromDefinition(
       (executionOverride.kind === "definition" &&
         executionGroups.slice(startCycleIndex).some((g) => g.instance.kind === "aws")));
 
+  // Checked here, now that the interactive execution-override choice (if any) is known,
+  // rather than against the definition's raw declared destination — otherwise an
+  // --interactive run combined with --repo-dir would fast-fail before the user even got
+  // a chance to pick "everything on localhost" and sidestep the conflict entirely.
+  if (repoDirOverrideConflictsWithRemote(repoDirOverrides, executionOverride, executionGroups.slice(startCycleIndex))) {
+    fitCliError(
+      { classification: "FatalToAll" },
+      `\n--repo-dir ${repoDirOverrides.join(", ")}: this run executes on an AWS (remote) instance. ` +
+        "A remote instance always clones transactions-fit-performer fresh from GitHub " +
+        "(see ensureRemoteRepos) and silently ignores --repo-dir, which only affects localhost " +
+        "execution. Run against a localhost instance instead, or drop --repo-dir.",
+    );
+    tracker.record("FatalToAll", "--repo-dir was combined with a remote (AWS) instance", preconditionCtx);
+    return finalizeRunFromDefinition([], [], undefined, tracker.worst, tracker.failureCount);
+  }
+
   // AWS is needed for EC2 execution groups AND for situational cbdinocluster cloud-deployer
   // runs (even on localhost's own machine, credentials get forwarded to the remote box).
   // Check this before anything else that might need AWS — including GitHub credentials
@@ -1811,40 +1874,6 @@ export async function runFromDefinition(
     githubCredentials = result;
   }
 
-  // Check hosted results-database credentials upfront — fail before provisioning
-  // an instance when credentials can't be resolved from AWS Secrets Manager.
-  const needsHostedDatabase = executionGroups
-    .slice(startCycleIndex)
-    .some(
-      (group) =>
-        group.type === "situational" &&
-        group.runs.some((run) => run.databaseMode === "hosted"),
-    );
-  // block -> host, populated during credential resolution; used later for connectivity checks.
-  const resultsEnvHosts = new Map<string, string>();
-  if (needsHostedDatabase) {
-    // Each hosted situational run names a results environment; validate every distinct
-    // one upfront (credentials resolvable from AWS) before provisioning.
-    const resultsEnvs = new Set<string>();
-    for (const group of executionGroups.slice(startCycleIndex)) {
-      if (group.type !== "situational") continue;
-      for (const run of group.runs) {
-        if (run.databaseMode === "hosted") resultsEnvs.add(run.resultsEnvironment);
-      }
-    }
-    for (const block of resultsEnvs) {
-      let host: string;
-      try {
-        ({ host } = await resolveResultsDbCredentials({ block }));
-      } catch (err) {
-        fitCliError({ classification: "FatalToAll" }, `\n✗ ${(err as Error).message}`);
-        tracker.record("FatalToAll", `Cannot resolve results database credentials for "${block}"`, preconditionCtx);
-        return finalizeRunFromDefinition([], [], undefined, tracker.worst, tracker.failureCount);
-      }
-      resultsEnvHosts.set(block, host);
-    }
-  }
-
   const artifacts: Artifact[] = [];
   const details: Detail[] = [];
   // Instance-specific details (SSH command, workspace path, etc.) — only included
@@ -1865,12 +1894,8 @@ export async function runFromDefinition(
     } else {
       console.log(`${result.ok ? "PASS" : "FAIL"} — no test report available`);
     }
-    if (result.situationalResultsCsv) {
-      const rows = readSituationalResultsCsv(result.situationalResultsCsv);
-      if (rows) {
-        console.log("");
-        process.stdout.write(renderSituationalResultsPlainText(rows));
-      }
+    if (result.situationalScores && result.situationalScores.length > 0) {
+      process.stdout.write(renderScoresTable(result.situationalScores));
     }
     // appendRunSummaryToGhaSummary is synchronous and catches its own errors internally.
     appendRunSummaryToGhaSummary(result);
@@ -1897,24 +1922,6 @@ export async function runFromDefinition(
     );
     tracker.record("FatalToAll", "No local transactions-fit-performer checkout configured", preconditionCtx);
     return finalizeRunFromDefinition([], [], undefined, tracker.worst, tracker.failureCount);
-  }
-
-  // Local connectivity check — skip when running remotely, since EC2 instances are
-  // in the same VPC as faas.couchbase.com and can reach it without VPN.
-  if (needsHostedDatabase && forceLocalhost) {
-    for (const [block, host] of resultsEnvHosts) {
-      console.log(`\nChecking connectivity to the "${block}" results database at ${host}...`);
-      if (!(await checkResultsDatabaseConnectivity(undefined, host))) {
-        fitCliError(
-          { classification: "FatalToAll" },
-          `\n✗ Cannot reach the results database at ${host}:5432.\n` +
-            `  Make sure you are connected to the vpn-public VPN.`,
-        );
-        tracker.record("FatalToAll", `Cannot reach results database at ${host}:5432`, preconditionCtx);
-        return finalizeRunFromDefinition([], [], undefined, tracker.worst, tracker.failureCount);
-      }
-      console.log(`  ✓ Reached ${host}.`);
-    }
   }
 
   // The "active" set tracks the cycle currently up so the outer finally tears down
@@ -2011,36 +2018,12 @@ export async function runFromDefinition(
         }
       }
 
-      // This cycle's situational iterations may stream to the hosted DB; if it runs
-      // on a remote box, confirm the box can reach the DB before doing real work.
-      const cycleNeedsHostedDatabase =
-        group.type === "situational" && group.runs.some((run) => run.databaseMode === "hosted");
-
       let activeCycle = group;
       let clusterState: ResumeClusterState | undefined;
       const cyclePerformers: RunningPerformer[] = [];
       const cyclePerformerStates: ResumePerformerState[] = [];
 
       try {
-        if (cycleNeedsHostedDatabase && execution.kind === "remote") {
-          const blocks = new Set(
-            group.type === "situational"
-              ? group.runs.filter((run) => run.databaseMode === "hosted").map((run) => run.resultsEnvironment)
-              : [],
-          );
-          for (const block of blocks) {
-            const { host } = await resolveResultsDbCredentials({ block });
-            console.log(`\nChecking "${block}" results database connectivity from the remote instance...`);
-            if (!(await checkResultsDatabaseConnectivity((cmd, args) => execution.capture(cmd, args), host))) {
-              throwFatalToCluster(
-                `The remote instance cannot reach the results database at ${host}:5432. ` +
-                  `Make sure the instance has network access to reach the database (VPN / security-group rules).`,
-              );
-            }
-            console.log(`  ✓ Reached ${host} from the remote instance.`);
-          }
-        }
-
         // Functional observability tests (ClusterLabelsTest, GetOrNullObservabilityTest,
         // etc.) send traces/metrics to a shared collector and then poll it back; if it's
         // unreachable from wherever the tests actually run, every one of those tests only
@@ -2210,6 +2193,16 @@ export async function runFromDefinition(
                 `situational tests can't allocate clusters (they would fail later with "no deployers"). ` +
                 `Check that the "${capellaEnvironment}" Capella settings were picked up by the init step above.`,
             );
+          }
+          // Local counterpart: this machine's own ~/.cbdinocluster is used as-is (no
+          // upload/init step to catch it), so check its Capella endpoint is actually
+          // reachable before `allocate --deployer cloud` runs — otherwise the failure
+          // only surfaces after several retries, deep inside the JVM test.
+          if (execution.kind !== "remote") {
+            const localCheck = await checkLocalCapellaEndpointReachable();
+            if (localCheck.checked && !localCheck.ok) {
+              throwFatalToCluster(localCheck.message);
+            }
           }
         }
 
