@@ -14,8 +14,6 @@ import { FIT_PERFORMER, repoPath, type Repo } from "../../util/repos.js";
 import { ensureRepo } from "../../util/ensure-repo.js";
 import { collectJunitArtifacts } from "../run-test-driver/collect-junit.js";
 import type { Sdk } from "../../../util/sdk/sdks.js";
-import type { AwsCredentials } from "../../../cloud/util/aws/identity.js";
-import { freshAssumedCredentials } from "../../../cloud/util/aws/aws-cli.js";
 import { DEFAULT_PERFORMER_PORT } from "../../performers/util/performer-port.js";
 import { createRemoteFitExecutionContext } from "./remote-fit-execution-context.js";
 import { resolveFitPerformerDir, resolveGerritSshKey, type ResolvedCapellaConfig } from "../../util/config.js";
@@ -219,53 +217,8 @@ export async function stageGerritSshKey(
   return remotePath;
 }
 
-const REMOTE_AWS_CREDENTIALS_FILENAME = "fit-aws-credentials.sh";
-
-function remoteAwsCredentialsPath(rootDir: string): string {
-  return join(rootDir, REMOTE_AWS_CREDENTIALS_FILENAME);
-}
-
-function awsCredentialsScript(creds: AwsCredentials): string {
-  return [
-    `export AWS_ACCESS_KEY_ID=${posixQuote(creds.accessKeyId)}`,
-    `export AWS_SECRET_ACCESS_KEY=${posixQuote(creds.secretAccessKey)}`,
-    ...(creds.sessionToken ? [`export AWS_SESSION_TOKEN=${posixQuote(creds.sessionToken)}`] : []),
-  ].join("\n") + "\n";
-}
-
-/**
- * Write AWS credentials to the remote instance as a sourced env file so every
- * login-shell command (including the Maven test-driver process) inherits the
- * AWS env vars the cbdinocluster cloud deployer needs. The file is written via
- * SCP (never on a command line) and sourced from `~/.profile` idempotently.
- */
-export async function uploadRemoteAwsCredentials(
-  target: ExecutionTarget,
-  rootDir: string,
-  creds: AwsCredentials,
-): Promise<void> {
-  const remotePath = remoteAwsCredentialsPath(rootDir);
-  const localFile = createRunFilePath(REMOTE_AWS_CREDENTIALS_FILENAME);
-  // Forward the freshest possible session so the box starts with a full lifetime (re-assuming if
-  // ours is near expiry); fall back to the caller-supplied creds when we didn't assume them.
-  const fresh = await freshAssumedCredentials();
-  writeFileSync(localFile, awsCredentialsScript(fresh ?? creds), { mode: 0o600 });
-  console.log(
-    `→ setup-aws-credentials: uploading AWS credentials to ${remotePath} on ${(target as { description?: string }).description ?? "remote"}`,
-  );
-  await target.putFile(localFile, remotePath);
-  rmSync(localFile, { force: true });
-  await target.run("chmod", ["600", remotePath]);
-  // Source from ~/.profile idempotently so every login shell inherits the vars.
-  await target.run(
-    "sh",
-    ["-lc",
-      `grep -qF ${posixQuote(basename(remotePath))} ~/.profile 2>/dev/null` +
-      ` || printf '\\n. ${posixQuote(remotePath)}\\n' >> ~/.profile`],
-    undefined,
-    { display: `add AWS credentials to ~/.profile (idempotent)` },
-  );
-}
+// AWS credentials for the box live in remote-aws-creds.ts: they need a refreshing
+// source rather than a one-off env file, so they get their own module.
 
 const REMOTE_CAPELLA_CONFIG_FILENAME = "fit-capella-config.sh";
 
@@ -291,9 +244,10 @@ function capellaConfigScript(capella: ResolvedCapellaConfig): string {
  * Write the Capella control-plane settings to the remote instance as a sourced
  * env file, so `cbdinocluster init --auto` (run later via a login shell) inherits
  * the `CAPELLA_*` vars and bakes the `capella` block into `~/.cbdinocluster`.
- * Must run before the init step. Mirrors {@link uploadRemoteAwsCredentials}: the
- * file is uploaded via SCP (never on a command line) and sourced from
- * `~/.profile` idempotently.
+ * Must run before the init step. Like `uploadRemoteAwsCredentials` (remote-aws-creds.ts)
+ * the file is uploaded via SCP, never on a command line. Unlike it, these credentials are
+ * still sourced from `~/.profile`: Capella creds come from AWS Secrets Manager and don't
+ * expire mid-run, so they don't need a refreshing source on the box.
  */
 export async function uploadRemoteCapellaConfig(
   target: ExecutionTarget,
