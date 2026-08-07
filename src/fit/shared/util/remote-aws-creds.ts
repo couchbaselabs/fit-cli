@@ -125,18 +125,33 @@ export function shouldRefreshRemoteCreds(
 }
 
 /**
- * Upload `contents` to `tmpPath`. The caller then chmods and moves it into place — see
- * {@link installCommand} — so that placing several files costs one shell round trip rather
- * than two per file. Remote round trips are worth counting here: setup already makes ~17 SSH
- * connections in under half a minute before this point.
+ * Distinguishes every staged file, so a refresh tick and a reinstall can never collide on a
+ * shared temp path. Both write the same logical files, and a fixed `.tmp` name let one
+ * clobber (or `mv` away) the other's staged content mid-flight.
+ */
+let stageSequence = 0;
+
+/**
+ * Upload `contents` to a temp path derived from `stagingBasePath`, and return that path. The
+ * caller then chmods and moves it into place — see {@link installCommand} — so that placing
+ * several files costs one shell round trip rather than two per file. Remote round trips are
+ * worth counting here: setup already makes ~17 SSH connections in under half a minute before
+ * this point.
+ *
+ * Local and remote temp names both carry a per-call token. Overlap is unlikely but reachable
+ * (a reused box reinstalls credentials per execution group, while the previous refresher may
+ * still be ticking), and the failure would be a confusing mid-run scp or `mv` error.
  */
 async function stageRemoteFile(
   target: ExecutionTarget,
   localFilename: string,
   contents: string,
-  tmpPath: string,
-): Promise<void> {
-  const localFile = createRunFilePath(localFilename);
+  stagingBasePath: string,
+): Promise<string> {
+  stageSequence += 1;
+  const token = `${process.pid}-${stageSequence}`;
+  const tmpPath = `${stagingBasePath}.${token}.tmp`;
+  const localFile = createRunFilePath(`${localFilename}.${token}`);
   writeFileSync(localFile, contents, { mode: 0o600 });
   try {
     await target.putFile(localFile, tmpPath);
@@ -144,6 +159,7 @@ async function stageRemoteFile(
     // Never leave credentials sitting in the run directory, even if the upload throws.
     rmSync(localFile, { force: true });
   }
+  return tmpPath;
 }
 
 /**
@@ -201,18 +217,23 @@ export async function uploadRemoteAwsCredentials(
 
   // `~/.aws/config` is staged under rootDir rather than uploaded straight to `~/.aws/`:
   // scp and posixQuote both treat `~` as literal text, so the shell has to expand it.
-  const configTmp = join(rootDir, "fit-aws-config.tmp");
-  await stageRemoteFile(target, REMOTE_AWS_CREDS_JSON_FILENAME, awsCredentialProcessPayload(effective), `${jsonPath}.tmp`);
-  await stageRemoteFile(target, REMOTE_AWS_CREDS_FETCH_FILENAME, awsCredsFetchScript(jsonPath), `${fetchPath}.tmp`);
-  await stageRemoteFile(target, "fit-aws-config", remoteAwsConfigFile(fetchPath), configTmp);
+  const jsonTmp = await stageRemoteFile(
+    target, REMOTE_AWS_CREDS_JSON_FILENAME, awsCredentialProcessPayload(effective), jsonPath,
+  );
+  const fetchTmp = await stageRemoteFile(
+    target, REMOTE_AWS_CREDS_FETCH_FILENAME, awsCredsFetchScript(jsonPath), fetchPath,
+  );
+  const configTmp = await stageRemoteFile(
+    target, "fit-aws-config", remoteAwsConfigFile(fetchPath), join(rootDir, "fit-aws-config"),
+  );
 
   // One round trip to put all three in place and retire the legacy file. The legacy removal
   // comes last so a failure part-way never leaves the box with neither mechanism.
   await target.run(
     "sh",
     ["-lc", [
-      installCommand(`${jsonPath}.tmp`, posixQuote(jsonPath), "600"),
-      installCommand(`${fetchPath}.tmp`, posixQuote(fetchPath), "700"),
+      installCommand(jsonTmp, posixQuote(jsonPath), "600"),
+      installCommand(fetchTmp, posixQuote(fetchPath), "700"),
       "mkdir -p -m 700 ~/.aws",
       installCommand(configTmp, "~/.aws/config", "600"),
       legacyRemovalCommand(rootDir),
@@ -242,7 +263,11 @@ export function legacyRemovalCommand(rootDir: string): string {
 
 /** A running refresher; call {@link RemoteAwsCredsRefresher.stop} at instance teardown. */
 export interface RemoteAwsCredsRefresher {
-  stop(): void;
+  /**
+   * Stop ticking, and resolve once any tick already in flight has finished. Await it before
+   * reinstalling credentials on the same box, so the two can't both be writing.
+   */
+  stop(): Promise<void>;
   /** Refresh attempts that failed. Non-zero means the box may be running on stale credentials. */
   readonly failures: number;
   /**
@@ -268,14 +293,16 @@ export function startRemoteAwsCredsRefresher(
   rootDir: string,
   expiration: Date | undefined,
 ): RemoteAwsCredsRefresher {
-  const state: { expiration: Date | undefined; failures: number; refreshing: boolean; lastError?: string } =
-    { expiration, failures: 0, refreshing: false };
+  const state: {
+    expiration: Date | undefined;
+    failures: number;
+    stopped: boolean;
+    /** The tick currently running, so {@link stop} can wait it out rather than orphan it. */
+    inFlight?: Promise<void>;
+    lastError?: string;
+  } = { expiration, failures: 0, stopped: false };
 
-  const tick = async (): Promise<void> => {
-    // Overlapping ticks would race on the same remote path; skip rather than queue.
-    if (state.refreshing) return;
-    if (!shouldRefreshRemoteCreds(state.expiration, new Date())) return;
-    state.refreshing = true;
+  const refresh = async (): Promise<void> => {
     try {
       const fresh = await freshAssumedCredentials(REMOTE_CREDS_REFRESH_THRESHOLD_MS);
       if (!fresh) {
@@ -284,12 +311,12 @@ export function startRemoteAwsCredsRefresher(
         return;
       }
       const jsonPath = remoteAwsCredsJsonPath(rootDir);
-      await stageRemoteFile(
-        target, REMOTE_AWS_CREDS_JSON_FILENAME, awsCredentialProcessPayload(fresh), `${jsonPath}.tmp`,
+      const tmpPath = await stageRemoteFile(
+        target, REMOTE_AWS_CREDS_JSON_FILENAME, awsCredentialProcessPayload(fresh), jsonPath,
       );
       await target.run(
         "sh",
-        ["-lc", installCommand(`${jsonPath}.tmp`, posixQuote(jsonPath), "600")],
+        ["-lc", installCommand(tmpPath, posixQuote(jsonPath), "600")],
         undefined,
         { display: `refresh AWS credentials on ${target.description} (expire ${fresh.expiration?.toISOString() ?? "unknown"})` },
       );
@@ -302,16 +329,31 @@ export function startRemoteAwsCredsRefresher(
         `Could not refresh AWS credentials on ${target.description}: ${detail}. ` +
         `They expire at ${expiresAt}; cbdinocluster calls on the box fail with RequestExpired after that.`;
       console.warn(`⚠  ${state.lastError}`);
-    } finally {
-      state.refreshing = false;
     }
   };
 
-  const timer = setInterval(() => void tick(), REMOTE_CREDS_REFRESH_TICK_MS);
+  const tick = (): void => {
+    // Skip rather than queue: a slow refresh shouldn't stack up behind itself, and the next
+    // tick is only minutes away.
+    if (state.stopped || state.inFlight) return;
+    if (!shouldRefreshRemoteCreds(state.expiration, new Date())) return;
+    const running = refresh().finally(() => {
+      if (state.inFlight === running) state.inFlight = undefined;
+    });
+    state.inFlight = running;
+  };
+
+  const timer = setInterval(tick, REMOTE_CREDS_REFRESH_TICK_MS);
   // Never hold fit-cli open at exit just because a refresh timer is pending.
   timer.unref?.();
   return {
-    stop: () => clearInterval(timer),
+    stop: async () => {
+      state.stopped = true;
+      clearInterval(timer);
+      // Read into a local first: the tick clears state.inFlight when it settles.
+      const running = state.inFlight;
+      if (running) await running;
+    },
     get failures() {
       return state.failures;
     },
@@ -354,12 +396,14 @@ function runLocalCli(): void {
       console.log(awsCredsFetchScript(jsonPath));
       console.log(`--- ~/.aws/config ---`);
       console.log(remoteAwsConfigFile(fetchPath));
+      // `<token>` stands in for the per-call token stageRemoteFile adds; a real run has a
+      // distinct one per staged file so a refresh tick can't collide with an install.
       console.log(`--- the single shell command that installs all three ---`);
       console.log([
-        installCommand(`${jsonPath}.tmp`, posixQuote(jsonPath), "600"),
-        installCommand(`${fetchPath}.tmp`, posixQuote(fetchPath), "700"),
+        installCommand(`${jsonPath}.<token>.tmp`, posixQuote(jsonPath), "600"),
+        installCommand(`${fetchPath}.<token>.tmp`, posixQuote(fetchPath), "700"),
         "mkdir -p -m 700 ~/.aws",
-        installCommand(join(rootDir, "fit-aws-config.tmp"), "~/.aws/config", "600"),
+        installCommand(join(rootDir, "fit-aws-config.<token>.tmp"), "~/.aws/config", "600"),
         legacyRemovalCommand(rootDir),
       ].join(" && "));
       return;

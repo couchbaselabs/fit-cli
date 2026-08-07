@@ -1940,13 +1940,14 @@ export async function runFromDefinition(
   // per group), so a failure in an earlier group still reaches the end-of-run summary.
   let credsRefreshFailures = 0;
   let credsRefreshLastError: string | undefined;
-  const replaceCredsRefresher = (next: RemoteAwsCredsRefresher): RemoteAwsCredsRefresher => {
-    if (activeCredsRefresher) {
-      activeCredsRefresher.stop();
-      credsRefreshFailures += activeCredsRefresher.failures;
-      credsRefreshLastError = activeCredsRefresher.lastError ?? credsRefreshLastError;
-    }
-    return next;
+  // Must be awaited *before* credentials are reinstalled on the same box: a tick still in
+  // flight would otherwise be staging the same files concurrently with the install.
+  const stopCredsRefresher = async (): Promise<void> => {
+    if (!activeCredsRefresher) return;
+    await activeCredsRefresher.stop();
+    credsRefreshFailures += activeCredsRefresher.failures;
+    credsRefreshLastError = activeCredsRefresher.lastError ?? credsRefreshLastError;
+    activeCredsRefresher = undefined;
   };
   let activeTeardown: ExecutionTargetTeardown = { kind: "local" };
   let currentBoxInstanceIndex: number | undefined;
@@ -2110,10 +2111,9 @@ export async function runFromDefinition(
               // the EC2 API directly for CreateVpcEndpoint) — forward the same fit-cli-role
               // credentials the situational branch uses, so setup-link can authenticate.
               if (capellaSetup.privateEndpoint && awsCredentials) {
+                await stopCredsRefresher();
                 const expiry = await uploadRemoteAwsCredentials(execution.target, execution.rootDir, awsCredentials);
-                activeCredsRefresher = replaceCredsRefresher(
-                  startRemoteAwsCredsRefresher(execution.target, execution.rootDir, expiry),
-                );
+                activeCredsRefresher = startRemoteAwsCredsRefresher(execution.target, execution.rootDir, expiry);
               }
             }
             // Inject the derived init args and deployer into the cbdinocluster plan.
@@ -2215,10 +2215,9 @@ export async function runFromDefinition(
               `Situational runs allocate Capella clusters`,
             );
             if (awsCredentials) {
+              await stopCredsRefresher();
               const expiry = await uploadRemoteAwsCredentials(execution.target, execution.rootDir, awsCredentials);
-              activeCredsRefresher = replaceCredsRefresher(
-                startRemoteAwsCredsRefresher(execution.target, execution.rootDir, expiry),
-              );
+              activeCredsRefresher = startRemoteAwsCredsRefresher(execution.target, execution.rootDir, expiry);
             }
           }
           await prepareCbdinoclusterInit(
@@ -2415,11 +2414,7 @@ export async function runFromDefinition(
   } finally {
     // Stop before teardown: teardown does its own AWS work through the refreshing provider,
     // and a tick firing mid-teardown would only add noise.
-    if (activeCredsRefresher) {
-      activeCredsRefresher.stop();
-      credsRefreshFailures += activeCredsRefresher.failures;
-      credsRefreshLastError = activeCredsRefresher.lastError ?? credsRefreshLastError;
-    }
+    await stopCredsRefresher();
     if (credsRefreshFailures > 0) {
       // Surface this loudly. A stale-credentials run fails much later and much less
       // legibly — as `RequestExpired` inside cbdinocluster, typically in
