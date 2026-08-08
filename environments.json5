@@ -138,6 +138,12 @@
       username: "sdk_qe@couchbase.com",
       secretId: "fit-cli/capella/dev",
     },
+    stage: {
+      endpoint: "https://api.stage.nonprod-project-avengers.com",
+      oid: "5ae82d34-5da8-4313-af5f-90ea4142a4c6",
+      username: "sdk_qe@couchbase.com",
+      secretId: "fit-cli/capella/stage",
+    },
   },
   results: {
     // hosted-dev: Postgres results DB on :5432/perf, results UI under /results/situational.
