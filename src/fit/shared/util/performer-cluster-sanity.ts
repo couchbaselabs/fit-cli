@@ -395,8 +395,8 @@ export async function runPerformerClusterSanityCheck(
     }
     return result;
   } catch (err) {
-    fitCliWarn(`\nSkipping performer/cluster sanity check: ${(err as Error).message}`);
-    return performerClusterSanityDetails(true, `skipped: ${(err as Error).message}`);
+    fitCliError(`\nPerformer/cluster sanity check failed: ${(err as Error).message}`);
+    return performerClusterSanityDetails(false, `Performer/cluster sanity check failed`);
   }
 }
 

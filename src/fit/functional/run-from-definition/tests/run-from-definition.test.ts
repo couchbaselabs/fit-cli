@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { sdkByValue } from "../../../../util/sdk/sdks.js";
 import type { ClusterCommandExecutor } from "../../../../cluster/cluster-create/allocate-cluster.js";
+import type { SelectedCluster } from "../../../../cluster/cluster-select/cluster-select.js";
 import type { ResolvedFunctionalExecutionGroup } from "../../../shared/definition/resolve-definition.js";
 import type { FitExecutionContext } from "../../../shared/util/remote-fit-run.js";
 import {
@@ -85,14 +86,31 @@ function cluster() {
   };
 }
 
-function iteration() {
+function capellaCluster() {
+  return {
+    scheme: "couchbases" as const,
+    defaultHostname: "cb.abc.cloud.couchbase.com",
+    flavour: "production-capella" as const,
+    credentials: { username: "Administrator", password: "password" },
+    tls: null,
+  };
+}
+
+function cngCluster() {
+  return {
+    ...cluster(),
+    cng: { performerConnectionString: "couchbase2://localhost:18098", tls: null },
+  };
+}
+
+function iteration(selectedCluster: SelectedCluster = cluster()) {
   const sdk = sdkByValue("java");
   assert.ok(sdk);
   return {
     type: "functional" as const,
     path: { instanceIndex: 0, clusterIndex: 0, sessionIndex: 0, runIndex: 0 },
     sdk,
-    cluster: cluster(),
+    cluster: selectedCluster,
     performerPort: 8060,
     testSelection: { allTests: [], selectedTests: [] },
     onPortInUse: "restart" as const,
@@ -256,6 +274,50 @@ test("runTests throws FatalToSession when performer sanity fails", async () => {
   );
 });
 
+test("runTests enables resourceCreation for a self-managed cbdinocluster run", async () => {
+  let receivedFitConfig: { config?: Record<string, unknown> } | undefined;
+  await runTests(fitExecutionContext(), "cbdinocluster", iteration(), undefined, {
+    runClusterDiagFn: () => Promise.resolve(true),
+    generateFitConfigurationFn: (_cluster, _dir, _path, _port, fitConfig) => {
+      receivedFitConfig = fitConfig;
+      return { path: "/tmp/fit.json", artifacts: [], details: [] };
+    },
+    runPerformerClusterSanityCheckFn: () => Promise.resolve({ ok: true, artifacts: [], details: [] }),
+    runTestDriverFn: () => Promise.resolve({ ok: true, logFile: "/tmp/driver.log", artifacts: [], details: [] }),
+  }, "7.6.0");
+
+  assert.ok(receivedFitConfig?.config?.resourceCreation, "expected resourceCreation for a self-managed run");
+});
+
+test("runTests leaves resourceCreation off for a Capella cbdinocluster run (no Docker deployer)", async () => {
+  let receivedFitConfig: { config?: Record<string, unknown> } | undefined;
+  await runTests(fitExecutionContext(), "cbdinocluster", iteration(capellaCluster()), undefined, {
+    runClusterDiagFn: () => Promise.resolve(true),
+    generateFitConfigurationFn: (_cluster, _dir, _path, _port, fitConfig) => {
+      receivedFitConfig = fitConfig;
+      return { path: "/tmp/fit.json", artifacts: [], details: [] };
+    },
+    runPerformerClusterSanityCheckFn: () => Promise.resolve({ ok: true, artifacts: [], details: [] }),
+    runTestDriverFn: () => Promise.resolve({ ok: true, logFile: "/tmp/driver.log", artifacts: [], details: [] }),
+  }, "7.6.0");
+
+  assert.equal(receivedFitConfig?.config?.resourceCreation, undefined);
+});
+
+test("runTests leaves resourceCreation off for a CNG cbdinocluster run (no Docker deployer)", async () => {
+  let receivedFitConfig: { config?: Record<string, unknown> } | undefined;
+  await runTests(fitExecutionContext(), "cbdinocluster", iteration(cngCluster()), undefined, {
+    runClusterDiagFn: () => Promise.resolve(true),
+    generateFitConfigurationFn: (_cluster, _dir, _path, _port, fitConfig) => {
+      receivedFitConfig = fitConfig;
+      return { path: "/tmp/fit.json", artifacts: [], details: [] };
+    },
+    runPerformerClusterSanityCheckFn: () => Promise.resolve({ ok: true, artifacts: [], details: [] }),
+    runTestDriverFn: () => Promise.resolve({ ok: true, logFile: "/tmp/driver.log", artifacts: [], details: [] }),
+  }, "7.6.0");
+
+  assert.equal(receivedFitConfig?.config?.resourceCreation, undefined);
+});
 
 test("scopedPromptId leaves ids unscoped for single-preset runs", () => {
   // No scope: id must stay byte-for-byte identical so existing replay logs still match.

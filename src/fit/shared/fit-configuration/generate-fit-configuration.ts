@@ -38,13 +38,14 @@ export function generateFitConfiguration(
   performerPort: number = DEFAULT_PERFORMER_PORT,
   fitConfig?: ResolvedFitConfig,
   analytics = false,
+  isLocal = false,
 ): RunOutput & {
   path: string;
 } {
   // Build without patch first so only the non-sensitive parts are logged.
-  const configForLog = buildFitConfiguration(cluster, performerPort, fitConfig?.config, fitConfig?.connection, undefined, analytics);
+  const configForLog = buildFitConfiguration(cluster, performerPort, fitConfig?.config, fitConfig?.connection, undefined, analytics, isLocal);
   const config = fitConfig?.patch
-    ? buildFitConfiguration(cluster, performerPort, fitConfig.config, fitConfig.connection, fitConfig.patch, analytics)
+    ? buildFitConfiguration(cluster, performerPort, fitConfig.config, fitConfig.connection, fitConfig.patch, analytics, isLocal)
     : configForLog;
 
   console.log(

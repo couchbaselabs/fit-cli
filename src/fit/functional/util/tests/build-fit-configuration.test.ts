@@ -77,6 +77,37 @@ test("a Capella cluster resolves DNS SRV, skips bucket creation and drops the pr
   assert.deepEqual(config.excludeTests, ["situational", "ssh", "realCapella"]);
 });
 
+test("a local run against Capella also excludes requiresLowLatencyConnection tests", () => {
+  const cluster = {
+    scheme: "couchbases",
+    defaultHostname: "cb.abc.cloud.couchbase.com",
+    flavour: "production-capella",
+    credentials,
+    tls: null,
+  } as const;
+
+  assert.deepEqual(buildFitConfiguration(cluster).excludeTests, ["situational", "ssh", "realCapella"]);
+  assert.deepEqual(
+    buildFitConfiguration(cluster, undefined, undefined, undefined, undefined, false, true).excludeTests,
+    ["situational", "ssh", "realCapella", "requiresLowLatencyConnection"],
+  );
+});
+
+test("a local self-managed run does not exclude requiresLowLatencyConnection tests (Capella-only concern)", () => {
+  const cluster = {
+    scheme: "couchbase",
+    defaultHostname: "localhost",
+    flavour: "self-managed",
+    credentials,
+    tls: null,
+  } as const;
+
+  assert.deepEqual(
+    buildFitConfiguration(cluster, undefined, undefined, undefined, undefined, false, true).excludeTests,
+    ["situational"],
+  );
+});
+
 test("the tls choice is passed straight through", () => {
   const config = buildFitConfiguration({
     scheme: "couchbases",

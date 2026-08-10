@@ -419,8 +419,13 @@ export function createLocalFitExecutionContext(): FitExecutionContext {
         .capture("sh", ["-lc", `command -v ${posixQuote(command)} >/dev/null && printf yes || printf no`], undefined, { quiet: true })
         .then((output) => output.trim() === "yes")
         .catch(() => false),
+    // Performer images are only published for linux/amd64; pin the platform explicitly
+    // so Docker pulls/runs it under emulation on an Arm host instead of erroring with
+    // "no matching manifest" (a no-op on a native amd64 host).
     performerRunArgs: (imageName, hostPort = DEFAULT_PERFORMER_PORT, dockerNetwork) => [
       "run",
+      "--platform",
+      "linux/amd64",
       "--detach",
       "--rm",
       "--add-host",

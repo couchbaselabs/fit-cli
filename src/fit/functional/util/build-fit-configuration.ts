@@ -105,6 +105,7 @@ export function generatedFitConfigurationPiece(
   cluster: SelectedCluster,
   performerPort: number = DEFAULT_PERFORMER_PORT,
   analytics = false,
+  isLocal = false,
 ): ConfigPiece {
   if (cluster.cng) {
     return {
@@ -207,9 +208,12 @@ export function generatedFitConfigurationPiece(
 
   // Capella clusters have no direct SSH access, so the ssh-tagged tests can't run;
   // realCapella tests need setup this generated config doesn't provide. Excluding
-  // both mirrors the FITConfiguration.capella.example.json layout.
+  // both mirrors the FITConfiguration.capella.example.json layout. Running against
+  // Capella from a local machine (rather than an EC2 instance in the same region)
+  // adds enough network latency to fail tests tagged requiresLowLatencyConnection
+  // (see e.g. RangeScanTest in transactions-fit-performer), so exclude those too.
   const excludeTests = isCapella
-    ? ["situational", "ssh", "realCapella"]
+    ? ["situational", "ssh", "realCapella", ...(isLocal ? ["requiresLowLatencyConnection"] : [])]
     : ["situational"];
 
   const data: PieceData = {
@@ -322,10 +326,11 @@ export function buildFitConfiguration(
   connection?: FitConnectionSpec,
   patchPiece?: PieceData,
   analytics = false,
+  isLocal = false,
 ): Record<string, unknown> {
   const hasConfig = fitConfigPiece !== undefined || connection !== undefined;
   const merged = mergeConfigPieces([
-    generatedFitConfigurationPiece(cluster, performerPort, analytics),
+    generatedFitConfigurationPiece(cluster, performerPort, analytics, isLocal),
     ...(fitConfigPiece ? [{ label: "definition fitConfig piece", data: fitConfigPiece }] : []),
     ...(hasConfig ? [runtimeFitConfigurationPiece(cluster)] : []),
     ...(connection ? [connectionSpecPiece(connection, cluster)] : []),

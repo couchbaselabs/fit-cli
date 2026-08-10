@@ -786,7 +786,13 @@ export async function runTests(
   // Analytics runs use the Analytics test-driver, whose cluster-creating tests are
   // gated on resourceCreation differently (@RequiresAnalyticsClusterCreating); the
   // operational resourceCreation block below doesn't apply, so leave it off.
-  if (clusterMode === "cbdinocluster" && clusterVersion && !run.analytics) {
+  if (
+    clusterMode === "cbdinocluster" &&
+    clusterVersion &&
+    !run.analytics &&
+    run.cluster.flavour === "self-managed" &&
+    !run.cluster.cng
+  ) {
     const cbdinoclusterPath = await resolveCbdinoclusterPathOnExecution(execution);
     // clusterVersion is a label that may join multiple node versions with "+";
     // preferredCluster wants a single concrete version, so take the first and
@@ -806,6 +812,7 @@ export async function runTests(
     run.performerPort,
     effectiveFitConfig,
     run.analytics ?? false,
+    execution.kind === "local",
   );
   artifacts.push(...fitConfig.artifacts);
   details.push(...fitConfig.details);
