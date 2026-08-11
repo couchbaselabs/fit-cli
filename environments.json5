@@ -7,21 +7,24 @@
   //   capella  → instances[*].setup.capellaEnvironment   (default 'prod')
   //   results  → runs[*].situational.database.resultsEnvironment   (default 'prod'; used to be 'dev')
   //
-  // Only the passwords live in AWS Secrets Manager now (us-west-2); everything else
-  // (endpoint, oid, the shared Capella username, results host) is non-secret and lives here.
+  // Only the passwords and API keys live in AWS Secrets Manager now (us-west-2); everything else
+  // (endpoints, oid, the shared Capella username, results host) is non-secret and lives here.
   // Secrets are fetched at run time using the same AWS credentials fit-cli already needs to
   // create instances — so CI and laptops resolve identically. Access is controlled purely by
   // IAM on the secrets (CI's fit-cli-role + developers' SSO role need secretsmanager:GetSecretValue).
-  //   capella secret JSON → { "password": "..." }
+  //   capella secret JSON → { "password": "...", "apiKey": "...", "apiSecret": "..." }
   //   results secret JSON → { "password": "..." }   (the user is the non-secret `username` on the
   //   results block below; a "username" in the secret overrides it, for emergency role changes)
   //
-  // Capella password: a developer's own (from `config edit` / CAPELLA_PASS env) takes precedence
-  // locally; with none configured we fall back to the shared account password in the secret (and
-  // warn). The username is the shared account below unless overridden. Results creds always from the secret.
+  // Capella credentials: a developer's own (from `config edit` / the CAPELLA_PASS, CAPELLA_API_KEY,
+  // CAPELLA_API_SECRET env vars) take precedence locally; with none configured we fall back to the
+  // shared values in the secret. The apiKey/apiSecret pair is a v4 organization API key;
+  // cbdinocluster's cloud deployer authenticates with it (against v4Endpoint), while the v2
+  // username/password stay needed for custom image deploys, server version changes, and columnar.
+  // The username is the shared account below unless overridden. Results creds always from the secret.
   //
   // A null non-secret value means "not yet provided" — selecting that block fails fast.
-  // bun run secrets set capella/dev password='<password>'
+  // bun run secrets set capella/dev password='<password>' apiKey='<key>' apiSecret='<secret>'
   // bun run secrets set results/dev password='<password>'
 
   // Global defaults — not per-environment. Version strings passed to cbdinocluster
@@ -146,18 +149,21 @@
   capella: {
     prod: {
       endpoint: "https://api.cloud.couchbase.com",
+      v4Endpoint: "https://cloudapi.cloud.couchbase.com",
       oid: "62488bdd-d416-467e-84f7-fc7c1583a083",
       username: "sdk_qe@couchbase.com",
       secretId: "fit-cli/capella/prod",
     },
     dev: {
       endpoint: "https://api.dev.nonprod-project-avengers.com",
+      v4Endpoint: "https://cloudapi.dev.nonprod-project-avengers.com",
       oid: "6af08c0a-8cab-4c1c-b257-b521575c16d0",
       username: "sdk_qe@couchbase.com",
       secretId: "fit-cli/capella/dev",
     },
     stage: {
       endpoint: "https://api.stage.nonprod-project-avengers.com",
+      v4Endpoint: "https://cloudapi.stage.nonprod-project-avengers.com",
       oid: "5ae82d34-5da8-4313-af5f-90ea4142a4c6",
       username: "sdk_qe@couchbase.com",
       secretId: "fit-cli/capella/stage",

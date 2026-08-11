@@ -120,12 +120,14 @@ function awsAnswersToConfig(answers: AwsInitAnswers, existingInstanceTypes?: Fit
   return instanceTypes ? { instanceTypes } : undefined;
 }
 
-/** Capella prompt defaults from a saved config: username from config, the rest defaulting to the hardcoded values. */
+/** Capella prompt defaults from a saved config; blank means "no personal override". */
 function capellaDefaultsFromConfig(config?: FitCliConfig): CapellaInitAnswers {
   const c = config?.capella;
   return {
     username: c?.username ?? "",
     password: c?.password ?? "",
+    apiKey: c?.apiKey ?? "",
+    apiSecret: c?.apiSecret ?? "",
   };
 }
 
@@ -393,7 +395,7 @@ async function promptForConfig(existing?: FitCliConfig, configPath?: string): Pr
 
 /**
  * Ask whether to configure Capella (situational/SIT only), and if so, the
- * username plus the five fields that default to the hardcoded values.
+ * personal username/password and v4 organization API key/secret overrides.
  */
 async function promptForCapella(
   existing?: FitCliConfig,
@@ -423,8 +425,8 @@ async function promptForCapella(
   });
 
   console.warn(
-    `\nWarning: Capella password will be saved in plaintext in ${configPath ?? "~/.fit-cli/config.json5"}.\n` +
-    `Set CAPELLA_PASS in your environment to avoid storing it on disk.\n`,
+    `\nWarning: Capella secrets will be saved in plaintext in ${configPath ?? "~/.fit-cli/config.json5"}.\n` +
+    `Set CAPELLA_PASS / CAPELLA_API_SECRET in your environment to avoid storing them on disk.\n`,
   );
   const capellaPassword = await password({
     promptId: "init.capella.password",
@@ -434,11 +436,28 @@ async function promptForCapella(
     mask: "*",
   });
 
+  const apiKey = await input({
+    promptId: "init.capella.api-key",
+    message: defaults.apiKey
+      ? `Capella v4 organization API key (leave blank to keep "${defaults.apiKey}"):`
+      : "Capella v4 organization API key (leave blank to use the shared one from AWS Secrets Manager):",
+    default: defaults.apiKey,
+  });
+  const apiSecret = await password({
+    promptId: "init.capella.api-secret",
+    message: defaults.apiSecret
+      ? "Capella v4 organization API secret (leave blank to keep the current one):"
+      : "Capella v4 organization API secret (leave blank to skip; set CAPELLA_API_SECRET env var instead):",
+    mask: "*",
+  });
+
   return {
     configureCapella: true,
     capella: {
       username,
       password: trimOptional(capellaPassword) ?? defaults.password,
+      apiKey,
+      apiSecret: trimOptional(apiSecret) ?? defaults.apiSecret,
     },
   };
 }
@@ -483,6 +502,7 @@ export function formatConfigForDisplay(config: FitCliConfig): string {
           capella: {
             ...config.capella,
             ...(config.capella.password ? { password: ELIDED } : {}),
+            ...(config.capella.apiSecret ? { apiSecret: ELIDED } : {}),
           },
         }
       : {}),
@@ -567,6 +587,7 @@ function mask(value: string | undefined): string {
 const SECRET_FIELDS = new Set([
   "github.token",
   "capella.password",
+  "capella.apiSecret",
 ]);
 
 /** Check whether a diagnostic-only env var is present, appending an entry to the log. */
@@ -692,9 +713,10 @@ export function buildAutoConfig(
       : undefined;
   const output: FitCliOutputConfig | undefined = format ? { format } : undefined;
 
-  // Capella section: PERSONAL credentials only (username/password). The endpoint and
-  // org id are per-environment and come from environments.json5 at run time. Anchored
-  // on the username: with none there's nothing to log in as, so we skip the section.
+  // Capella section: PERSONAL credentials only (username/password and the v4
+  // organization API key/secret). The endpoints and org id are per-environment and
+  // come from environments.json5 at run time. With neither a username nor an API
+  // key there is nothing personal to store, so we skip the section.
   let capella: FitCliConfig["capella"] | undefined;
   if (args.disableCapella) {
     log.push({ field: "capella.*", source: "--disable-capella", found: false });
@@ -703,17 +725,25 @@ export function buildAutoConfig(
       { name: "CAPELLA_USER", value: env.CAPELLA_USER },
       { name: "CAP_USER", value: env.CAP_USER },
     ]);
-    if (!username) {
-      log.push({ field: "capella.*", source: "(no username)", found: false });
+    const apiKey = resolveField(log, "capella.apiKey", args.capellaApiKey, "--capella-api-key", [
+      { name: "CAPELLA_API_KEY", value: env.CAPELLA_API_KEY },
+    ]);
+    if (!username && !apiKey) {
+      log.push({ field: "capella.*", source: "(no username or API key)", found: false });
     } else {
       const capellaPassword = resolveField(log, "capella.password", args.capellaPassword, "--capella-password", [
         { name: "CAPELLA_PASS", value: env.CAPELLA_PASS },
         { name: "CAP_PASS", value: env.CAP_PASS },
       ]);
+      const apiSecret = resolveField(log, "capella.apiSecret", args.capellaApiSecret, "--capella-api-secret", [
+        { name: "CAPELLA_API_SECRET", value: env.CAPELLA_API_SECRET },
+      ]);
 
       capella = {
-        username,
+        ...(username ? { username } : {}),
         ...(capellaPassword ? { password: capellaPassword } : {}),
+        ...(apiKey ? { apiKey } : {}),
+        ...(apiSecret ? { apiSecret } : {}),
       };
     }
   }

@@ -115,6 +115,21 @@ test("buildAutoConfig: CAP_* env (fit-app-deployment names) populates the person
   });
 });
 
+test("buildAutoConfig: CAPELLA_API_KEY/SECRET populate the personal v4 credentials", () => {
+  const env = {
+    CAPELLA_API_KEY: "org-key",
+    CAPELLA_API_SECRET: "org-secret",
+  };
+
+  const { config } = buildAutoConfig({ args: baseArgs(), env });
+
+  // A v4 API key alone is a valid personal credential; no username is needed.
+  assert.deepEqual(config.capella, {
+    apiKey: "org-key",
+    apiSecret: "org-secret",
+  });
+});
+
 test("buildAutoConfig: CAPELLA_* takes precedence over CAP_* aliases", () => {
   const env = { CAPELLA_USER: "primary@cb.com", CAP_USER: "alias@cb.com" };
 

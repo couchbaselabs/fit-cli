@@ -21,6 +21,7 @@ So nothing __too__ secret should be stored - we are talking GHA PATs, Gerrit cre
 We use the known sdkqe@couchbase.com accounts, which are setup in all Capella envs, for all Capella testing by default.
 These are stored in environments.json5 and AWS Secrets [SECRETS1].
 [CAPELLA1] The user can provide a different acount in their fit-cli.  This is used both for localhost testing and clean cloud instance testing, an exception to the [CONFIG1] rule.  
+[CAPELLA2] cbdinocluster's cloud deployer authenticates with a v4 organization API key and secret.  These live per environment in the same AWS secret (apiKey/apiSecret keys) and can be overridden personally, like the password [CAPELLA1].  The v2 username/password are kept alongside: custom or unreleased image deploys, server version changes, and columnar operations still need them.
 
 ## AWS
 [SECRETS2] After encountering various problems when using user's localhost credentials in the clean EC2 testing, have decided to settle on EC2 testing exclusively using info from AWS secrets (Github PAT, Gerrit creds, etc).

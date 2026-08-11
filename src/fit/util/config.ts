@@ -195,14 +195,18 @@ export interface FitCliLocalhostConfig {
  * environment variables so `cbdinocluster init --auto` bakes them into
  * `~/.cbdinocluster` (see resolveCapellaConfig / uploadRemoteCapellaConfig).
  *
- * Only `username` is per-user and has no default; the rest default to the
- * well-known values in {@link DEFAULT_CAPELLA_SETTINGS} and rarely need changing.
+ * All fields are personal overrides. With none set, the shared account and the
+ * v4 organization API key come from environments.json5 plus AWS Secrets Manager.
  */
 export interface FitCliCapellaConfig {
   /** Your Capella account (env: CAPELLA_USER / CAP_USER). */
   username?: string;
   /** Your Capella account password (env: CAPELLA_PASS / CAP_PASS). */
   password?: string;
+  /** Your Capella v4 organization API key (env: CAPELLA_API_KEY). */
+  apiKey?: string;
+  /** Your Capella v4 organization API secret (env: CAPELLA_API_SECRET). */
+  apiSecret?: string;
 }
 
 export interface FitCliConfig {
@@ -343,6 +347,8 @@ export function validateFitCliConfig(raw: unknown): FitCliConfig {
     ? compactRecord({
         username: readOptionalString(capellaValue, "username", "capella.username"),
         password: readOptionalString(capellaValue, "password", "capella.password"),
+        apiKey: readOptionalString(capellaValue, "apiKey", "capella.apiKey"),
+        apiSecret: readOptionalString(capellaValue, "apiSecret", "capella.apiSecret"),
       })
     : undefined;
 
@@ -860,11 +866,15 @@ export function resolveOutputFormat(
 
 /** The Capella settings forwarded to a remote box, with every field resolved. */
 export interface ResolvedCapellaConfig {
-  /** Undefined when no username is configured (situational runs then can't enable Capella). */
   username?: string;
   endpoint: string;
   organizationId: string;
   password: string;
+  /** Capella Management API v4 endpoint. */
+  v4Endpoint: string;
+  /** v4 organization API key; cbdinocluster's cloud deployer authenticates with it. */
+  apiKey: string;
+  apiSecret: string;
   /** Only set for environments the Capella team has issued one for (currently just "dev"). */
   internalSupportToken?: string;
   overrideToken?: string;
@@ -883,12 +893,15 @@ function firstEnv(env: NodeJS.ProcessEnv, names: string[]): string | undefined {
  * Resolve the Capella control-plane settings for a Capella environment (a key
  * under `capella` in environments.json5; default "prod").
  *
- * endpoint/organizationId/username are the non-secret registry values (username is
- * the shared account for the environment). Only the password is a secret: a personal
- * one (capella.password in config, or CAPELLA_PASS / CAP_PASS) takes precedence, else
- * we fall back to the shared account password in AWS Secrets Manager (and warn). A
- * personal username can still be set to override the shared one. Throws when the
- * environment is unknown/unprovisioned or no password can be resolved.
+ * endpoint/v4Endpoint/organizationId/username are the non-secret registry values
+ * (username is the shared account for the environment). The password and the v4
+ * organization API key/secret are secrets: personal ones (capella.* in config, or
+ * the CAPELLA_* env vars) take precedence, else we fall back to the shared values
+ * in AWS Secrets Manager. cbdinocluster's `init --auto` refuses to enable the
+ * cloud deployer without an API secret; the v2 password stays required because
+ * custom image deploys, server version changes, and columnar operations still use
+ * it. Throws when the environment is unknown/unprovisioned or any credential
+ * can't be resolved.
  */
 export async function resolveCapellaConfig(
   options: {
@@ -911,9 +924,12 @@ export async function resolveCapellaConfig(
     throw new InvalidFitCliConfigError(`Unknown Capella environment "${block}" — not defined in environments.json5.`);
   }
   const endpoint = entry.endpoint?.trim();
+  const v4Endpoint = entry.v4Endpoint?.trim();
   const organizationId = entry.oid?.trim();
-  if (!endpoint || !organizationId) {
-    const missing = [!endpoint && "endpoint", !organizationId && "oid"].filter(Boolean).join(", ");
+  if (!endpoint || !v4Endpoint || !organizationId) {
+    const missing = [!endpoint && "endpoint", !v4Endpoint && "v4Endpoint", !organizationId && "oid"]
+      .filter(Boolean)
+      .join(", ");
     throw new InvalidFitCliConfigError(
       `Capella environment "${block}" isn't fully provisioned in environments.json5 (missing ${missing}).`,
     );
@@ -922,32 +938,40 @@ export async function resolveCapellaConfig(
   const c = config?.capella;
   // Username is the shared, non-secret account from the registry, overridable by personal config/env.
   let username = c?.username ?? firstEnv(env, ["CAPELLA_USER", "CAP_USER"]) ?? entry.username?.trim();
-  // Password: personal first, else the shared account password from the secret.
+  // Secrets: personal first, else the shared values from the AWS secret.
   let password = c?.password ?? firstEnv(env, ["CAPELLA_PASS", "CAP_PASS"]);
+  let apiKey = c?.apiKey ?? firstEnv(env, ["CAPELLA_API_KEY"]);
+  let apiSecret = c?.apiSecret ?? firstEnv(env, ["CAPELLA_API_SECRET"]);
   let secret: Record<string, string> | undefined;
-  if (!password) {
+  if (!password || !apiKey || !apiSecret) {
     if (!entry.secretId) {
       throw new InvalidFitCliConfigError(
-        `Capella environment "${block}" has no secretId in environments.json5 and no personal password is configured.`,
+        `Capella environment "${block}" has no secretId in environments.json5 and no personal credentials are configured.`,
       );
     }
-    console.info(
-      `No personal Capella password configured — using the shared "${block}" account password from AWS Secrets Manager.\n` +
-        `  Set CAPELLA_PASS (or run \`${runScriptPrefix("config")} edit\`) to use your own.`,
-    );
+    if (!password) {
+      console.info(
+        `No personal Capella password configured; using the shared "${block}" account password from AWS Secrets Manager.\n` +
+          `  Set CAPELLA_PASS (or run \`${runScriptPrefix("config")} edit\`) to use your own.`,
+      );
+    }
     secret = await fetchSecret(entry.secretId);
-    password = secret.password?.trim();
-    username = username ?? secret.username?.trim();
+    password ??= secret.password?.trim();
+    username ??= secret.username?.trim();
+    apiKey ??= secret.apiKey?.trim();
+    apiSecret ??= secret.apiSecret?.trim();
   }
-  if (!username || !password) {
-    const missing = [!username && "username", !password && "password"].filter(Boolean).join(", ");
+  if (!username || !password || !apiKey || !apiSecret) {
+    const missing = [!username && "username", !password && "password", !apiKey && "apiKey", !apiSecret && "apiSecret"]
+      .filter(Boolean)
+      .join(", ");
     throw new InvalidFitCliConfigError(`Could not resolve Capella ${missing} for "${block}".`);
   }
 
   // internalSupportToken/overrideToken live only on the shared account's secret — they
   // belong to the shared "dev" account, not to whatever personal creds might override
   // username/password above. Only read them from `secret` when it was already fetched
-  // (i.e. no personal password was configured); per [CONFIG2] we don't touch AWS Secrets
+  // (i.e. some shared credential was needed); per [CONFIG2] we don't touch AWS Secrets
   // Manager at all when personal creds satisfy everything.
   const internalSupportToken =
     firstEnv(env, ["CAPELLA_INTERNAL_SUPPORT_TOKEN"]) ?? secret?.internalSupportToken?.trim() ?? undefined;
@@ -956,8 +980,11 @@ export async function resolveCapellaConfig(
   return {
     username,
     endpoint,
+    v4Endpoint,
     organizationId,
     password,
+    apiKey,
+    apiSecret,
     ...(internalSupportToken ? { internalSupportToken } : {}),
     ...(overrideToken ? { overrideToken } : {}),
   };

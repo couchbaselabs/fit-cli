@@ -144,6 +144,7 @@ than templated). When running a preset group, an override only has to apply to a
 ## Capella
 When running locally, we use Capella creds from your fit-cli config.  Generally you just need to provide your email address.  We default to using Capella's production environment.
 When running on CI, the user chooses what Capella environment to use (stage, dev, etc.) and we use previously-setup accounts for those. 
+cbdinocluster's cloud deployer authenticates with a Capella v4 organization API key.  By default the shared per-environment key is read from AWS Secrets Manager; override it with CAPELLA_API_KEY / CAPELLA_API_SECRET (or `config edit`).  The v2 username/password are still used for custom image deploys, server version changes, and columnar operations.
 
 ## Capabilities
 Each performer declares what it supports — a set of "caps" — over the `performerCapsFetch` gRPC call.

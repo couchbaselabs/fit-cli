@@ -224,7 +224,15 @@ const STUB_TEST_SETS = {
 const TEST_ENVIRONMENTS = {
   defaults: STUB_DEFAULTS,
   testSets: STUB_TEST_SETS,
-  capella: { dev: { endpoint: "https://dev.example", oid: "oid-dev", username: "sdk_qe@couchbase.com", secretId: "cap/dev" } },
+  capella: {
+    dev: {
+      endpoint: "https://dev.example",
+      v4Endpoint: "https://cloudapi.dev.example",
+      oid: "oid-dev",
+      username: "sdk_qe@couchbase.com",
+      secretId: "cap/dev",
+    },
+  },
   results: {
     dev: { host: "dev.db.example", secretId: "res/dev" },
     prod: { host: "prod.db.example", username: "results_writer", secretId: "res/prod" },
@@ -326,15 +334,25 @@ test("resolveRosaCredentials returns an error string when the secret can't be re
 });
 
 test("parses a stored capella section (personal credentials only)", () => {
-  const parsed = parseFitCliConfig(`{ version: 1, capella: { username: "graham.pople@couchbase.com", password: "pw" } }`);
-  assert.deepEqual(parsed.capella, { username: "graham.pople@couchbase.com", password: "pw" });
+  const parsed = parseFitCliConfig(
+    `{ version: 1, capella: { username: "graham.pople@couchbase.com", password: "pw", apiKey: "key", apiSecret: "sec" } }`,
+  );
+  assert.deepEqual(parsed.capella, {
+    username: "graham.pople@couchbase.com",
+    password: "pw",
+    apiKey: "key",
+    apiSecret: "sec",
+  });
 });
 
-test("resolveCapellaConfig prefers personal config credentials, with registry endpoint/oid", async () => {
+test("resolveCapellaConfig prefers personal config credentials, with registry endpoints/oid", async () => {
   const resolved = await resolveCapellaConfig({
     block: "dev",
     environments: TEST_ENVIRONMENTS,
-    config: { version: FIT_CLI_CONFIG_VERSION, capella: { username: "me@cb.com", password: "pw" } },
+    config: {
+      version: FIT_CLI_CONFIG_VERSION,
+      capella: { username: "me@cb.com", password: "pw", apiKey: "my-key", apiSecret: "my-secret" },
+    },
     env: {},
     fetchSecret: noFetch,
   });
@@ -342,7 +360,10 @@ test("resolveCapellaConfig prefers personal config credentials, with registry en
     username: "me@cb.com",
     password: "pw",
     endpoint: "https://dev.example",
+    v4Endpoint: "https://cloudapi.dev.example",
     organizationId: "oid-dev",
+    apiKey: "my-key",
+    apiSecret: "my-secret",
   });
 });
 
@@ -351,36 +372,56 @@ test("resolveCapellaConfig prefers CAPELLA_*/CAP_* env over the shared account",
     block: "dev",
     environments: TEST_ENVIRONMENTS,
     config: { version: FIT_CLI_CONFIG_VERSION },
-    env: { CAPELLA_USER: "envuser", CAPELLA_PASS: "envpass" },
+    env: { CAPELLA_USER: "envuser", CAPELLA_PASS: "envpass", CAPELLA_API_KEY: "envkey", CAPELLA_API_SECRET: "envsec" },
     fetchSecret: noFetch,
   });
   assert.equal(resolved.username, "envuser");
   assert.equal(resolved.password, "envpass");
+  assert.equal(resolved.apiKey, "envkey");
+  assert.equal(resolved.apiSecret, "envsec");
   assert.equal(resolved.endpoint, "https://dev.example");
+  assert.equal(resolved.v4Endpoint, "https://cloudapi.dev.example");
 });
 
-test("resolveCapellaConfig uses the shared registry username + the secret's password when no personal creds", async () => {
+test("resolveCapellaConfig uses the shared registry username + the secret's credentials when no personal creds", async () => {
   const resolved = await resolveCapellaConfig({
     block: "dev",
     environments: TEST_ENVIRONMENTS,
     config: { version: FIT_CLI_CONFIG_VERSION },
     env: {},
-    fetchSecret: () => Promise.resolve({ password: "svc-pw" }),
+    fetchSecret: () => Promise.resolve({ password: "svc-pw", apiKey: "svc-key", apiSecret: "svc-sec" }),
   });
   assert.equal(resolved.username, "sdk_qe@couchbase.com"); // from environments.json5, not the secret
   assert.equal(resolved.password, "svc-pw");
+  assert.equal(resolved.apiKey, "svc-key");
+  assert.equal(resolved.apiSecret, "svc-sec");
 });
 
-test("resolveCapellaConfig keeps the registry username even when a personal password is set", async () => {
+test("resolveCapellaConfig keeps personal values and fills the rest from the secret", async () => {
   const resolved = await resolveCapellaConfig({
     block: "dev",
     environments: TEST_ENVIRONMENTS,
     config: { version: FIT_CLI_CONFIG_VERSION, capella: { password: "my-pw" } },
     env: {},
-    fetchSecret: noFetch,
+    fetchSecret: () => Promise.resolve({ password: "svc-pw", apiKey: "svc-key", apiSecret: "svc-sec" }),
   });
   assert.equal(resolved.username, "sdk_qe@couchbase.com");
   assert.equal(resolved.password, "my-pw");
+  assert.equal(resolved.apiKey, "svc-key");
+  assert.equal(resolved.apiSecret, "svc-sec");
+});
+
+test("resolveCapellaConfig throws when the secret has no v4 API key", async () => {
+  await assert.rejects(
+    resolveCapellaConfig({
+      block: "dev",
+      environments: TEST_ENVIRONMENTS,
+      config: { version: FIT_CLI_CONFIG_VERSION },
+      env: {},
+      fetchSecret: () => Promise.resolve({ password: "svc-pw" }),
+    }),
+    /Could not resolve Capella apiKey, apiSecret/,
+  );
 });
 
 test("resolveCapellaConfig picks up internalSupportToken/overrideToken from the shared secret", async () => {
@@ -390,7 +431,13 @@ test("resolveCapellaConfig picks up internalSupportToken/overrideToken from the 
     config: { version: FIT_CLI_CONFIG_VERSION },
     env: {},
     fetchSecret: () =>
-      Promise.resolve({ password: "svc-pw", internalSupportToken: "support-tok", overrideToken: "override-tok" }),
+      Promise.resolve({
+        password: "svc-pw",
+        apiKey: "svc-key",
+        apiSecret: "svc-sec",
+        internalSupportToken: "support-tok",
+        overrideToken: "override-tok",
+      }),
   });
   assert.equal(resolved.internalSupportToken, "support-tok");
   assert.equal(resolved.overrideToken, "override-tok");
@@ -400,7 +447,10 @@ test("resolveCapellaConfig omits internalSupportToken/overrideToken and never to
   const resolved = await resolveCapellaConfig({
     block: "dev",
     environments: TEST_ENVIRONMENTS,
-    config: { version: FIT_CLI_CONFIG_VERSION, capella: { username: "me@cb.com", password: "pw" } },
+    config: {
+      version: FIT_CLI_CONFIG_VERSION,
+      capella: { username: "me@cb.com", password: "pw", apiKey: "my-key", apiSecret: "my-sec" },
+    },
     env: {},
     fetchSecret: noFetch,
   });

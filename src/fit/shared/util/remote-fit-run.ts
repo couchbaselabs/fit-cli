@@ -229,13 +229,18 @@ function remoteCapellaConfigPath(rootDir: string): string {
 
 function capellaConfigScript(capella: ResolvedCapellaConfig): string {
   // The env var names cbdinocluster's `init` reads (see its cmd/init.go). With
-  // CAPELLA_USER present, `init --auto` enables Capella and fills the block from
-  // these; the situational init args leave Capella enabled for exactly this.
+  // CAPELLA_API_SECRET present, `init --auto` enables Capella and fills the block
+  // from these; without it the cloud deployer is silently left disabled. The v2
+  // user/pass stay forwarded: custom image deploys, server version changes, and
+  // columnar operations still authenticate with them.
   const lines = [
     `export CAPELLA_USER=${posixQuote(capella.username ?? "")}`,
     `export CAPELLA_ENDPOINT=${posixQuote(capella.endpoint)}`,
     `export CAPELLA_OID=${posixQuote(capella.organizationId)}`,
     `export CAPELLA_PASS=${posixQuote(capella.password)}`,
+    `export CAPELLA_V4_ENDPOINT=${posixQuote(capella.v4Endpoint)}`,
+    `export CAPELLA_API_KEY=${posixQuote(capella.apiKey)}`,
+    `export CAPELLA_API_SECRET=${posixQuote(capella.apiSecret)}`,
   ];
   // Optional: only present for environments the Capella team has issued them for
   // (currently just "dev"). Both have env-var fallbacks in cbdinocluster's `init`,

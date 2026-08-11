@@ -2261,7 +2261,7 @@ export async function runFromDefinition(
             }
             // Forward Capella and AWS settings before init so `cbdinocluster init --auto`
             // (run via a login shell sourcing ~/.profile) picks them up and writes the
-            // capella and aws blocks. Without a username it can't enable Capella, so fail
+            // capella and aws blocks. Without an API secret it can't enable Capella, so fail
             // clearly rather than letting `cbdinocluster allocate` later fail with "no deployers".
             capellaEndpoint = await uploadCapellaCredsForCloudDeployer(
               execution,

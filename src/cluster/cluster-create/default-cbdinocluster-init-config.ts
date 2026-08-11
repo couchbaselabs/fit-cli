@@ -46,9 +46,9 @@ export function defaultCbdinoclusterInitArgs(
  * Like {@link defaultCbdinoclusterInitArgs} but leaves Capella *enabled* so that
  * `cbdinocluster init --auto` populates the `capella` block from the `CAPELLA_*`
  * environment variables fit-cli forwards to the box (see
- * `uploadRemoteCapellaConfig` / cbdinocluster's `cmd/init.go`, which reads
- * `CAPELLA_ENDPOINT/USER/PASS/OID`). With a `CAPELLA_USER` present, `--auto`
- * enables and fills in Capella; without one it leaves Capella disabled.
+ * `uploadRemoteCapellaConfig` / cbdinocluster's `cmd/init.go`). With a
+ * `CAPELLA_API_SECRET` present, `--auto` enables and fills in Capella; without
+ * one it leaves Capella disabled.
  *
  * `cloudProvider` picks which direct cloud-infra block cbdinocluster also needs:
  * situational PE (`private-endpoints setup-link`) calls the CSP's API directly, so

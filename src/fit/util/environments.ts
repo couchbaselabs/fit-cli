@@ -17,14 +17,16 @@ import JSON5 from "json5";
 
 export interface CapellaEnvironment {
   endpoint?: string | null;
+  /** Capella Management API v4 endpoint for this environment. */
+  v4Endpoint?: string | null;
   oid?: string | null;
   /** The (shared, non-secret) Capella account username for this environment. */
   username?: string | null;
   /**
-   * AWS Secrets Manager id/ARN holding { password, internalSupportToken?,
-   * overrideToken? } for this Capella environment. The two tokens are optional —
-   * only "dev" currently has them, which is what makes cbcollect's dev-only
-   * support available.
+   * AWS Secrets Manager id/ARN holding { password, apiKey, apiSecret,
+   * internalSupportToken?, overrideToken? } for this Capella environment. The two
+   * tokens are optional — only "dev" currently has them, which is what makes
+   * cbcollect's dev-only support available.
    */
   secretId?: string | null;
 }

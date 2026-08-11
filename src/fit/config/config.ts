@@ -58,6 +58,9 @@ Edit options:
                          (AWS secret "fit-cli/gerrit/ssh-key" used as fallback on EC2).
   --capella-username <u> Your Capella username for situational/SIT runs (env: CAPELLA_USER / CAP_USER).
   --capella-password <p> Your Capella password (env: CAPELLA_PASS / CAP_PASS).
+  --capella-api-key <k>  Your Capella v4 organization API key (env: CAPELLA_API_KEY).
+                         Optional: falls back to the shared per-environment key in AWS Secrets Manager.
+  --capella-api-secret <s> Your Capella v4 organization API secret (env: CAPELLA_API_SECRET).
   --fit-performer-dir <path>  Path to your local transactions-fit-performer checkout, for localhost runs
                          (env: FIT_PERFORMER_DIR). Stored under localhost.repos.
   --cbdinocluster-path <path> Absolute path to the cbdinocluster binary, for non-PATH installs (localhost runs)
@@ -85,6 +88,8 @@ export interface AutoInitCliArgs {
   gerritUser?: string;
   capellaUsername?: string;
   capellaPassword?: string;
+  capellaApiKey?: string;
+  capellaApiSecret?: string;
   /** Local transactions-fit-performer checkout dir (localhost runs). */
   fitPerformerDir?: string;
   cbdinoclusterPath?: string;
@@ -135,6 +140,8 @@ export function parseEditArgs(argv: string[]): AutoInitCliArgs {
   const gerritUser = consumeValue(args, "--gerrit-user");
   const capellaUsername = consumeValue(args, "--capella-username");
   const capellaPassword = consumeValue(args, "--capella-password");
+  const capellaApiKey = consumeValue(args, "--capella-api-key");
+  const capellaApiSecret = consumeValue(args, "--capella-api-secret");
   const fitPerformerDir = consumeValue(args, "--fit-performer-dir");
   const cbdinoclusterPath = consumeValue(args, "--cbdinocluster-path");
   const configPath = consumeValue(args, "--config-path") ?? defaultFitCliConfigPath();
@@ -163,6 +170,8 @@ export function parseEditArgs(argv: string[]): AutoInitCliArgs {
     gerritUser,
     capellaUsername,
     capellaPassword,
+    capellaApiKey,
+    capellaApiSecret,
     fitPerformerDir,
     cbdinoclusterPath,
     configPath,
