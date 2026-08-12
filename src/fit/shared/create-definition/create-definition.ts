@@ -143,7 +143,11 @@ export function functionalInstanceConnectivity(
   return "operational";
 }
 
-async function chooseFunctionalDefinitionCluster(connectivity: FunctionalConnectivity, capellaCloudProvider?: CapellaCloudProvider): Promise<DefinitionCluster> {
+async function chooseFunctionalDefinitionCluster(
+  connectivity: FunctionalConnectivity,
+  capellaCloudProvider?: CapellaCloudProvider,
+  capellaDataApi?: boolean,
+): Promise<DefinitionCluster> {
   if (connectivity === "cng") {
     return { kind: "cbdinocluster", def: await askClusterDef({ cng: true }) };
   }
@@ -151,7 +155,7 @@ async function chooseFunctionalDefinitionCluster(connectivity: FunctionalConnect
     return { kind: "cbdinocluster", def: await askClusterDef({ enterpriseAnalytics: true }) };
   }
   if (connectivity === "capella") {
-    return { kind: "cbdinocluster", def: await askClusterDef({ capellaCloudProvider }) };
+    return { kind: "cbdinocluster", def: await askClusterDef({ capellaCloudProvider, ...(capellaDataApi ? { capellaDataApi } : {}) }) };
   }
   if (connectivity === "capella-analytics") {
     return { kind: "cbdinocluster", def: await askClusterDef({ capellaAnalytics: true }) };
@@ -181,6 +185,19 @@ async function askCapellaPrivateEndpoint(promptIdPrefix: string): Promise<boolea
   return confirm({
     promptId: qualifyPromptId("capella.private-endpoint", promptIdPrefix),
     message: "Set up an AWS PrivateLink connection to Capella?",
+    default: false,
+  });
+}
+
+/**
+ * Ask whether to enable the Capella Data API on this cluster. Enabling it after
+ * creation takes minutes, so it is set at cluster create time. It is off by
+ * default because it makes the cluster allocation longer.
+ */
+async function askCapellaDataApi(promptIdPrefix: string): Promise<boolean> {
+  return confirm({
+    promptId: qualifyPromptId("capella.data-api", promptIdPrefix),
+    message: "Enable the Capella Data API on this cluster?",
     default: false,
   });
 }
@@ -356,9 +373,11 @@ async function addFunctionalRun(
     let capellaCloudProvider: CapellaCloudProvider | undefined;
     let capellaEnvironment: string | undefined;
     let capellaPrivateEndpoint = false;
+    let capellaDataApi = false;
     if (connectivity === "capella") {
       capellaCloudProvider = await chooseCapellaCloudProvider(promptIdPrefix);
       capellaEnvironment = await chooseCapellaEnvironment(promptIdPrefix);
+      capellaDataApi = await askCapellaDataApi(promptIdPrefix);
       if (capellaCloudProvider === "aws") {
         capellaPrivateEndpoint = await askCapellaPrivateEndpoint(promptIdPrefix);
       }
@@ -380,7 +399,7 @@ async function addFunctionalRun(
     const instance = capellaPrivateEndpoint
       ? { aws: { privateEndpoint: {} } }
       : await chooseInstanceExecution(promptIdPrefix);
-    const cluster = await chooseFunctionalDefinitionCluster(connectivity, capellaCloudProvider);
+    const cluster = await chooseFunctionalDefinitionCluster(connectivity, capellaCloudProvider, capellaDataApi);
     const onClusterExists = cluster.kind === "cbdinocluster" ? await askClusterExistsPolicy() : undefined;
     const subDef = buildFitFunctionalDefinitionFrom({
       cluster,
@@ -430,6 +449,7 @@ function functionalDefinitionCluster(instance: InstanceLifetime, clusterConfigs:
             : { enterpriseAnalytics: true }
           : {}),
         ...(clusterData.cbdinocluster.capella ? { capellaCloudProvider: clusterData.cbdinocluster.capella.cloudProvider } : {}),
+        ...(clusterData.cbdinocluster.config.cloud?.["data-api"] === true ? { capellaDataApi: true } : {}),
       },
     };
   }

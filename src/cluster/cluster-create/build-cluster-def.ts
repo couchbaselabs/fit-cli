@@ -48,6 +48,12 @@ export interface ClusterDef {
   enterpriseAnalytics?: boolean;
   /** Cloud provider for a Capella cluster; when set the `cloud` deployer is used. */
   capellaCloudProvider?: CapellaCloudProvider;
+  /**
+   * Enable the Capella Data API when the cluster is created. Off by default:
+   * the Data API adds minutes to the allocation, so only runs that need it
+   * should request it. Capella Server clusters only; Capella Analytics rejects it.
+   */
+  capellaDataApi?: boolean;
   /** Whether to build a Capella Analytics (cloud) cluster via cbdinocluster's cloud deployer. */
   capellaAnalytics?: boolean;
   /** Cloud provider for a Capella Analytics cluster. */
@@ -127,8 +133,8 @@ export interface CbdinoclusterDef {
   columnar?: boolean;
   /** cbdinocluster deployer: "cloud" for Capella Analytics; "docker" (or absent) for Enterprise Analytics. */
   deployer?: string;
-  /** Cloud configuration for Capella Analytics clusters. */
-  cloud?: { "cloud-provider": string; region?: string };
+  /** Cloud configuration for Capella clusters. `data-api` is valid for Capella Server only. */
+  cloud?: { "cloud-provider": string; region?: string; "data-api"?: boolean };
   /** Per-service RAM quotas for the docker deployer; omitted for other deployers. */
   docker?: CbdinoclusterDockerDef;
   /** Pass-through: any other cbdinocluster cluster-def keys are forwarded as-is. */
@@ -164,7 +170,10 @@ export function buildClusterDefObject(def: ClusterDef): CbdinoclusterDef {
     // underlying infrastructure to use. No `docker` block — Capella manages resources.
     return {
       nodes: [{ count: def.nodeCount, version: def.version }],
-      cloud: { "cloud-provider": def.capellaCloudProvider },
+      cloud: {
+        "cloud-provider": def.capellaCloudProvider,
+        ...(def.capellaDataApi ? { "data-api": true } : {}),
+      },
     };
   }
   if (def.capellaAnalytics) {

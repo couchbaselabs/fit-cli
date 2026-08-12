@@ -102,6 +102,43 @@ test("buildClusterDefObject uses cao (not docker) for CNG clusters", () => {
   assert.equal(def.cao?.["operator-version"], CAO_OPERATOR_VERSION);
 });
 
+test("buildClusterDefObject emits data-api in the cloud section when capellaDataApi is set", () => {
+  const def = buildClusterDefObject({
+    nodeCount: 3,
+    version: "7.6",
+    services: [],
+    cng: false,
+    capellaCloudProvider: "aws",
+    capellaDataApi: true,
+  });
+  assert.deepEqual(def.cloud, { "cloud-provider": "aws", "data-api": true });
+});
+
+test("buildClusterDefObject omits data-api by default for Capella clusters", () => {
+  const def = buildClusterDefObject({
+    nodeCount: 3,
+    version: "7.6",
+    services: [],
+    cng: false,
+    capellaCloudProvider: "aws",
+  });
+  assert.deepEqual(def.cloud, { "cloud-provider": "aws" });
+});
+
+test("buildClusterDefObject never emits data-api for Capella Analytics clusters", () => {
+  // Capella Analytics rejects the data-api field, so it must not appear on that path.
+  const def = buildClusterDefObject({
+    nodeCount: 2,
+    version: "",
+    services: [],
+    cng: false,
+    capellaAnalytics: true,
+    cloudProvider: "aws",
+    capellaDataApi: true,
+  });
+  assert.deepEqual(def.cloud, { "cloud-provider": "aws" });
+});
+
 test("buildClusterDefObject emits cbdino columnar:true + an nginx load balancer for a self-managed Enterprise Analytics cluster", () => {
   const def = buildClusterDefObject({
     nodeCount: 2,

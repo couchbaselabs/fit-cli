@@ -54,6 +54,12 @@ export interface AskClusterDefOptions {
    */
   capellaCloudProvider?: CapellaCloudProvider;
   /**
+   * Enable the Capella Data API at cluster create time. Decided one level up
+   * (the definition builder's Data API prompt), so it is passed in. Only
+   * meaningful with {@link capellaCloudProvider}.
+   */
+  capellaDataApi?: boolean;
+  /**
    * Build a Capella Analytics (cloud) cluster — emits cbdinocluster's
    * `columnar: true` + `deployer: cloud`. Asks for cloud provider; cbdinocluster
    * uses the configured default region. No service list or version is asked.
@@ -74,7 +80,14 @@ export async function askClusterDef(options: AskClusterDefOptions = {}): Promise
     });
     // Capella manages cluster topology; no service list needed.
     // 3 nodes so cbdinocluster's cloud deployer (which always sends numReplicas=1) is valid.
-    return { nodeCount: 3, version, services: [], cng: false, capellaCloudProvider: options.capellaCloudProvider };
+    return {
+      nodeCount: 3,
+      version,
+      services: [],
+      cng: false,
+      capellaCloudProvider: options.capellaCloudProvider,
+      ...(options.capellaDataApi ? { capellaDataApi: true } : {}),
+    };
   }
 
   if (options.cng) {
