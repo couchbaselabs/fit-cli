@@ -8,7 +8,7 @@ variable "gcp_project_id" {
 # IAM members (e.g. "user:name@couchbase.com", "group:sdk-qe@couchbase.com") allowed
 # to open an IAP tunnel to fit-cli's GCP instances and to use OS Login on them.
 variable "gcp_iap_members" {
-  description = "IAM members granted roles/iap.tunnelResourceAccessor and roles/compute.osLogin, i.e. who can reach fit-cli's GCP instances over the IAP transport."
+  description = "IAM members granted roles/iap.tunnelResourceAccessor, roles/compute.osLogin, and roles/compute.instanceAdmin.v1, i.e. who can launch fit-cli's GCP instances and reach them over the IAP transport."
   type        = list(string)
   default     = [
       # Internal discussion here https://couchbase.slack.com/archives/G9682CWN7/p1786356769355469?thread_ts=1785939833.137899&cid=G9682CWN7 on which to use

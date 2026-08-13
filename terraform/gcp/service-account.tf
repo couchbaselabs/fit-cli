@@ -46,3 +46,10 @@ resource "google_project_iam_member" "fit_cli_os_login" {
   role     = "roles/compute.osLogin"
   member   = each.value
 }
+
+resource "google_project_iam_member" "fit_cli_instance_admin" {
+  for_each = toset(var.gcp_iap_members)
+  project  = var.gcp_project_id
+  role     = "roles/compute.instanceAdmin.v1"
+  member   = each.value
+}
