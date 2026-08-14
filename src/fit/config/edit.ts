@@ -436,12 +436,12 @@ async function promptForCapella(
     mask: "*",
   });
 
-  const apiKey = await input({
+  const apiKey = await password({
     promptId: "init.capella.api-key",
     message: defaults.apiKey
-      ? `Capella v4 organization API key (leave blank to keep "${defaults.apiKey}"):`
+      ? "Capella v4 organization API key (leave blank to keep the current one):"
       : "Capella v4 organization API key (leave blank to use the shared one from AWS Secrets Manager):",
-    default: defaults.apiKey,
+    mask: "*",
   });
   const apiSecret = await password({
     promptId: "init.capella.api-secret",
@@ -456,7 +456,7 @@ async function promptForCapella(
     capella: {
       username,
       password: trimOptional(capellaPassword) ?? defaults.password,
-      apiKey,
+      apiKey: trimOptional(apiKey) ?? defaults.apiKey,
       apiSecret: trimOptional(apiSecret) ?? defaults.apiSecret,
     },
   };
@@ -587,6 +587,7 @@ function mask(value: string | undefined): string {
 const SECRET_FIELDS = new Set([
   "github.token",
   "capella.password",
+  "capella.apiKey",
   "capella.apiSecret",
 ]);
 
