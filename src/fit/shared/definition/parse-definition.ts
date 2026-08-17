@@ -42,6 +42,10 @@ import {
   type InstanceLifetime,
   type InstanceSetup,
   type MavenOptions,
+  type PerformanceClusterMetadata,
+  type PerformanceGrpcSettings,
+  type PerformanceSection,
+  type PerformanceWorkload,
   type PerformerSetup,
   type ResolvedFitConfig,
   type SchemeAndTls,
@@ -596,16 +600,135 @@ function validateVersions(record: Record<string, unknown>, path: string): string
   return value;
 }
 
+/**
+ * The workload is passed to the perf driver as-is (see {@link PerformanceWorkload}),
+ * so validate only enough to catch the mistakes that would otherwise surface as an
+ * opaque Jackson error inside the driver: each operation has to be an object, and
+ * has to be either a plain op or a transaction.
+ */
+function validatePerformanceWorkload(value: unknown, path: string): PerformanceWorkload {
+  const record = requireRecord(value, path);
+  rejectUnknown(record, ["operations"], path);
+  if (!Array.isArray(record.operations) || record.operations.length === 0) {
+    throw new InvalidDefinitionError(`"${path}.operations" must contain at least one operation.`);
+  }
+  const operations = record.operations.map((operation, index) => {
+    const opPath = `${path}.operations[${index}]`;
+    const op = requireRecord(operation, opPath);
+    if (op.op === undefined && op.transaction === undefined) {
+      throw new InvalidDefinitionError(`"${opPath}" must set either "op" (e.g. get) or "transaction".`);
+    }
+    if (op.op !== undefined && op.transaction !== undefined) {
+      throw new InvalidDefinitionError(`"${opPath}" cannot set both "op" and "transaction".`);
+    }
+    return op as PerformanceWorkload["operations"][number];
+  });
+  return { operations };
+}
+
+function validatePerformanceVariables(value: unknown, path: string): Record<string, string | number | boolean> {
+  const record = requireRecord(value, path);
+  const out: Record<string, string | number | boolean> = {};
+  for (const [name, raw] of Object.entries(record)) {
+    if (typeof raw !== "string" && typeof raw !== "number" && typeof raw !== "boolean") {
+      throw new InvalidDefinitionError(`"${path}.${name}" must be a string, number or boolean; got ${JSON.stringify(raw)}`);
+    }
+    out[name] = raw;
+  }
+  return out;
+}
+
+function validateOptionalInt(record: Record<string, unknown>, key: string, path: string): number | undefined {
+  const value = record[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    throw new InvalidDefinitionError(`"${path}.${key}" must be an integer; got ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
+function validatePerformanceClusterMetadata(value: unknown, path: string): PerformanceClusterMetadata {
+  const record = requireRecord(value, path);
+  const numeric = ["nodeCount", "cpuCount", "memory", "replicas"] as const;
+  const strings = ["type", "version", "storage", "instance", "compaction", "topology", "region"] as const;
+  rejectUnknown(record, [...numeric, ...strings], path);
+  const out: PerformanceClusterMetadata = {};
+  for (const key of numeric) {
+    const parsed = validateOptionalInt(record, key, path);
+    if (parsed !== undefined) out[key] = parsed;
+  }
+  for (const key of strings) {
+    const raw = record[key];
+    if (raw === undefined) continue;
+    if (!isString(raw)) {
+      throw new InvalidDefinitionError(`"${path}.${key}" must be a string; got ${JSON.stringify(raw)}`);
+    }
+    out[key] = raw;
+  }
+  return out;
+}
+
+function validatePerformanceGrpc(value: unknown, path: string): PerformanceGrpcSettings {
+  const record = requireRecord(value, path);
+  rejectUnknown(record, ["flowControl", "batch", "compression"], path);
+  const out: PerformanceGrpcSettings = {};
+  for (const key of ["flowControl", "compression"] as const) {
+    const raw = record[key];
+    if (raw === undefined) continue;
+    if (typeof raw !== "boolean") {
+      throw new InvalidDefinitionError(`"${path}.${key}" must be a boolean; got ${JSON.stringify(raw)}`);
+    }
+    out[key] = raw;
+  }
+  const batch = validateOptionalInt(record, "batch", path);
+  if (batch !== undefined) out.batch = batch;
+  return out;
+}
+
+function validatePerformanceSection(value: unknown, path: string): PerformanceSection {
+  const record = requireRecord(value, path);
+  rejectUnknown(record, ["workload", "variables", "driverVer", "performerVer", "grpc", "cluster"], path);
+  if (record.workload === undefined) {
+    throw new InvalidDefinitionError(`Missing required field: ${path}.workload`);
+  }
+  const driverVer = validateOptionalInt(record, "driverVer", path);
+  const performerVer = validateOptionalInt(record, "performerVer", path);
+  return {
+    workload: validatePerformanceWorkload(record.workload, `${path}.workload`),
+    ...(record.variables !== undefined ? { variables: validatePerformanceVariables(record.variables, `${path}.variables`) } : {}),
+    ...(driverVer !== undefined ? { driverVer } : {}),
+    ...(performerVer !== undefined ? { performerVer } : {}),
+    ...(record.grpc !== undefined ? { grpc: validatePerformanceGrpc(record.grpc, `${path}.grpc`) } : {}),
+    ...(record.cluster !== undefined ? { cluster: validatePerformanceClusterMetadata(record.cluster, `${path}.cluster`) } : {}),
+  };
+}
+
 function validateRun(value: unknown, path: string, clusterless: boolean): FitRun {
   const record = requireRecord(value, path);
   const type = record.type;
   if (!isString(type) || !FIT_RUN_TYPES.includes(type as FitRun["type"])) {
     throw new InvalidDefinitionError(`"${path}.type" must be one of ${FIT_RUN_TYPES.join(", ")}; got ${JSON.stringify(type)}`);
   }
+  const repeat = validateRepeat(record, path);
+  if (type === "performance") {
+    // No `tests`: a perf run drives a workload and records timings, it doesn't assert.
+    rejectUnknown(record, ["type", "performance", "fitConfig", "repeat"], path);
+    if (clusterless) {
+      throw new InvalidDefinitionError(`"${path}.type" cannot be "performance" under clusterlessSessions.`);
+    }
+    if (record.performance === undefined) {
+      throw new InvalidDefinitionError(`Missing required field: ${path}.performance`);
+    }
+    return {
+      type,
+      performance: validatePerformanceSection(record.performance, `${path}.performance`),
+      ...(record.fitConfig !== undefined ? { fitConfig: validateRunFitConfig(record.fitConfig, `${path}.fitConfig`) } : {}),
+      ...(repeat !== undefined ? { repeat } : {}),
+    };
+  }
   if (record.tests === undefined) {
     throw new InvalidDefinitionError(`Missing required field: ${path}.tests`);
   }
-  const repeat = validateRepeat(record, path);
   if (type === "functional" || type === "analytics-functional") {
     rejectUnknown(record, ["type", "tests", "fitConfig", "repeat"], path);
     if (clusterless) {

@@ -20,13 +20,17 @@ import { run } from "../../../util/non-fit/proc.js";
 import { runRunDir, type DefinitionRunPath } from "../../../util/non-fit/replay.js";
 import type { ExecutionTarget } from "../../../util/non-fit/target.js";
 
-/** Absolute path to the results/ directory the test-driver writes, given the performer checkout dir. */
-export function situationalResultsDir(fitPerformerDir: string, testDriverModule: string = "test-driver"): string {
-  return join(fitPerformerDir, testDriverModule, "results");
+/**
+ * Absolute path to the results/ directory a FIT driver writes, given the
+ * performer checkout dir. Generic over the module because the perf-driver lays
+ * its bundles out the same way the test-driver does (see run-perf-driver.ts).
+ */
+export function driverResultsDir(fitPerformerDir: string, driverModule: string = "test-driver"): string {
+  return join(fitPerformerDir, driverModule, "results");
 }
 
 /** Local destination this run's collected results/ tree lands in. */
-export function localSituationalResultsDir(path: DefinitionRunPath): string {
+export function localDriverResultsDir(path: DefinitionRunPath): string {
   return join(runRunDir(path), "results");
 }
 
@@ -46,7 +50,7 @@ export function remoteResultsArchiveArgs(sourceDir: string): string[] {
  */
 export function collectResultsDir(sourceDir: string, path: DefinitionRunPath): string | undefined {
   if (!existsSync(sourceDir)) return undefined;
-  const destDir = localSituationalResultsDir(path);
+  const destDir = localDriverResultsDir(path);
   rmSync(destDir, { recursive: true, force: true });
   cpSync(sourceDir, destDir, { recursive: true });
   return destDir;
@@ -67,7 +71,7 @@ export async function collectResultsDirFromTarget(
   const [sizeLine, remoteArchive] = output.split("\n");
   if (!remoteArchive) return undefined;
 
-  const destDir = localSituationalResultsDir(path);
+  const destDir = localDriverResultsDir(path);
   rmSync(destDir, { recursive: true, force: true });
   mkdirSync(destDir, { recursive: true, mode: 0o700 });
   const archivePath = join(runRunDir(path), "results.tar.gz");

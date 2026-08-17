@@ -47,6 +47,7 @@ import type {
   FitDefinition,
   FitRun,
   InstanceLifetime,
+  PerformanceSection,
   PrivateEndpointSetup,
   ResolvedFitConfig,
   SessionLifetime,
@@ -83,6 +84,17 @@ export function resolveInstance(instance: InstanceLifetime): ResolvedInstance {
 export interface ResolvedRunCommon {
   path: DefinitionRunPath;
   fitConfig?: ResolvedFitConfig;
+}
+
+/**
+ * What a run that drives the Maven test-driver carries. Separate from
+ * {@link ResolvedRunCommon} because a `performance` run has none of it: it drives
+ * a workload through the perf-driver and has no tests to select, no surefire
+ * reports, and no `-Dtest=` selector. Keeping these off the common base means the
+ * compiler asks about the difference rather than letting an empty selection be
+ * quietly passed to Maven.
+ */
+export interface ResolvedTestRunFields {
   testSelection: FitTestSelection;
   extraMavenArgs: string[];
   /**
@@ -95,11 +107,11 @@ export interface ResolvedRunCommon {
   analytics?: boolean;
 }
 
-export interface ResolvedFunctionalRun extends ResolvedRunCommon {
+export interface ResolvedFunctionalRun extends ResolvedRunCommon, ResolvedTestRunFields {
   type: "functional";
 }
 
-export interface ResolvedSituationalRun extends ResolvedRunCommon {
+export interface ResolvedSituationalRun extends ResolvedRunCommon, ResolvedTestRunFields {
   type: "situational";
   cng: boolean;
   /** Present when this run should connect to cbdino's Capella cluster over AWS PrivateLink. */
@@ -108,7 +120,17 @@ export interface ResolvedSituationalRun extends ResolvedRunCommon {
   version?: string;
 }
 
-export type ResolvedRun = ResolvedFunctionalRun | ResolvedSituationalRun;
+export interface ResolvedPerformanceRun extends ResolvedRunCommon {
+  type: "performance";
+  performance: PerformanceSection;
+}
+
+export type ResolvedRun = ResolvedFunctionalRun | ResolvedSituationalRun | ResolvedPerformanceRun;
+
+/** The presets naming this run, for labelling. A perf run has none — it isn't test-driven. */
+export function runPresets(run: { testSelection?: FitTestSelection } | { type: "performance" }): readonly string[] | undefined {
+  return "testSelection" in run ? run.testSelection?.presets : undefined;
+}
 
 export interface ResolvedSessionPlan {
   path: DefinitionRunPath;
@@ -161,12 +183,23 @@ export interface ResolvedExecutionRunCommon extends ResolvedRunCommon {
   onPortInUse: PortInUsePolicy;
 }
 
-export interface ResolvedFunctionalExecutionRun extends ResolvedExecutionRunCommon {
+export interface ResolvedFunctionalExecutionRun extends ResolvedExecutionRunCommon, ResolvedTestRunFields {
   type: "functional";
   cluster?: SelectedCluster;
 }
 
-export interface ResolvedSituationalExecutionRun extends ResolvedExecutionRunCommon {
+/**
+ * A perf run at execution time. Rides in the *functional* execution group — it is
+ * cluster- and performer-bound in exactly the same way — and only diverges at the
+ * point of running, where it drives the perf-driver instead of the test-driver.
+ */
+export interface ResolvedPerformanceExecutionRun extends ResolvedExecutionRunCommon {
+  type: "performance";
+  performance: PerformanceSection;
+  cluster?: SelectedCluster;
+}
+
+export interface ResolvedSituationalExecutionRun extends ResolvedExecutionRunCommon, ResolvedTestRunFields {
   type: "situational";
   cng: boolean;
   /** Present when this run should connect to cbdino's Capella cluster over AWS PrivateLink. */
@@ -175,7 +208,13 @@ export interface ResolvedSituationalExecutionRun extends ResolvedExecutionRunCom
   version?: string;
 }
 
-export type ResolvedExecutionRun = ResolvedFunctionalExecutionRun | ResolvedSituationalExecutionRun;
+export type ResolvedExecutionRun =
+  | ResolvedFunctionalExecutionRun
+  | ResolvedPerformanceExecutionRun
+  | ResolvedSituationalExecutionRun;
+
+/** The runs a cluster-bound session executes: test-driver runs and perf runs alike. */
+export type ResolvedClusterBoundExecutionRun = ResolvedFunctionalExecutionRun | ResolvedPerformanceExecutionRun;
 
 export interface ResolvedSessionGroup {
   sdk: Sdk;
@@ -184,7 +223,7 @@ export interface ResolvedSessionGroup {
   onPortInUse: PortInUsePolicy;
   /** Session-level path (carries sessionIndex). */
   path: DefinitionRunPath;
-  runs: ResolvedFunctionalExecutionRun[];
+  runs: ResolvedClusterBoundExecutionRun[];
 }
 
 export interface ResolvedFunctionalExecutionGroup {
@@ -459,11 +498,21 @@ export function resolveCbdinocluster(cluster: ClusterLifetime): ResolvedCbdinocl
   };
 }
 
-type ResolvedRunWithoutPath = Omit<ResolvedFunctionalRun, "path"> | Omit<ResolvedSituationalRun, "path">;
+type ResolvedRunWithoutPath =
+  | Omit<ResolvedFunctionalRun, "path">
+  | Omit<ResolvedSituationalRun, "path">
+  | Omit<ResolvedPerformanceRun, "path">;
 
 function resolveRun(run: FitRun, stripClusterAccess: boolean): ResolvedRunWithoutPath {
   const rawFitConfig = asFitConfig(run.fitConfig);
   const fitConfig = stripClusterAccess ? stripFitConfigClusterAccess(rawFitConfig) : rawFitConfig;
+  if (run.type === "performance") {
+    return {
+      type: "performance",
+      ...(fitConfig !== undefined ? { fitConfig } : {}),
+      performance: run.performance,
+    };
+  }
   if (run.type === "situational") {
     return {
       type: "situational",
@@ -549,7 +598,7 @@ function resolveRunWithPath(
   versionLabel?: string,
 ): ResolvedRun {
   const resolved = resolveRun(run, stripClusterAccess);
-  let runSeg = runLabel(path, run.type, resolved.testSelection.presets);
+  let runSeg = runLabel(path, run.type, runPresets(resolved));
   if (repeatIndex !== undefined) {
     runSeg = runSeg !== undefined ? `${runSeg}:r${repeatIndex + 1}` : `r${repeatIndex + 1}`;
   }
@@ -677,20 +726,28 @@ export function buildExecutionGroups(instances: ResolvedInstancePlan[]): Resolve
         onPortInUse: session.onPortInUse,
         path: session.path,
         runs: session.runs
-          .filter((run): run is ResolvedFunctionalRun => run.type === "functional")
-          .map((run) => ({
-            type: "functional" as const,
-            path: run.path,
-            sdk: session.sdk,
-            performerPort: session.performerPort,
-            ...(session.performerVersion !== undefined ? { performerVersion: session.performerVersion } : {}),
-            onPortInUse: session.onPortInUse,
-            ...(run.fitConfig !== undefined ? { fitConfig: run.fitConfig } : {}),
-            testSelection: run.testSelection,
-            extraMavenArgs: run.extraMavenArgs,
-            ...(run.analytics ? { analytics: true } : {}),
-            ...(cluster.cluster ? { cluster: cluster.cluster } : {}),
-          })),
+          .filter((run): run is ResolvedFunctionalRun | ResolvedPerformanceRun => run.type !== "situational")
+          .map((run): ResolvedClusterBoundExecutionRun => {
+            const common = {
+              path: run.path,
+              sdk: session.sdk,
+              performerPort: session.performerPort,
+              ...(session.performerVersion !== undefined ? { performerVersion: session.performerVersion } : {}),
+              onPortInUse: session.onPortInUse,
+              ...(run.fitConfig !== undefined ? { fitConfig: run.fitConfig } : {}),
+              ...(cluster.cluster ? { cluster: cluster.cluster } : {}),
+            };
+            if (run.type === "performance") {
+              return { ...common, type: "performance" as const, performance: run.performance };
+            }
+            return {
+              ...common,
+              type: "functional" as const,
+              testSelection: run.testSelection,
+              extraMavenArgs: run.extraMavenArgs,
+              ...(run.analytics ? { analytics: true } : {}),
+            };
+          }),
       })),
     })),
     ...(instance.clusterlessSessions.length === 0 || !instance.cbdinoclusterInit

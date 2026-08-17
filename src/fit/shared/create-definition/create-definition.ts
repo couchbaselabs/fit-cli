@@ -24,6 +24,7 @@ import { DEFAULT_CAPELLA_ENV } from "../../util/config.js";
 import {
   buildFitDefinition,
   buildFitFunctionalDefinitionFrom,
+  buildFitPerformanceDefinitionFrom,
   buildFitSituationalDefinitionFrom,
   type DefinitionCluster,
   type DefinitionFormat,
@@ -49,6 +50,7 @@ import {
   type FitTestSelection,
 } from "../select-fit-tests/select-fit-tests.js";
 import { createLocalFitExecutionContext } from "../util/remote-fit-run.js";
+import { PERF_WORKLOADS, perfWorkloadByValue } from "../../performance/run-perf-driver/perf-workloads.js";
 
 async function chooseDefinitionCluster(): Promise<DefinitionCluster> {
   const selection = await selectCluster();
@@ -95,6 +97,7 @@ async function chooseDefinitionBuilderAction(index: number): Promise<DefinitionB
     choices: [
       { name: "Add FIT functional testing", value: "functional" },
       { name: "Add FIT situational testing", value: "situational" },
+      { name: "Add FIT performance testing", value: "performance" },
       { name: "I'm done with the FIT definition building", value: "done" },
     ],
     default: index > 1 ? "done" : undefined,
@@ -303,6 +306,81 @@ function collectSubDefClusterlessSession(subDef: FitDefinition): SessionLifetime
   }
   return session;
 }
+
+/**
+ * Add a FIT performance run.
+ *
+ * Deliberately fewer questions than the functional builder: a perf run's value
+ * comes from being comparable with the runs before it, so the things that would
+ * make it incomparable (cluster shape, replicas, storage) are left at the values
+ * FIT/PERF has been using rather than offered as choices. Edit the generated file
+ * for anything beyond this.
+ */
+async function addPerformanceRun(
+  state: DefinitionBuilderState,
+  runIndex: number,
+): Promise<void> {
+  await ensureSharedRepoSetup(state);
+  const promptIdPrefix = `fit.definition.run.${runIndex + 1}.performance`;
+
+  const sdk = await chooseSdk("Which SDK do you want to performance test?", promptIdPrefix);
+  const version = await askPerformerTag(sdk, promptIdPrefix);
+  const onPortInUse = await askPortInUsePolicy(promptIdPrefix);
+
+  const workloadValue = await select<string>({
+    promptId: qualifyPromptId("workload", promptIdPrefix),
+    message: "Which workload should this run drive?",
+    choices: PERF_WORKLOADS.map((workload) => ({
+      name: `${workload.name} — ${workload.description}`,
+      value: workload.value,
+    })),
+  });
+  const workload = perfWorkloadByValue(workloadValue);
+  if (!workload) {
+    throw new Error(`Unknown performance workload: ${workloadValue}`);
+  }
+
+  const forSeconds = Number(
+    await input({
+      promptId: qualifyPromptId("forSeconds", promptIdPrefix),
+      message: "How long should the workload run for, in seconds? (FIT/PERF's own runs use 300)",
+      default: "300",
+      validate: (value) => (Number.isInteger(Number(value)) && Number(value) > 0 ? true : "Enter a whole number of seconds."),
+    }),
+  );
+
+  console.log(
+    "\nStarting a new FIT performance instance. The perf driver drops and recreates the `default` bucket at the start of every run.",
+  );
+  const instance = await chooseInstanceExecution(promptIdPrefix);
+  const cluster = await chooseDefinitionCluster();
+  const onClusterExists = cluster.kind === "cbdinocluster" ? await askClusterExistsPolicy() : undefined;
+
+  const subDef = buildFitPerformanceDefinitionFrom({
+    cluster,
+    instance,
+    ...(onClusterExists ? { onClusterExists } : {}),
+    sdk,
+    ...(version ? { version } : {}),
+    onPortInUse,
+    performance: {
+      workload: workload.build(),
+      variables: {
+        forSeconds,
+        ...(workload.usesPool ? { poolSize: DEFAULT_PERF_POOL_SIZE } : {}),
+        horizontalScaling: 1,
+      },
+    },
+  });
+  const generatedInstance = collectSubDefInstance(state, subDef);
+  if (!generatedInstance) {
+    throw new Error("Expected a generated performance definition to contain one instance.");
+  }
+  state.instances.push(generatedInstance);
+}
+
+/** The document pool FIT/PERF's own pooled workloads use. */
+const DEFAULT_PERF_POOL_SIZE = 10000;
 
 async function addFunctionalRun(
   state: DefinitionBuilderState,
@@ -555,13 +633,11 @@ export async function createFitDefinition(options?: { format?: DefinitionFormat;
     if (action === "done") {
       break;
     }
-    if (action === "performance") {
-      console.log("\nFIT performance definition building is not wired up yet. Pick another testing type for now.");
-      continue;
-    }
     const nextRunIndex = runCount(state);
     if (action === "functional") {
       await addFunctionalRun(state, nextRunIndex);
+    } else if (action === "performance") {
+      await addPerformanceRun(state, nextRunIndex);
     } else {
       await addSituationalRun(state, nextRunIndex);
     }

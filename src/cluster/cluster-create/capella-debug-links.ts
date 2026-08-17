@@ -103,6 +103,37 @@ export function capellaDebugLinks(
   };
 }
 
+/** One entry in run.json5's `forDatabase.debug.items[]` array, as the results UI renders it. */
+export interface DebugLink {
+  /** Rendered verbatim. */
+  label: string;
+  url?: string;
+  description?: string;
+  /** A shell command shown with a copy button, e.g. an archive-fetch command. */
+  command?: string;
+}
+
+/**
+ * The `forDatabase.debug.items[]` link entries for a Capella cluster, from
+ * {@link capellaDebugLinks}. Empty when `environment` isn't configured in
+ * environments.json5.
+ */
+export function buildCapellaDebugItems(
+  environment: string,
+  couchbaseClusterUuid: string,
+  environments: EnvironmentsFile = loadEnvironments(),
+): DebugLink[] {
+  const links = capellaDebugLinks(environment, couchbaseClusterUuid, environments);
+  if (!links) {
+    return [];
+  }
+  return [
+    ...(links.capellaUiUrl ? [{ label: "Capella UI", url: links.capellaUiUrl }] : []),
+    { label: "Fleet Manager", url: links.fleetManagerUrl, description: "Needs VPN access." },
+    { label: "DataDog logs", url: links.datadogLogsUrl },
+  ];
+}
+
 /** Print the debug links (if any) for a Capella cluster, with the Fleet Manager caveat. */
 export function printCapellaDebugLinks(environment: string, couchbaseClusterUuid: string): void {
   const links = capellaDebugLinks(environment, couchbaseClusterUuid);

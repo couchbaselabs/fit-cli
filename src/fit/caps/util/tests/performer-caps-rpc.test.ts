@@ -1,50 +1,27 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { decodeGrpcFrame, decodePerformerCapsResponse, encodeGrpcFrame } from "../performer-caps-rpc.js";
+import { create, fromBinary } from "@bufbuild/protobuf";
+import { Code, ConnectError } from "@connectrpc/connect";
+import { PerformerCapsFetchResponseSchema } from "../../../performance/generated/performer.caps_pb.js";
+import type { Caps } from "../../../performance/generated/sdk.caps_pb.js";
+import { isUnimplemented, toPerformerCaps } from "../performer-caps-rpc.js";
 
 /**
  * A real gRPC response body captured from ghcr.io/couchbase/java-fit-performer:main.
  *
- * The decoder is hand-rolled against the FIT protos, so this fixture is what stops it
- * quietly rotting: if the wire format or our reading of it ever drifts, this fails.
+ * The response is decoded with the generated types, so this fixture is what catches them
+ * drifting from what performers actually send.
  */
 const JAVA_CAPS_RESPONSE_BASE64 =
   "AAAAAGsKHQABAwUEBgcLCAoJDA0ODxASExQVERYXGBoZGxweEghqYXZhLXNkaxoDMi4wIgUzLjUuMDICAAE6CgABDgQCAwcIBglCJAgJGBkAChMSAQIDBAUGBwsMDw0OEBEUFRYXGxweHyAiIyQlJw==";
 
-const javaResponse = Buffer.from(JAVA_CAPS_RESPONSE_BASE64, "base64");
+/** The protobuf message, without the 5-byte gRPC frame header the fixture was captured with. */
+const javaMessage = Buffer.from(JAVA_CAPS_RESPONSE_BASE64, "base64").subarray(5);
 
-describe("gRPC framing", () => {
-  test("encodes an empty request as a bare 5-byte header", () => {
-    const frame = encodeGrpcFrame(new Uint8Array(0));
-    assert.equal(frame.length, 5);
-    assert.equal(frame.readUInt8(0), 0);
-    assert.equal(frame.readUInt32BE(1), 0);
-  });
-
-  test("round-trips a message through encode/decode", () => {
-    const message = Buffer.from([1, 2, 3, 4]);
-    assert.deepEqual(decodeGrpcFrame(encodeGrpcFrame(message)), message);
-  });
-
-  test("rejects a compressed frame rather than decoding garbage", () => {
-    const frame = encodeGrpcFrame(Buffer.from([1]));
-    frame.writeUInt8(1, 0);
-    assert.throws(() => decodeGrpcFrame(frame), /compressed/);
-  });
-
-  test("rejects a frame whose declared length disagrees with the body", () => {
-    const frame = encodeGrpcFrame(Buffer.from([1, 2, 3]));
-    frame.writeUInt32BE(99, 1);
-    assert.throws(() => decodeGrpcFrame(frame), /length mismatch/);
-  });
-
-  test("rejects a body too short to be a frame", () => {
-    assert.throws(() => decodeGrpcFrame(Buffer.from([0, 0])), /too short/);
-  });
-});
+const decode = (message: Uint8Array) => toPerformerCaps(fromBinary(PerformerCapsFetchResponseSchema, message));
 
 describe("decoding a real java performer response", () => {
-  const caps = decodePerformerCapsResponse(decodeGrpcFrame(javaResponse));
+  const caps = decode(javaMessage);
 
   test("reads the identifying strings", () => {
     assert.equal(caps.userAgent, "java-sdk");
@@ -75,19 +52,36 @@ describe("decoding a real java performer response", () => {
 });
 
 describe("decoding degenerate responses", () => {
-  test("an empty message yields empty cap lists rather than throwing", () => {
-    const caps = decodePerformerCapsResponse(Buffer.alloc(0));
+  test("an empty message yields empty cap lists and no strings", () => {
+    const caps = toPerformerCaps(create(PerformerCapsFetchResponseSchema, {}));
     assert.deepEqual(caps.sdkCaps, []);
     assert.deepEqual(caps.transactionCaps, []);
     assert.deepEqual(caps.performerCaps, []);
     assert.equal(caps.userAgent, undefined);
+    assert.equal(caps.libraryVersion, undefined);
+    assert.equal(caps.transactionsProtocolVersion, undefined);
   });
 
   test("unknown fields from a newer performer are ignored, not fatal", () => {
     // Field 99, varint 7 — a field this fit-cli has never heard of.
-    const withUnknownField = Buffer.concat([decodeGrpcFrame(javaResponse), Buffer.from([0x98, 0x06, 0x07])]);
-    const caps = decodePerformerCapsResponse(withUnknownField);
+    const caps = decode(Buffer.concat([javaMessage, Buffer.from([0x98, 0x06, 0x07])]));
     assert.equal(caps.userAgent, "java-sdk");
     assert.equal(caps.sdkCaps.length, 36);
   });
+
+  test("a cap number the generated enum doesn't name is kept, not dropped", () => {
+    const caps = toPerformerCaps(create(PerformerCapsFetchResponseSchema, { sdkImplementationCaps: [9999 as Caps] }));
+    assert.deepEqual(caps.sdkCaps, [9999]);
+  });
+});
+
+test("only UNIMPLEMENTED sent by the performer itself counts as unimplemented", () => {
+  const fromWire = (code: Code): ConnectError => {
+    const err = new ConnectError("", code, new Headers({ "grpc-status": String(code) }));
+    err.isWireError = true;
+    return err;
+  };
+  assert.equal(isUnimplemented(fromWire(Code.Unimplemented)), true);
+  assert.equal(isUnimplemented(fromWire(Code.Internal)), false);
+  assert.equal(isUnimplemented(new ConnectError("not from the performer", Code.Unimplemented)), false);
 });

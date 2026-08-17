@@ -4,6 +4,7 @@ import type { FitExecutionContext } from "../../../shared/util/remote-fit-run.js
 import {
   applyPolicyToRunningContainers,
   applyPortInUsePolicy,
+  checkPortAvailability,
   handlePortInUse,
   killProcessArgs,
   lsofPortArgs,
@@ -46,6 +47,21 @@ function fakeExecutionContext(): FitExecutionContext {
     performerRunArgs: (imageName) => ["run", imageName],
   };
 }
+
+test("checkPortAvailability treats lsof's non-zero exit as a free port, locally and over SSM", async () => {
+  for (const message of [
+    "lsof exited with code 1",
+    "sh on i-0b6ab6e79fa4d9321 exited with status Failed (code 1): failed to run commands: exit status 1",
+  ]) {
+    const execution = { ...fakeExecutionContext(), capture: () => Promise.reject(new Error(message)) };
+    assert.deepEqual(await checkPortAvailability(execution, 8060), { available: true }, message);
+  }
+});
+
+test("checkPortAvailability reports other failures as unknown", async () => {
+  const execution = { ...fakeExecutionContext(), capture: () => Promise.reject(new Error("SSM throttled")) };
+  assert.deepEqual(await checkPortAvailability(execution, 8060), { available: null, error: "SSM throttled" });
+});
 
 test("runningPerformerPsArgs filters docker ps by the requested performer image", () => {
   assert.deepEqual(runningPerformerPsArgs("performer-node-main"), [

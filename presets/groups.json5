@@ -14,7 +14,7 @@
 // that's why the cross-cluster groups below are `<family>-multi-*`, scoped to one
 // family, rather than one group spanning all 3.
 //
-// Naming: `op-<cluster>-<func|sit>-<tier>`, where `<cluster>` is `onprem`/`cng`/
+// Naming: `op-<cluster>-<func|sit|perf>-<tier>`, where `<cluster>` is `onprem`/`cng`/
 // `capella`/`capella-pe`/`multi` (multiple clusters). The on-prem cluster is
 // spelled out (`onprem`), not omitted, precisely so it can't be confused with
 // `op-multi-*` — if the default cluster had no name, `op-func-sanity` (one
@@ -26,8 +26,9 @@
 //
 // Levels, from narrowest to broadest:
 //   1. per-cluster (op-onprem/op-cng/op-capella/op-capella-pe/enterprise-analytics/
-//      columnar), crossing functional+situational within that one cluster where both exist.
-//   2. per-family, per-type (<family>-multi-func-*/<family>-multi-sit-*), crossing
+//      columnar), crossing functional+situational+performance within that one cluster where
+//      more than one exists.
+//   2. per-family, per-type (<family>-multi-func-*/<family>-multi-sit-*/<family>-multi-perf-*), crossing
 //      every cluster of one family within one test type.
 //   3. per-family, everything (<family>-multi-*), crossing every cluster and type
 //      within that one family.
@@ -39,9 +40,11 @@
 // stops being adequate for it (e.g. a genuinely irregular group, like `qe-set` below).
 {
   // Level 1: per-cluster.
-  'op-onprem-sanity':   { tags: ['onprem', 'functional'], order: 15, presets: ['op-onprem-func-sanity'] },
-  'op-onprem-lite':     { tags: ['onprem', 'functional'], order: 25, presets: ['op-onprem-func-lite'] },
-  'op-onprem-release':  { tags: ['onprem', 'functional'], order: 35, presets: ['op-onprem-func-release'] },
+  // There is no op-onprem-perf-release: perf has no broader workload set than lite yet, so
+  // the release tier reuses op-onprem-perf-lite.
+  'op-onprem-sanity':   { tags: ['onprem', 'functional', 'performance'], order: 15, presets: ['op-onprem-func-sanity', 'op-onprem-perf-sanity'] },
+  'op-onprem-lite':     { tags: ['onprem', 'functional', 'performance'], order: 25, presets: ['op-onprem-func-lite', 'op-onprem-perf-lite'] },
+  'op-onprem-release':  { tags: ['onprem', 'functional', 'performance'], order: 35, presets: ['op-onprem-func-release', 'op-onprem-perf-lite'] },
 
   'op-cng-sanity':  { tags: ['cng', 'functional', 'situational'], order: 15, presets: ['op-cng-func-sanity', 'op-cng-sit-sanity'] },
   'op-cng-lite':    { tags: ['cng', 'functional', 'situational'], order: 25, presets: ['op-cng-func-lite', 'op-cng-sit-lite'] },
@@ -88,6 +91,11 @@
   'op-multi-sit-lite':    { tags: ['operational', 'situational'], order: 25, presets: [/* 'op-cng-sit-lite', */ 'op-capella-sit-lite', 'op-capella-pe-sit-lite'] },
   'op-multi-sit-release': { tags: ['operational', 'situational'], order: 35, presets: [/* 'op-cng-sit-release', */ 'op-capella-sit-release', 'op-capella-pe-sit-release'] },
 
+  // Only on-prem has perf presets today. Release reuses lite, as for op-onprem-release above.
+  'op-multi-perf-sanity':  { tags: ['operational', 'performance'], order: 15, presets: ['op-onprem-perf-sanity'] },
+  'op-multi-perf-lite':    { tags: ['operational', 'performance'], order: 25, presets: ['op-onprem-perf-lite'] },
+  'op-multi-perf-release': { tags: ['operational', 'performance'], order: 35, presets: ['op-onprem-perf-lite'] },
+
   // enterprise-analytics, columnar and insights each have exactly one cluster today, so
   // their "-multi-func-*" is a trivial single-member wrapper — kept for naming consistency
   // with the op family, and as the natural place to add a second cluster later. Tagged
@@ -105,9 +113,9 @@
   'insights-multi-func-release': { tags: ['insights', 'functional'], order: 36, presets: ['insights-func-release'] },
 
   // Level 3: per-family, everything.
-  'op-multi-sanity':  { tags: ['operational', 'functional', 'situational'], order: 45, presets: ['op-multi-func-sanity', 'op-multi-sit-sanity'] },
-  'op-multi-lite':    { tags: ['operational', 'functional', 'situational'], order: 55, presets: ['op-multi-func-lite', 'op-multi-sit-lite'] },
-  'op-multi-release': { tags: ['operational', 'functional', 'situational'], order: 65, presets: ['op-multi-func-release', 'op-multi-sit-release'] },
+  'op-multi-sanity':  { tags: ['operational', 'functional', 'situational', 'performance'], order: 45, presets: ['op-multi-func-sanity', 'op-multi-sit-sanity', 'op-multi-perf-sanity'] },
+  'op-multi-lite':    { tags: ['operational', 'functional', 'situational', 'performance'], order: 55, presets: ['op-multi-func-lite', 'op-multi-sit-lite', 'op-multi-perf-lite'] },
+  'op-multi-release': { tags: ['operational', 'functional', 'situational', 'performance'], order: 65, presets: ['op-multi-func-release', 'op-multi-sit-release', 'op-multi-perf-release'] },
 
   'enterprise-analytics-multi-sanity':  { tags: ['enterprise-analytics', 'functional'], order: 46, presets: ['enterprise-analytics-multi-func-sanity'] },
   'enterprise-analytics-multi-lite':    { tags: ['enterprise-analytics', 'functional'], order: 56, presets: ['enterprise-analytics-multi-func-lite'] },

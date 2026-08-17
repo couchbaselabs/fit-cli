@@ -193,7 +193,8 @@ test("packages are expanded to Maven wildcard selectors", () => {
       },
     ],
   });
-  const testSelection = resolved.instances[0]?.clusters[0]?.sessions[0]?.runs[0]?.testSelection;
+  const run0 = resolved.instances[0]?.clusters[0]?.sessions[0]?.runs[0];
+  const testSelection = run0 && run0.type !== "performance" ? run0.testSelection : undefined;
   assert.equal(testSelection?.mavenTestSelector, "com.couchbase.client.kv.**,com.couchbase.transactions.**");
 });
 
@@ -223,7 +224,8 @@ test("packages combined with classes produce a unified selector", () => {
       },
     ],
   });
-  const testSelection = resolved.instances[0]?.clusters[0]?.sessions[0]?.runs[0]?.testSelection;
+  const run0 = resolved.instances[0]?.clusters[0]?.sessions[0]?.runs[0];
+  const testSelection = run0 && run0.type !== "performance" ? run0.testSelection : undefined;
   assert.equal(testSelection?.mavenTestSelector, "com.couchbase.other.ExplicitTest,com.couchbase.client.kv.**");
 });
 

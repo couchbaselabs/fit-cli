@@ -12,8 +12,14 @@ import {
   buildDefaultFitTestSelection,
   buildFitTestSelectionFromClassNames,
 } from "../../select-fit-tests/select-fit-tests.js";
+import type { FitRun, TestsSection } from "../types.js";
 import type { SelectedCluster } from "../../../../cluster/cluster-select/cluster-select.js";
 import { sdkByValue } from "../../../../util/sdk/sdks.js";
+
+/** A run's `tests` block, narrowed away from the perf run type — which has none. */
+function testsOf(run: FitRun | undefined): TestsSection | undefined {
+  return run && run.type !== "performance" ? run.tests : undefined;
+}
 
 const sdk = sdkByValue("java");
 if (!sdk) {
@@ -182,7 +188,7 @@ test("buildFitFunctionalDefinition emits a preset placeholder when the selection
   };
   const definition = buildFitFunctionalDefinition(sdk, cluster, allNonTransactions);
   const run = definition.instances[0]?.clusters[0]?.sessions[0]?.runs[0];
-  assert.deepEqual(run?.tests.presets, ["all-non-transactions"]);
+  assert.deepEqual(testsOf(run)?.presets, ["all-non-transactions"]);
 
   const allTransactions: Parameters<typeof buildFitFunctionalDefinition>[2] = {
     allTests: [],
@@ -192,7 +198,7 @@ test("buildFitFunctionalDefinition emits a preset placeholder when the selection
   };
   const defTxn = buildFitFunctionalDefinition(sdk, cluster, allTransactions);
   const runTxn = defTxn.instances[0]?.clusters[0]?.sessions[0]?.runs[0];
-  assert.deepEqual(runTxn?.tests.presets, ["all-transactions"]);
+  assert.deepEqual(testsOf(runTxn)?.presets, ["all-transactions"]);
 
   // round-trip: the placeholder parses cleanly
   assert.deepEqual(parseDefinition(formatFitDefinition(definition, "json5")), definition);

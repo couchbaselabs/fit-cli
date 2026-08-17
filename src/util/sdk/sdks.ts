@@ -53,6 +53,16 @@ export type Sdk = (typeof SDKS)[number];
 export type SdkValue = Sdk["value"];
 export type SdkFamily = Sdk["family"];
 
+/**
+ * Look up an SDK by its display name ("Java", "C++", ".NET"), or undefined.
+ *
+ * These are the names FIT/PERF records as `impl.language` and that its scheduling config names
+ * its SDKs by, so anything reading that config has to resolve them back to an SDK.
+ */
+export function sdkByName(name: string): Sdk | undefined {
+  return SDKS.find((sdk) => sdk.name === name);
+}
+
 /** Look up an SDK by its `value`, or undefined if there is no such SDK. */
 export function sdkByValue(value: string): Sdk | undefined {
   return SDKS.find((sdk) => sdk.value === value);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { capellaDebugLinks, defaultDatadogWindow, printCapellaPreflightInfo } from "../capella-debug-links.js";
+import { buildCapellaDebugItems, capellaDebugLinks, defaultDatadogWindow, printCapellaPreflightInfo } from "../capella-debug-links.js";
 import type { EnvironmentsFile } from "../../../fit/util/environments.js";
 
 const environments: EnvironmentsFile = {
@@ -21,6 +21,7 @@ const environments: EnvironmentsFile = {
     cbdinoclusterVersion: "v0.0.120",
     capellaKeyPool: { enabled: true, size: 10, expiryDays: 1 },
     aws: { region: "us-west-2", vpcId: "vpc-x", subnetId: "subnet-x" },
+    perfClusterVersion: "8.0.0",
   },
   externalServices: {
     otel: { collectorVersion: "0.135.0", jaegerVersion: "1.62.0", prometheusVersion: "v2.55.0" },
@@ -33,6 +34,15 @@ const environments: EnvironmentsFile = {
     FUNCTIONAL_SET_SANITY: "com.couchbase.client.kv.SanityTest",
     FUNCTIONAL_SET_LITE: "all",
     FUNCTIONAL_SET_RELEASE: "all",
+  },
+  perf: {
+    driverVer: 6,
+    performerVer: 1,
+    aws: { instanceType: "c5.4xlarge" },
+    docker: { "kv-memory": 28000 },
+    pooledVariables: { forSeconds: 300, horizontalScaling: 20, poolSize: 10000 },
+    insertVariables: { forSeconds: 300, horizontalScaling: 20, docNum: 10000000 },
+    workloads: { kvGet: { operations: [] }, kvReplace: { operations: [] }, kvInsert: { operations: [] }, txnWrite: { operations: [] } },
   },
   capella: {
     prod: { endpoint: "https://api.cloud.couchbase.com", oid: "62488bdd-d416-467e-84f7-fc7c1583a083" },
@@ -112,4 +122,18 @@ test("printCapellaPreflightInfo is a no-op for an unconfigured environment", () 
     console.log = original;
   }
   assert.deepEqual(lines, []);
+});
+
+test("buildCapellaDebugItems builds the debug.items[] links for a configured environment", () => {
+  const items = buildCapellaDebugItems("dev", uuid, environments);
+  assert.deepEqual(
+    items.map((i) => i.label),
+    ["Capella UI", "Fleet Manager", "DataDog logs"],
+  );
+  assert.equal(items[0]?.url, "https://dev.nonprod-project-avengers.com/databases?oid=6af08c0a-8cab-4c1c-b257-b521575c16d0");
+  assert.equal(items[1]?.description, "Needs VPN access.");
+});
+
+test("buildCapellaDebugItems returns nothing for an unconfigured environment", () => {
+  assert.deepEqual(buildCapellaDebugItems("staging", uuid, environments), []);
 });

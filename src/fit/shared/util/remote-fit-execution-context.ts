@@ -330,7 +330,14 @@ export async function createRemoteFitExecutionContext(
     collectJunitArtifacts: async (sourceDir, path) =>
       await collectJunitArtifactsFromTarget(target, sourceDir, path),
     collectResultsDir: async (sourceDir, path) => await collectResultsDirFromTarget(target, sourceDir, path),
-    pathExists: (path) => target.runHiddenUntilFailure("test", ["-e", path], undefined, { quiet: true }).then(() => true).catch(() => false),
+    // Answered by the shell rather than by `test`'s exit status: a missing path is an expected
+    // answer, and a failing command gets its SSM error dumped, which read like a real failure
+    // in the middle of an otherwise healthy run.
+    pathExists: (path) =>
+      target
+        .capture("sh", ["-c", `test -e ${posixQuote(path)} && printf yes || printf no`], undefined, { quiet: true })
+        .then((output) => output.trim() === "yes")
+        .catch(() => false),
     commandAvailable: (command) =>
       target
         .capture("sh", ["-lc", `command -v ${posixQuote(command)} >/dev/null && printf yes || printf no`], undefined, { quiet: true })
