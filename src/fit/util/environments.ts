@@ -109,6 +109,8 @@ export interface Defaults {
   defaultCapellaEnvironment: string;
   /** Default results environment key (a key under `results` in this file). */
   defaultResultsEnvironment: string;
+  /** Default cbdinocluster release (a GitHub release tag) installed onto remote boxes. */
+  cbdinoclusterVersion: string;
   /** AWS account and network settings. */
   aws: AwsDefaults;
   /** GCP account and network settings. */

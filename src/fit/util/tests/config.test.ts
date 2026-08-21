@@ -209,6 +209,7 @@ const STUB_DEFAULTS = {
   capellaPreviousClusterVersion: "7.6",
   defaultCapellaEnvironment: "dev",
   defaultResultsEnvironment: "dev",
+  cbdinoclusterVersion: "v0.0.120",
   aws: { region: "us-west-2", vpcId: "vpc-stub", subnetId: "subnet-stub" },
 };
 

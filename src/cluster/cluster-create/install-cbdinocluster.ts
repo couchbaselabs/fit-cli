@@ -37,6 +37,7 @@ import { ssmStartSessionCommand } from "../../fit/util/aws/lifecycle-warning.js"
 import type { RunOptions } from "../../util/non-fit/proc.js";
 import { fitCliError } from "../../util/non-fit/fit-cli-log.js";
 import { CBDINOCLUSTER_URL } from "../../fit/util/config.js";
+import { loadEnvironments } from "../../fit/util/environments.js";
 import type { CbdinoclusterSourceGit } from "../../fit/shared/definition/types.js";
 
 /** Default login user for the EC2 boxes fit-cli launches (stock Ubuntu AMI). */
@@ -62,11 +63,15 @@ export type CaptureExecutor = {
 /**
  * The shell script that runs on the remote host to install cbdinocluster. It
  * maps `uname` output to the release asset naming (`cbdinocluster-<os>-<arch>`),
- * downloads the latest release with curl (`-f` so a bad URL is a hard failure),
- * makes it executable, and finally prints the absolute path it installed to so
- * the caller can parse it back. `set -e` means any step failing aborts.
+ * downloads the pinned release (defaults.cbdinoclusterVersion in environments.json5)
+ * with curl (`-f` so a bad URL is a hard failure), makes it executable, and
+ * finally prints the absolute path it installed to so the caller can parse it
+ * back. `set -e` means any step failing aborts.
  */
-export function remoteInstallScript(binDir: string = DEFAULT_REMOTE_BIN_DIR): string {
+export function remoteInstallScript(
+  binDir: string = DEFAULT_REMOTE_BIN_DIR,
+  version: string = loadEnvironments().defaults.cbdinoclusterVersion,
+): string {
   return [
     "set -e",
     `os=$(uname -s | tr '[:upper:]' '[:lower:]')`,
@@ -79,7 +84,7 @@ export function remoteInstallScript(binDir: string = DEFAULT_REMOTE_BIN_DIR): st
     `bindir="${binDir}"`,
     'mkdir -p "$bindir"',
     'target="$bindir/cbdinocluster"',
-    `url="${CBDINOCLUSTER_URL}/releases/latest/download/cbdinocluster-$os-$arch"`,
+    `url="${CBDINOCLUSTER_URL}/releases/download/${version}/cbdinocluster-$os-$arch"`,
     'curl -fsSL "$url" -o "$target"',
     'chmod 755 "$target"',
     // The one line of stdout the caller parses: the absolute path it installed to.
@@ -148,19 +153,21 @@ export function remoteBuildFromPrScript(
 }
 
 /**
- * Install the latest cbdinocluster release on the host `execution` runs on, and
- * resolve with the absolute path to the installed binary. Throws (via the
- * executor) if the download or install fails, or if nothing usable came back.
+ * Install the pinned cbdinocluster release (defaults.cbdinoclusterVersion in
+ * environments.json5) on the host `execution` runs on, and resolve with the
+ * absolute path to the installed binary. Throws (via the executor) if the
+ * download or install fails, or if nothing usable came back.
  */
 export async function installCbdinoclusterRemote(
   execution: CaptureExecutor,
   binDir: string = DEFAULT_REMOTE_BIN_DIR,
 ): Promise<string> {
+  const version = loadEnvironments().defaults.cbdinoclusterVersion;
   console.log(
-    `→ Installing the latest cbdinocluster release on ${execution.description} from ${CBDINOCLUSTER_URL}...`,
+    `→ Installing cbdinocluster ${version} on ${execution.description} from ${CBDINOCLUSTER_URL}...`,
   );
-  const output = await execution.capture("sh", ["-lc", remoteInstallScript(binDir)], undefined, {
-    display: `install cbdinocluster from ${CBDINOCLUSTER_URL}`,
+  const output = await execution.capture("sh", ["-lc", remoteInstallScript(binDir, version)], undefined, {
+    display: `install cbdinocluster ${version} from ${CBDINOCLUSTER_URL}`,
   });
   const installedPath = parseInstalledPath(
     output,
