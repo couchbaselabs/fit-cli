@@ -18,6 +18,7 @@
     "cloud-instances": "bun src/cloud/cloud-instances/cloud-instances.ts",
     "performer": "bun src/fit/performer/performer.ts",
     "secrets": "bun src/cloud/util/aws/secrets-cli.ts",
+    "slack": "bun src/fit/slack/slack-cli.ts",
     "archive": "bun src/fit/archive/archive.ts",
     "caps": "bun src/fit/caps/caps.ts",
     "upgrade": "bun src/fit/upgrade/upgrade.ts",

@@ -27,6 +27,7 @@ import { defaultFitCliConfigPath } from "../util/config.js";
 import { runCloudInstancesMain } from "../../cloud/cloud-instances/cloud-instances.js";
 import { runPerformerMain } from "../performer/performer.js";
 import { runSecretsMain } from "../../cloud/util/aws/secrets-cli.js";
+import { runSlackMain } from "../slack/slack-cli.js";
 import { printVersion } from "../version/version.js";
 import { runUpgradeMain } from "../upgrade/upgrade.js";
 import { runMaintenanceMain } from "../maintenance/maintenance.js";
@@ -226,6 +227,7 @@ const COMMANDS: Record<string, { fn: () => void; description: string; hidden?: b
   "performer":       { fn: runPerformerMain,        description: "Build FIT performer images from an SDK repo ref" },
   "caps":            { fn: runCapsMain,             description: "Show the FIT capabilities each SDK's performer reports" },
   "secrets":         { fn: runSecretsMain,          description: "Manage AWS secrets", hidden: true },
+  "slack":           { fn: runSlackMain,             description: "Post a combined Slack summary", hidden: true },
   "maintenance":     { fn: runMaintenanceMain,       description: "Repo & release maintenance (branch channels)", hidden: true },
   "archive":         { fn: runArchiveMain,          description: "Archive run artifacts" },
   "replay":          { fn: runReplayMain,           description: "Replay a recorded session" },
