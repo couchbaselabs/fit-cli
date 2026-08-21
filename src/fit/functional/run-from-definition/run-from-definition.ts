@@ -58,7 +58,6 @@ import { confirm, select } from "../../../util/non-fit/prompts.js";
 import { DEFAULT_CAPELLA_ENV, resolveCapellaConfig, resolveFitPerformerDir, resolveGithubCredentials, resolveResultsDbCredentials, resolveRosaCredentials } from "../../util/config.js";
 import { ssmStartSessionCommand, terminateInstanceCommand } from "../../util/aws/lifecycle-warning.js";
 import { gcpDebugAccessCommand, gcpTerminateInstanceCommand } from "../../util/gcp/lifecycle-warning.js";
-import { maybeUploadRunArtifacts } from "../../util/aws/upload-run-artifacts.js";
 import { buildSlackRunResults, postSlackRunResults } from "../../slack/post-run-summary.js";
 import type { SlackRunResult } from "../../slack/util/slack-results.js";
 import { deleteVpcEndpointsForCluster } from "../../../cloud/util/aws/delete-vpc-endpoints.js";
