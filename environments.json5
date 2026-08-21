@@ -72,7 +72,10 @@
     // This is the database and UI for FIT/SIT and FIT/PERF results.
     defaultResultsEnvironment: "prod",
 
-    // Nb cbdinocluster version is not (currently) pinned here, as it's convenient to pick up the latest.
+    // Default cbdinocluster release (a GitHub release tag) installed onto remote boxes.
+    // Pinned rather than tracking "latest" so that cbdino breakages (which have occurred with
+    // v0.0.121) do not break the "ci" channel.
+    cbdinoclusterVersion: "v0.0.120",
 
     // AWS account and network settings. fit-cli targets exactly one region and one VPC;
     // none of these are configurable per-run. If terraform recreates the VPC the ids

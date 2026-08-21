@@ -12,10 +12,15 @@ test("remoteInstallScript: normalises arm64 arch", () => {
   assert.ok(script.includes("aarch64|arm64) arch=arm64"));
 });
 
-test("remoteInstallScript: downloads from releases/latest", () => {
-  const script = remoteInstallScript();
+test("remoteInstallScript: downloads the pinned release", () => {
+  const script = remoteInstallScript(undefined, "v0.0.120");
   assert.ok(script.includes("couchbaselabs/cbdinocluster"));
-  assert.ok(script.includes("releases/latest/download/cbdinocluster-"));
+  assert.ok(script.includes("releases/download/v0.0.120/cbdinocluster-"));
+});
+
+test("remoteInstallScript: defaults to the pinned cbdinoclusterVersion from environments.json5", () => {
+  const script = remoteInstallScript();
+  assert.ok(script.includes("releases/download/v0.0.120/cbdinocluster-"));
 });
 
 test("remoteInstallScript: last stdout line prints the installed path", () => {
