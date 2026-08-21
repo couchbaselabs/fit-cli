@@ -173,6 +173,31 @@ function extractSlackThreadFlag(argv: readonly string[]): { slackThread?: string
   return { slackThread, positionals };
 }
 
+/**
+ * Pull `--slack-result-file <path>` out of an argv list. Internal flag used by the GHA
+ * preset-group matrix (see .github/workflows/fit-cli.yaml): a single matrix job runs
+ * one already-expanded preset, so it has no group to combine a Slack message over.
+ * Instead of posting live, it writes its SlackRunResult rows to this file — a final
+ * job downloads every matrix job's file and posts them as one combined message via
+ * `fit slack post-collected`. Standalone: doesn't need `--slack-thread`, since this
+ * invocation never posts to a thread itself.
+ */
+function extractSlackResultFileFlag(argv: readonly string[]): { slackResultFile?: string; positionals: string[] } {
+  const positionals: string[] = [];
+  let slackResultFile: string | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--slack-result-file") {
+      slackResultFile = argv[++i];
+    } else if (arg.startsWith("--slack-result-file=")) {
+      slackResultFile = arg.slice("--slack-result-file=".length);
+    } else {
+      positionals.push(arg);
+    }
+  }
+  return { slackResultFile, positionals };
+}
+
 /** Pull `--override key=value` entries out of an argv list (repeatable). */
 function extractOverrides(argv: readonly string[]): { overrides: Record<string, string>; positionals: string[] } {
   const { values, positionals } = extractKeyValueFlag(argv, "--override");
@@ -327,12 +352,15 @@ function patchDefinitionFile(resolvedPath: string, patch: (raw: Record<string, u
  * shared by both run subcommands, returning the parsed run options, the run count
  * requested via `--repeat` (if any), and the remaining positionals.
  */
-function extractRunOptions(argv: readonly string[]): { runOpts: RunFromDefinitionOptions; repeat?: number; positionals: string[] } {
+function extractRunOptions(
+  argv: readonly string[],
+): { runOpts: RunFromDefinitionOptions; repeat?: number; slackResultFile?: string; positionals: string[] } {
   const { resumeAt, positionals: afterResume } = extractResumeAt(argv);
   const { selector: resumeSelector, positionals: afterSelector } = extractResumeSelector(afterResume);
   const { cbcollect, positionals: afterCbcollect } = extractCbcollectFlag(afterSelector);
   const { slackThread, positionals: afterSlackThread } = extractSlackThreadFlag(afterCbcollect);
-  const { repeat, stopOnFailure, positionals } = extractRepeatFlags(afterSlackThread);
+  const { slackResultFile, positionals: afterSlackResultFile } = extractSlackResultFileFlag(afterSlackThread);
+  const { repeat, stopOnFailure, positionals } = extractRepeatFlags(afterSlackResultFile);
   let resumePoint;
   try {
     resumePoint = parseResumePoint(resumeAt);
@@ -347,7 +375,7 @@ function extractRunOptions(argv: readonly string[]): { runOpts: RunFromDefinitio
     ...(slackThread ? { slackThread } : {}),
     ...(stopOnFailure ? { stopOnFailure } : {}),
   };
-  return { runOpts, repeat, positionals };
+  return { runOpts, repeat, ...(slackResultFile ? { slackResultFile } : {}), positionals };
 }
 
 /**
@@ -381,7 +409,7 @@ export async function runDispatch(argv: string[]): Promise<RunOutput | void> {
   applyRepoDirs(repoDirs);
 
   if (subcommand === "preset") {
-    const { runOpts, repeat, positionals: afterRunOpts } = extractRunOptions(afterRepoDirs);
+    const { runOpts, repeat, slackResultFile, positionals: afterRunOpts } = extractRunOptions(afterRepoDirs);
     const { overrides, positionals: afterOverrides } = extractOverrides(afterRunOpts);
     const { envOverrides, positionals: afterEnvOverrides } = extractEnvOverrides(afterOverrides);
     const { performerImageName, positionals } = extractPerformerImageName(afterEnvOverrides);
@@ -453,6 +481,10 @@ export async function runDispatch(argv: string[]): Promise<RunOutput | void> {
       // Presets in a group run in one process, so scope per-run prompt ids by preset
       // name — otherwise the second preset's teardown reuses the leave-up prompt id and
       // trips the replay "used more than once" guard. Single-preset runs stay unscoped.
+      // Whether this preset's Slack rows should be collected at all — either to post
+      // live after the group loop (slackThread) or to write to a file for a later job
+      // to combine (slackResultFile).
+      const wantsSlackOutput = Boolean(runOpts.slackThread || slackResultFile);
       if (types.length > 1) {
         // A crash mid-preset (e.g. an unmodeled AWS SDK error) must not take the rest of
         // the group down with it — one bad preset shouldn't cost the results of every
@@ -463,19 +495,19 @@ export async function runDispatch(argv: string[]): Promise<RunOutput | void> {
           const output = await runFromDefinition(definitionPath, {
             ...runOpts,
             promptScope: type,
-            ...(runOpts.slackThread ? { deferSlackTo: groupSlackResults } : {}),
+            ...(wantsSlackOutput ? { deferSlackTo: groupSlackResults } : {}),
           });
           if (output) outputs.push(output);
           // Some failures (e.g. resuming with no saved state) return normally without
           // ever reaching the Slack block inside runFromDefinition, so no rows get
           // pushed — without this, such a preset would silently vanish from the
           // combined message instead of showing up as a failure.
-          if (runOpts.slackThread && output?.worstFailure && groupSlackResults.length === slackResultsBefore) {
+          if (wantsSlackOutput && output?.worstFailure && groupSlackResults.length === slackResultsBefore) {
             groupSlackResults.push({ label: type, sdk: type, ok: false });
           }
         } catch (err) {
           console.error(`\nPreset ${type} crashed and did not produce a result; continuing with the remaining presets.\n${formatUncaughtError(err)}`);
-          if (runOpts.slackThread) {
+          if (wantsSlackOutput) {
             groupSlackResults.push({ label: type, sdk: type, ok: false });
           }
           outputs.push({
@@ -489,19 +521,33 @@ export async function runDispatch(argv: string[]): Promise<RunOutput | void> {
             failureCount: 1,
           });
         }
+      } else if (slackResultFile) {
+        // A single already-expanded preset (the shape a GHA matrix job runs) still
+        // needs to defer rather than post live when a result file was requested, so
+        // the final aggregation job can combine it with the group's other presets.
+        const slackResultsBefore = groupSlackResults.length;
+        const output = await runFromDefinition(definitionPath, { ...runOpts, deferSlackTo: groupSlackResults });
+        if (output) outputs.push(output);
+        if (output?.worstFailure && groupSlackResults.length === slackResultsBefore) {
+          groupSlackResults.push({ label: type, sdk: type, ok: false });
+        }
       } else {
         const output = await runFromDefinition(definitionPath, runOpts);
         if (output) outputs.push(output);
       }
     }
-    if (types.length > 1 && runOpts.slackThread) {
+    // Mirrors the single-run formula (tracker.worst === undefined && results.every(ok)):
+    // no preset recorded a run-failing failure, and every collected row passed.
+    const groupPassed = outputs.every((o) => !o.worstFailure) && groupSlackResults.every((r) => r.ok);
+    if (slackResultFile) {
+      writeFileSync(slackResultFile, JSON.stringify({ passed: groupPassed, results: groupSlackResults }), "utf8");
+      console.log(`✓ Wrote Slack result rows to ${slackResultFile} (posting deferred to a later job).`);
+    } else if (types.length > 1 && runOpts.slackThread) {
       await postSlackRunResults({
         slackThread: runOpts.slackThread,
         title: typeList,
         results: groupSlackResults,
-        // Mirrors the single-run formula (tracker.worst === undefined && results.every(ok)):
-        // no preset recorded a run-failing failure, and every collected row passed.
-        passed: outputs.every((o) => !o.worstFailure) && groupSlackResults.every((r) => r.ok),
+        passed: groupPassed,
       });
     }
     return combineRunOutputs(...outputs);

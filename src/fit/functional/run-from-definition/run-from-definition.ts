@@ -58,7 +58,6 @@ import { confirm, select } from "../../../util/non-fit/prompts.js";
 import { DEFAULT_CAPELLA_ENV, resolveCapellaConfig, resolveFitPerformerDir, resolveGithubCredentials, resolveResultsDbCredentials, resolveRosaCredentials } from "../../util/config.js";
 import { ssmStartSessionCommand, terminateInstanceCommand } from "../../util/aws/lifecycle-warning.js";
 import { gcpDebugAccessCommand, gcpTerminateInstanceCommand } from "../../util/gcp/lifecycle-warning.js";
-import { maybeUploadRunArtifacts } from "../../util/aws/upload-run-artifacts.js";
 import { buildSlackRunResults, postSlackRunResults } from "../../slack/post-run-summary.js";
 import type { SlackRunResult } from "../../slack/util/slack-results.js";
 import { deleteVpcEndpointsForCluster } from "../../../cloud/util/aws/delete-vpc-endpoints.js";
@@ -2528,14 +2527,17 @@ export async function runFromDefinition(
       details.push(...instanceDetails);
     }
   }
-  // Best-effort Slack summary into the supplied thread. Never throws (see the hard
-  // rule in post-run-summary.ts) so it can't affect the run's outcome or exit code.
-  if (slackThread) {
+  // Best-effort Slack summary. Never throws (see the hard rule in post-run-summary.ts)
+  // so it can't affect the run's outcome or exit code. Building the rows only needs
+  // somewhere for them to go — either a thread to post to now, or a deferSlackTo sink
+  // to collect them for a caller to post later — not necessarily both.
+  if (slackThread || deferSlackTo) {
     const slackResults = buildSlackRunResults(runResults);
     if (deferSlackTo) {
-      // Part of a preset group: let the caller post one combined message instead.
+      // Part of a preset group (or a CI matrix job writing to a result file): let the
+      // caller post one combined message instead.
       deferSlackTo.push(...slackResults);
-    } else {
+    } else if (slackThread) {
       await postSlackRunResults({
         slackThread,
         title: definition.description || basename(definitionPath),

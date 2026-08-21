@@ -143,10 +143,48 @@ jobs:
           if [ -n "$CBDINOCLUSTER_PR" ]; then
             args+=(--override "setup.cbdinocluster.source.git.pr=$CBDINOCLUSTER_PR")
           fi
-          # When set, fit-cli posts a run summary into this Slack thread. Best-effort:
-          # a Slack failure warns but never fails the run.
           if [ -n "$SLACK_THREAD" ]; then
-            args+=(--slack-thread "$SLACK_THREAD")
+            fit slack write-placeholder "$RUNNER_TEMP/slack-result.json" "$PRESET"
+            args+=(--slack-result-file "$RUNNER_TEMP/slack-result.json")
           fi
 
           fit run "${args[@]}"
+
+      - name: Upload Slack result for combined summary
+        if: always() && (inputs.slack_thread || '') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: slack-result-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/slack-result.json
+          retention-days: 1
+          if-no-files-found: warn
+
+  aggregate-matrix-results:
+    needs: [preset-matrix, fit-cli]
+    if: always() && (inputs.slack_thread || '') != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: us-west-2
+          role-to-assume: arn:aws:iam::958525475024:role/fit-cli-role
+          role-session-name: gha-${{ github.actor }}-${{ github.run_id }}
+          audience: sts.amazonaws.com
+          retry-max-attempts: 3
+
+      - name: Download every preset's Slack result
+        uses: actions/download-artifact@v4
+        with:
+          pattern: slack-result-*
+          path: ${{ runner.temp }}/slack-results
+          merge-multiple: false
+
+      - name: Post combined Slack summary
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          SLACK_THREAD: ${{ inputs.slack_thread || '' }}
+          TITLE: ${{ inputs.preset }}
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/couchbaselabs/fit-cli/main/install.sh | CHANNEL="$CHANNEL" bash
+          fit slack post-collected "$SLACK_THREAD" "$TITLE" "$RUNNER_TEMP/slack-results"
