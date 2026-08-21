@@ -38,6 +38,8 @@ resource "aws_iam_role" "fit_cli_role" {
           Federated = "arn:aws:iam::958525475024:oidc-provider/token.actions.githubusercontent.com"
         }
         Action = "sts:AssumeRoleWithWebIdentity"
+        # Allow specific user forks here.  The matrix of SDK members * SDK repos is too much to allow all of them,
+        # plus fit-cli GHAs are generally minimal and just call a shared fit-cli GHA so don't really need testing anyway.
         Condition = {
           StringEquals = {
             "token.actions.githubusercontent.com:aud"   = "sts.amazonaws.com"

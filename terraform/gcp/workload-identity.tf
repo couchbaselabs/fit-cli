@@ -28,8 +28,9 @@ resource "google_iam_workload_identity_pool_provider" "github" {
     "attribute.repository" = "assertion.repository"
   }
 
-  # Mirrors fit-cli-role.tf's StringLike condition on the same repo list.
-  attribute_condition = "assertion.repository in ${jsonencode(module.trusted_repos.repos)}"
+  # Allow specific user forks here along with `trusted_repos`.  The matrix of SDK members * SDK repos is too much to allow all of them,
+  # plus fit-cli GHAs are generally minimal and just call a shared fit-cli GHA so don't really need testing anyway.
+  attribute_condition = "assertion.repository in ${jsonencode(module.trusted_repos.repos)} || (assertion.repository == \"programmatix/couchbase-jvm-clients\" && assertion.actor == \"programmatix\")"
 
   oidc {
     issuer_uri = "https://token.actions.githubusercontent.com"
