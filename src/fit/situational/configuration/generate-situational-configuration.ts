@@ -16,24 +16,24 @@ import { type PieceData } from "../../../util/non-fit/config-pieces.js";
 import { printFileContent } from "../../../util/non-fit/fit-cli-log.js";
 import type { DefinitionRunPath } from "../../../util/non-fit/replay.js";
 import { DEFAULT_PERFORMER_PORT } from "../../performers/util/performer-port.js";
-import { type ResultsDatabase } from "../../shared/util/results-database.js";
 import {
   buildSituationalConfiguration,
   DEFAULT_CBDINO_SETTINGS,
   type CbdinoSettings,
+  type ResultsTarget,
 } from "./build-situational-configuration.js";
 import { fitConfigDocPath, writeFitConfiguration } from "../../shared/fit-configuration/write-fit-configuration.js";
 
 /** Build and write a situational FITConfiguration.json to the run directory. */
 export function generateSituationalConfiguration(
-  database: ResultsDatabase,
+  target: ResultsTarget,
   cbdino: CbdinoSettings = DEFAULT_CBDINO_SETTINGS,
   fitPerformerDir: string,
   path: DefinitionRunPath,
   performerPort: number = DEFAULT_PERFORMER_PORT,
   fitConfigPiece?: PieceData,
 ): RunOutput & { path: string } {
-  const config = buildSituationalConfiguration(database, cbdino, performerPort, fitConfigPiece);
+  const config = buildSituationalConfiguration(target, cbdino, performerPort, fitConfigPiece);
 
   console.log(
     `\nGenerating a situational FITConfiguration.json for you. You can also produce this by hand by ` +

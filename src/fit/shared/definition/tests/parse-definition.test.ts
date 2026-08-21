@@ -744,6 +744,18 @@ test("parses situational.version", () => {
   assert.equal(run.situational.version, "8.0-stable");
 });
 
+test("parses a situational run with the files database mode", () => {
+  const def = parseDefinition(SITUATIONAL.replace("mode: hosted", "mode: files"));
+  const run = def.instances[0]?.clusterlessSessions?.[0]?.runs[0];
+  assert.ok(run?.type === "situational");
+  assert.equal(run.situational.database.mode, "files");
+});
+
+test("rejects resultsEnvironment combined with the files database mode", () => {
+  const def = SITUATIONAL.replace("mode: hosted", "mode: files\n                resultsEnvironment: prod");
+  assert.throws(() => parseDefinition(def), /only applies to mode "hosted"/);
+});
+
 test("rejects empty versions array", () => {
   assert.throws(
     () => parseDefinition(SITUATIONAL.replace("presets: [all]", "presets: [all]\n            versions: []")),

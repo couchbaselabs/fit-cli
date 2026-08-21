@@ -30,7 +30,8 @@
  * cbdinocluster plan is allocated during the cluster phase and recorded in the
  * run state so `--resume-at` can pick it back up.
  */
-import { copyFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { copyFileSync, mkdirSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   artifactFromPath,
@@ -43,7 +44,7 @@ import {
 } from "../../../util/non-fit/artifacts.js";
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { clearLogContext, runDefinitionPrefix, fitCliError, fitCliWarn, popLogContext, printWithoutTimestamps, runScriptPrefix, setLogContext } from "../../../util/non-fit/fit-cli-log.js";
-import { createLogFile } from "../../../util/non-fit/proc.js";
+import { createLogFile, run as runLocalCommand } from "../../../util/non-fit/proc.js";
 import {
   defaultsToNonInteractive,
   ensureRunDir,
@@ -51,6 +52,7 @@ import {
   extractCbcollectFlag,
   clusterRunDir,
   instanceRunDir,
+  runRunDir,
   type DefinitionRunPath,
 } from "../../../util/non-fit/replay.js";
 import { clusterLabel as clusterSegmentLabel, formatRunLabel, instanceLabel, performerLabel, runLabel, type RunLabelParts } from "../../shared/util/run-labels.js";
@@ -95,7 +97,8 @@ import type { PieceData } from "../../../util/non-fit/config-pieces.js";
 import { generateFitConfiguration } from "../../shared/fit-configuration/generate-fit-configuration.js";
 import { resourceCreationPiece, type ClusterCreatingConfig } from "../util/build-fit-configuration.js";
 import { generateSituationalConfiguration } from "../../situational/configuration/generate-situational-configuration.js";
-import { DEFAULT_CBDINO_SETTINGS, type CbdinoSettings } from "../../situational/configuration/build-situational-configuration.js";
+import { RESULTS_BUCKET, uploadSituationalResults } from "../../situational/upload-results/upload-results.js";
+import { DEFAULT_CBDINO_SETTINGS, SITUATIONAL_RESULTS_DIR_NAME, type CbdinoSettings } from "../../situational/configuration/build-situational-configuration.js";
 import { loadEnvironments } from "../../util/environments.js";
 import {
   createFitExecutionContext,
@@ -995,13 +998,18 @@ export async function runSituationalTests(
       "(usually `dinonet`) so it can reach the cluster cbdino creates.",
   );
 
-  const database = await resolveResultsDatabase(run.databaseMode, run.resultsEnvironment);
-  if (!database.ready) {
+  // Files mode has no results database - the driver writes result files and we
+  // upload them after the run. `database` stays undefined in that case.
+  const database = run.databaseMode === "files"
+    ? undefined
+    : await resolveResultsDatabase(run.databaseMode, run.resultsEnvironment);
+  if (database && !database.ready) {
     return { artifacts: database.artifacts, details: database.details };
   }
+  const filesMode = database === undefined;
 
-  const artifacts: Artifact[] = [...database.artifacts];
-  const details: Detail[] = [...database.details];
+  const artifacts: Artifact[] = [...(database?.artifacts ?? [])];
+  const details: Detail[] = [...(database?.details ?? [])];
 
   // Resolve cbdinocluster to its absolute path on the execution host so the FIT
   // test driver can invoke it even when its environment doesn't inherit the same PATH.
@@ -1010,7 +1018,7 @@ export async function runSituationalTests(
   const resolvedVersion = run.version !== undefined && isAlias(run.version) ? await resolveAlias(run.version) : run.version;
 
   const fitConfig = generateSituationalConfiguration(
-    database.database,
+    database?.database ?? "files",
     situationalCbdinoSettings(run.cng, run.privateEndpoint !== undefined, resolvedVersion, instanceKind),
     execution.fitPerformerDir,
     run.path,
@@ -1019,6 +1027,15 @@ export async function runSituationalTests(
   );
   artifacts.push(...fitConfig.artifacts);
   details.push(...fitConfig.details);
+
+  // After the run we upload every result directory the driver left, so clear any
+  // from an earlier run first, or they get uploaded again. Skip when fitPerformerDir
+  // is empty (unconfigured localhost): the path would be relative, so rm -rf would
+  // delete test-driver/results under the cwd. runTestDriver rejects those runs.
+  const driverResultsDir = join(execution.fitPerformerDir, DEFAULT_TEST_DRIVER_MODULE, SITUATIONAL_RESULTS_DIR_NAME);
+  if (filesMode && execution.fitPerformerDir) {
+    await execution.removeTree(driverResultsDir);
+  }
 
   const testSelection = expandSituationalPresets(run.testSelection, run.cng);
   const testRun = await runTestDriver(
@@ -1030,8 +1047,8 @@ export async function runSituationalTests(
     DEFAULT_TEST_DRIVER_MODULE,
     true,
     // The results-DB password goes to the driver via the environment, not the
-    // config file — so it can't leak into the collected FITConfiguration.json.
-    { FIT_RESULTS_DB_PASSWORD: database.database.password },
+    // config file, so it can't leak into the collected FITConfiguration.json.
+    database ? { FIT_RESULTS_DB_PASSWORD: database.database.password } : undefined,
   );
   artifacts.push(...testRun.artifacts);
   const pathLabel = formatRunLabel(
@@ -1045,11 +1062,28 @@ export async function runSituationalTests(
     ...testRun.details,
   );
 
-  // Derive the UI URL from the chosen database's host so it matches where data
-  // actually lands (dev vs prod), rather than a fixed constant.
-  const resultsUrl = situationalResultsUrl(resultsHostFromJdbc(database.database.jdbc));
-  console.log(`\nWhen this run produces data, view it at:\n  ${resultsUrl}`);
-  details.push({ label: "Results UI", value: resultsUrl, callToAction: true });
+  if (database) {
+    // Derive the UI URL from the chosen database's host so it matches where data
+    // actually lands (dev vs prod), rather than a fixed constant.
+    const resultsUrl = situationalResultsUrl(resultsHostFromJdbc(database.database.jdbc));
+    console.log(`\nWhen this run produces data, view it at:\n  ${resultsUrl}`);
+    details.push({ label: "Results UI", value: resultsUrl, callToAction: true });
+  } else {
+    // Groups the results this invocation uploads under one id.
+    const situationalRunId = randomUUID();
+    try {
+      const uploadOutput = await uploadCollectedResults(execution, driverResultsDir, runRunDir(run.path), situationalRunId);
+      details.push(...uploadOutput.details);
+      artifacts.push(...uploadOutput.artifacts);
+    } catch (err) {
+      // Don't fail the run if the upload fails - the tests already ran.
+      fitCliError(
+        `\nCollecting/uploading the run's result files failed: ${(err as Error).message}\n` +
+          `  Files: ${join(runRunDir(run.path), SITUATIONAL_RESULTS_DIR_NAME)} (or results.tar there, if extraction failed), or on the box under ${driverResultsDir}.\n` +
+          `  Upload by hand before re-running (the next run purges the results dir): bun src/fit/situational/upload-results/upload-results.ts <resultsDir> --situational-run-id ${situationalRunId}`,
+      );
+    }
+  }
   dependencies.recordResult?.({
     path: run.path,
     pathLabel,
@@ -1064,6 +1098,68 @@ export async function runSituationalTests(
     throwFatalToSession("FIT tests failed — check the test-driver log for details.");
   }
   return { artifacts, details };
+}
+
+/** The execution-context methods uploadCollectedResults needs. */
+export type ResultsCollector = Pick<
+  FitExecutionContext,
+  "kind" | "pathExists" | "runHiddenUntilFailure" | "collectFile" | "removeTree"
+>;
+
+/**
+ * Files-mode post-run step: pull the result directories the driver wrote
+ * (test-driver/results, one per run) off the execution host into this run's
+ * artifact dir, then upload them to the results S3 bucket, where a downstream
+ * job loads them into the results database.
+ */
+export async function uploadCollectedResults(
+  execution: ResultsCollector,
+  driverResultsDir: string,
+  localRunDir: string,
+  situationalRunId: string,
+  upload: typeof uploadSituationalResults = uploadSituationalResults,
+): Promise<RunOutput> {
+  if (!(await execution.pathExists(driverResultsDir))) {
+    fitCliWarn(
+      `\nNo result files found under ${driverResultsDir} - the driver checkout likely predates ` +
+        `the files-only change (transactions-fit-performer I3f285a9e). Nothing to upload.`,
+    );
+    return { artifacts: [], details: [] };
+  }
+
+  // A local run has the files on this machine already, so upload them directly.
+  if (execution.kind === "local") {
+    return upload(driverResultsDir, RESULTS_BUCKET, situationalRunId);
+  }
+
+  // Remote run: archive the directory on the host, download it, extract locally.
+  // Plain tar (not tar -z) since collectFile gzips in transit. Extract from the
+  // path collectFile returns, not the one requested: it keeps large files
+  // compressed and returns that path instead.
+  const localResultsDir = join(localRunDir, SITUATIONAL_RESULTS_DIR_NAME);
+  // A resumed run reuses the run directory and tar -x overlays rather than
+  // replacing, so clear the previous attempt's extraction and archives first
+  // (results.tar or results.tar.gz, by size), or stale copies get re-uploaded.
+  for (const stale of [SITUATIONAL_RESULTS_DIR_NAME, "results.tar", "results.tar.gz"]) rmSync(join(localRunDir, stale), { recursive: true, force: true });
+  const remoteTar = `${driverResultsDir}.tar`;
+  const artifacts: Artifact[] = [];
+  try {
+    await execution.runHiddenUntilFailure("tar", ["-cf", remoteTar, "-C", driverResultsDir, "."]);
+    const collectedTar = await execution.collectFile(remoteTar, join(localRunDir, "results.tar"));
+    mkdirSync(localResultsDir, { recursive: true, mode: 0o700 });
+    await runLocalCommand("tar", ["-xf", collectedTar, "-C", localResultsDir]);
+    artifacts.push(artifactFromPath(collectedTar, "Result files the FIT test-driver wrote for this run (archived)"));
+  } finally {
+    // A cleanup failure here must not fail the upload or hide the real error.
+    await execution.removeTree(remoteTar).catch(() => {});
+  }
+
+  const uploaded = await upload(localResultsDir, RESULTS_BUCKET, situationalRunId);
+  // The tar is kept as the artifact and already has the data. Remove the extracted
+  // copy so it isn't also swept into this run's end-of-run artifact archive. On
+  // upload failure we don't reach here, so the tree stays as the recovery copy.
+  rmSync(localResultsDir, { recursive: true, force: true });
+  return { artifacts: [...artifacts, ...uploaded.artifacts], details: uploaded.details };
 }
 
 /**
@@ -1830,8 +1926,13 @@ export async function runFromDefinition(
   // Check this before anything else that might need AWS — including GitHub credentials
   // below, whose own AWS Secrets Manager fallback would otherwise produce a confusing
   // "localhost.github.user not found" error when the real problem is AWS credentials.
+  // Files mode also uploads to S3 from this machine, so it needs AWS credentials
+  // even under forced localhost. Better to fail here than after a multi-hour run.
+  const needsResultsUpload = executionGroups
+    .slice(startCycleIndex)
+    .some((group) => group.type === "situational" && group.runs.some((run) => run.databaseMode === "files"));
   let awsCredentials: AwsCredentials | undefined;
-  if (willRunOnAws) {
+  if (willRunOnAws || needsResultsUpload) {
     const result = await checkAwsCredentials();
     if (!result.ok) {
       fitCliError({ classification: "FatalToAll" }, `\n✗ ${result.message}`);

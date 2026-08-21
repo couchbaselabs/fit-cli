@@ -33,6 +33,16 @@ import { AUTO_GENERATED_MARKER } from "../../shared/fit-configuration/write-fit-
  */
 export const DEFAULT_CAPELLA_CLUSTER_VERSION = "8.0";
 
+/**
+ * Where the driver writes result files, relative to the test-driver module. The
+ * driver defaults to "results", but we set it explicitly so config generation
+ * and collection share one constant.
+ */
+export const SITUATIONAL_RESULTS_DIR_NAME = "results";
+
+/** Where situational results go: a hosted database, or "files" for files mode. */
+export type ResultsTarget = ResultsDatabase | "files";
+
 /** How cbdino should build the cluster the situational tests run against. */
 export interface CbdinoSettings {
   /** Couchbase Server version cbdino should deploy, e.g. "8.0-stable" or a pinned build like "8.0.2-5322". */
@@ -97,8 +107,11 @@ function baseConfigPiece(performerPort: number): ConfigPiece {
  * artifacts, so a password in it leaks. fit-cli passes it to the test-driver via
  * the FIT_RESULTS_DB_PASSWORD environment variable instead (see runTestDriver),
  * and the driver rejects a password found in config.
+ *
+ * Pass "files" to emit a files block instead of database - the files-only driver
+ * rejects a database block.
  */
-export function situationalConfigPiece(database: ResultsDatabase, cbdino: CbdinoSettings): ConfigPiece {
+export function situationalConfigPiece(target: ResultsTarget, cbdino: CbdinoSettings): ConfigPiece {
   return {
     label: "situational",
     data: {
@@ -114,10 +127,14 @@ export function situationalConfigPiece(database: ResultsDatabase, cbdino: Cbdino
             ? { deployer: "cao", operatorVersion: cbdino.cao.operatorVersion, gatewayVersion: cbdino.cao.gatewayVersion }
             : {}),
         },
-        database: {
-          jdbc: database.jdbc,
-          username: database.username,
-        },
+        ...(target === "files"
+          ? { files: { outputDirectory: SITUATIONAL_RESULTS_DIR_NAME } }
+          : {
+              database: {
+                jdbc: target.jdbc,
+                username: target.username,
+              },
+            }),
       },
     },
   };
@@ -129,14 +146,23 @@ export function situationalConfigPiece(database: ResultsDatabase, cbdino: Cbdino
  * last so a definition file can override or extend any generated field.
  */
 export function buildSituationalConfiguration(
-  database: ResultsDatabase,
+  target: ResultsTarget,
   cbdino: CbdinoSettings = DEFAULT_CBDINO_SETTINGS,
   performerPort: number = DEFAULT_PERFORMER_PORT,
   fitConfigPiece?: PieceData,
 ): Record<string, unknown> {
+  // The fitConfig piece merges last and can only add keys, so a definition in
+  // files mode that still sets situational.database ends up with both blocks.
+  // The driver rejects that only at startup, once the cluster is provisioned -
+  // fail here instead.
+  if (target === "files" && (fitConfigPiece?.situational as Record<string, unknown> | undefined)?.database !== undefined) {
+    throw new Error(
+      "The definition's fitConfig sets situational.database, but this run uses files mode - remove the database override from the definition.",
+    );
+  }
   return mergeConfigPieces([
     baseConfigPiece(performerPort),
-    situationalConfigPiece(database, cbdino),
+    situationalConfigPiece(target, cbdino),
     ...(fitConfigPiece ? [{ label: "definition fitConfig piece", data: fitConfigPiece }] : []),
   ]);
 }
