@@ -115,6 +115,13 @@ jobs:
           retry-max-attempts: 3
           role-duration-seconds: 43200
 
+      # Use GitHub OIDC to become service account fit-cli-gcp.
+      - name: Configure GCP credentials via workload identity federation
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/84079313096/locations/global/workloadIdentityPools/fit-cli-github/providers/github-actions
+          service_account: fit-cli-gcp@couchbase-qe.iam.gserviceaccount.com
+
       - name: Run fit-cli
         env:
           GERRIT_REF: ${{ inputs.transactionsFitPerformerRef || '' }}
