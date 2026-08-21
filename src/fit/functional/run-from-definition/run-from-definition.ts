@@ -68,7 +68,7 @@ import {
 } from "../../../cluster/cluster-create/allocate-cluster.js";
 import { runClusterDiag } from "../../../cluster/cluster-diag/cluster-diag.js";
 import { printClusterUiAccess } from "../../../cluster/cluster-diag/cluster-ui-link.js";
-import { prepareCbdinoclusterInit, remoteCbdinoclusterCloudEnabled, removeCluster, setupDeclarativeCluster } from "../../../cluster/cluster-create/setup-declarative-cluster.js";
+import { cleanupExpiredClusters, prepareCbdinoclusterInit, remoteCbdinoclusterCloudEnabled, removeCluster, setupDeclarativeCluster } from "../../../cluster/cluster-create/setup-declarative-cluster.js";
 import { capellaFunctionalCbdinoclusterInitArgs, capellaAnalyticsCbdinoclusterInitArgs, situationalCbdinoclusterInitArgs } from "../../../cluster/cluster-create/default-cbdinocluster-init-config.js";
 import { isAlias, resolveAlias } from "../../../cluster/cluster-create/cb-alias.js";
 import { collectClusterLogsIfSupported } from "../../../cluster/cluster-cbcollect/cluster-cbcollect.js";
@@ -647,6 +647,7 @@ export async function setupCluster(
           allocated: outcome.allocated,
           ...(outcome.clusterId ? { clusterId: outcome.clusterId } : {}),
           ...(outcome.cbdinocluster ? { cbdinoclusterCommand: outcome.cbdinocluster } : {}),
+          ...(outcome.deployer ? { deployer: outcome.deployer } : {}),
           logsDir: join(clusterDir, "server-logs"),
           ...(outcome.couchbaseClusterUuid ? { couchbaseClusterUuid: outcome.couchbaseClusterUuid } : {}),
           ...(outcome.privateEndpointEnabled ? { privateEndpointEnabled: true } : {}),
@@ -1387,6 +1388,27 @@ async function deleteClusterPrivateEndpoint(couchbaseClusterUuid: string): Promi
 }
 
 /**
+ * Sweep the Capella organization's expired leftovers, on runs that used the cloud
+ * deployer. Nothing reaps Capella on a schedule, so a run that already has the
+ * credentials on its box does it on the way out. This runs after the run's own
+ * cluster removal, so what it clears is what earlier runs abandoned when they died
+ * before their teardown.
+ *
+ * cbdinocluster only removes clusters and projects whose expiry has already passed,
+ * so this cannot cut another run short. Best effort: a failed sweep never fails the
+ * teardown.
+ */
+async function sweepExpiredCapellaClusters(
+  clusterState: ResumeClusterState,
+  execution: ClusterCommandExecutor,
+): Promise<void> {
+  if (clusterState.deployer !== "cloud" || !clusterState.cbdinoclusterCommand) {
+    return;
+  }
+  await cleanupExpiredClusters(clusterState.cbdinoclusterCommand, "cloud", execution);
+}
+
+/**
  * Tear down just an execution group's own cluster and performers (not the box):
  * stop its performers and remove a cluster it allocated. Used when the box is shared
  * with later execution groups from the same definition instance, so the instance is
@@ -1410,6 +1432,7 @@ async function disposeGroupClusterAndPerformers(
       await collectClusterLogsIfSupported(clusterState, execution);
     }
     await removeCluster(clusterState.cbdinoclusterCommand, clusterState.clusterId, execution);
+    await sweepExpiredCapellaClusters(clusterState, execution);
     if (clusterState.privateEndpointEnabled && clusterState.couchbaseClusterUuid) {
       await deleteClusterPrivateEndpoint(clusterState.couchbaseClusterUuid);
     }
@@ -1610,6 +1633,7 @@ async function teardownRun(inputs: TeardownInputs): Promise<{ leftUp: boolean }>
         await collectClusterLogsIfSupported(clusterState, execution);
       }
       await removeCluster(clusterState.cbdinoclusterCommand, clusterState.clusterId, execution);
+      await sweepExpiredCapellaClusters(clusterState, execution);
       if (clusterState.privateEndpointEnabled && clusterState.couchbaseClusterUuid) {
         await deleteClusterPrivateEndpoint(clusterState.couchbaseClusterUuid);
       }

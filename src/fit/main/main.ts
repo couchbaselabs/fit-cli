@@ -25,6 +25,7 @@ import { runConfigMain } from "../config/config.js";
 import { runEditWorkflow } from "../config/edit.js";
 import { defaultFitCliConfigPath } from "../util/config.js";
 import { runCloudInstancesMain } from "../../cloud/cloud-instances/cloud-instances.js";
+import { runCapellaClustersMain } from "../../cloud/capella-clusters/capella-clusters.js";
 import { runPerformerMain } from "../performer/performer.js";
 import { runSecretsMain } from "../../cloud/util/aws/secrets-cli.js";
 import { printVersion } from "../version/version.js";
@@ -223,6 +224,7 @@ const COMMANDS: Record<string, { fn: () => void; description: string; hidden?: b
   "definition":      { fn: runDefinitionMain,      description: "Author or inspect a FIT definition file", machineOutput: isMachineOutputDefinitionSubcommand },
   "config":          { fn: runConfigMain,           description: "Manage fit-cli configuration" },
   "cloud-instances": { fn: runCloudInstancesMain,  description: "Manage cloud (EC2) instances" },
+  "capella-clusters": { fn: runCapellaClustersMain, description: "Sweep the Capella clusters failed runs left behind" },
   "performer":       { fn: runPerformerMain,        description: "Build FIT performer images from an SDK repo ref" },
   "caps":            { fn: runCapsMain,             description: "Show the FIT capabilities each SDK's performer reports" },
   "secrets":         { fn: runSecretsMain,          description: "Manage AWS secrets", hidden: true },

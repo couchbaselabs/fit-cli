@@ -16,6 +16,7 @@
     "replay": "bun src/util/non-fit/replay-entry.ts --replay",
     "definition": "bun src/fit/definition/definition.ts",
     "cloud-instances": "bun src/cloud/cloud-instances/cloud-instances.ts",
+    "capella-clusters": "bun src/cloud/capella-clusters/capella-clusters.ts",
     "performer": "bun src/fit/performer/performer.ts",
     "secrets": "bun src/cloud/util/aws/secrets-cli.ts",
     "archive": "bun src/fit/archive/archive.ts",

@@ -458,6 +458,12 @@ export interface SetupDeclarativeClusterResult extends RunOutput {
   /** The resolved cbdinocluster command, present when one was found — for teardown. */
   cbdinocluster?: string;
   /**
+   * The cbdinocluster deployer this cluster lives on ("cloud", "docker", "cao"),
+   * resolved from the plan's default. Teardown reads it to decide which deployer
+   * (if any) also needs its expired leftovers swept.
+   */
+  deployer?: string;
+  /**
    * The Couchbase cluster's own UUID (distinct from cbdinocluster's own tracking
    * id, `clusterId`) — a generic concept that applies beyond Capella/PE. Populated
    * for any `cloud` (Capella) cluster, PE or not — cbdinocluster's `--verbose
@@ -663,6 +669,37 @@ export async function removeCluster(
     return true;
   } catch (err) {
     console.error(`\n✗ Failed to remove cluster ${id}: ${(err as Error).message}`);
+    return false;
+  }
+}
+
+/** Build the `cbdinocluster cleanup <deployer>` args. */
+export function cleanupExpiredClustersArgs(deployer: string): string[] {
+  return ["cleanup", deployer];
+}
+
+/**
+ * Sweep one deployer's expired clusters (and, for `cloud`, its empty expired
+ * projects) with `cbdinocluster cleanup <deployer>`. Nothing schedules this on the
+ * Capella side, so leftovers from runs that died before their own teardown would
+ * otherwise live forever.
+ *
+ * cbdinocluster only removes resources whose expiry has already passed, so this
+ * can never cut another run short. Best effort like {@link removeCluster}: a
+ * failed sweep is logged and the run carries on.
+ */
+export async function cleanupExpiredClusters(
+  cbdinocluster: string,
+  deployer: string,
+  execution: ClusterCommandExecutor,
+): Promise<boolean> {
+  console.log(`\nSweeping expired ${deployer} clusters...`);
+  try {
+    await execution.run(cbdinocluster, cleanupExpiredClustersArgs(deployer));
+    console.log(`\n✓ Swept expired ${deployer} clusters`);
+    return true;
+  } catch (err) {
+    fitCliWarn(`\n⚠ Failed to sweep expired ${deployer} clusters: ${(err as Error).message}`);
     return false;
   }
 }
@@ -1042,6 +1079,7 @@ async function allocate(
     allocated: true,
     clusterId: allocated.clusterId,
     cbdinocluster,
+    ...(deployer ? { deployer } : {}),
     ...(couchbaseClusterUuid ? { couchbaseClusterUuid } : {}),
     ...(deployer === "cloud" && capellaEnvironment ? { capellaEnvironment } : {}),
     // Only true when PE was actually set up this run — gates whether teardown should
@@ -1174,7 +1212,14 @@ export async function setupDeclarativeCluster(plan: {
     if (cluster && plan.deployer === "cloud" && plan.config?.columnar) {
       cluster = { ...cluster, capellaAnalytics: true };
     }
-    return { ...(cluster ? { cluster } : {}), allocated: false, cbdinocluster, artifacts: [], details: [] };
+    return {
+      ...(cluster ? { cluster } : {}),
+      allocated: false,
+      cbdinocluster,
+      ...(plan.deployer ? { deployer: plan.deployer } : {}),
+      artifacts: [],
+      details: [],
+    };
   }
 
   if (decision.action === "recreate") {

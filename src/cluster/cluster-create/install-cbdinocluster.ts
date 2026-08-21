@@ -34,7 +34,7 @@ import { isMain, runCli } from "../../util/non-fit/cli.js";
 import { prepareAwsCli } from "../../cloud/util/aws/aws-cli.js";
 import { SsmTarget, waitForSsmReady } from "../../util/non-fit/ssm-target.js";
 import { ssmStartSessionCommand } from "../../fit/util/aws/lifecycle-warning.js";
-import type { RunOptions } from "../../util/non-fit/proc.js";
+import { capture, type RunOptions } from "../../util/non-fit/proc.js";
 import { fitCliError } from "../../util/non-fit/fit-cli-log.js";
 import { CBDINOCLUSTER_URL } from "../../fit/util/config.js";
 import { loadEnvironments } from "../../fit/util/environments.js";
@@ -175,6 +175,15 @@ export async function installCbdinoclusterRemote(
   );
   await logCbdinoclusterVersion(execution, installedPath);
   return installedPath;
+}
+
+/**
+ * Install the latest cbdinocluster release on this machine. Used by
+ * `capella-clusters`, which runs on a laptop or on a bare GitHub runner. The
+ * install script only needs uname, curl and chmod, so the remote one works here.
+ */
+export function installCbdinoclusterLocally(binDir: string = DEFAULT_REMOTE_BIN_DIR): Promise<string> {
+  return installCbdinoclusterRemote({ description: "this machine", capture }, binDir);
 }
 
 /**

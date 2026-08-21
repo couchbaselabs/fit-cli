@@ -108,6 +108,7 @@ User-facing (using the installed binary):
 - `fit definition validate | generate-desc` — author or inspect a definition file.
 - `fit preset list | expand | generate` — list, expand or generate presets.
 - `fit cloud-instances list | manage | delete | remove-all` — manage the EC2 instances fit-cli launched.
+- `fit capella-clusters list | cleanup` sweeps the Capella clusters and projects that failed runs left behind. Only removes clusters fit-cli created (by the purpose stamped on them) that are also past their expiry, so it cannot touch another team's project or a live run. `cleanup --dry-run` reports what would go without deleting it.
 - `fit performer build <family> <ref>` — dispatch a performer image build on GitHub Actions (e.g. `fit performer build jvm refs/changes/01/248901/3`), wait for it, and print the resulting image names.
 - `fit performer list [<sdk>]` — list the prebuilt performer container images published to GHCR for an SDK (e.g. `fit performer list scala`), or for every SDK if none is given.
 - `fit performer run <sdk> [version]` — pull and start a single prebuilt performer image, for manual testing outside a full FIT run (e.g. `fit performer run scala`). Leaves it running; stop it yourself when done.
