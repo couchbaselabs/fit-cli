@@ -40,8 +40,9 @@
     // latest and the previous line before sign-off).
     previousClusterVersion: "7.6-stable",
 
-    // The upcoming server release line.
-    nextClusterVersion: "8.5-stable",
+    // The upcoming server release line. 8.5 has no builds in cb-alias yet, so this
+    // stays on 8.1 until 8.5 shows up there.
+    nextClusterVersion: "8.1-stable",
 
     // CNG generally uses OpenShift which uses server builds from cb-rhcc (rather than
     // cb-vanilla). The same builds _should_ be available on both, but see:
