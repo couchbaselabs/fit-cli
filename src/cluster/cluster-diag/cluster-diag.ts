@@ -63,7 +63,7 @@ export async function runClusterDiag(cluster: SelectedCluster, opts?: ClusterDia
     return true;
   }
   const url = clusterDiagUrl(cluster);
-  const command = `curl -k --connect-timeout 5 -u <username>:<password> -X GET ${url}`;
+  const command = `curl -k -f --connect-timeout 5 -u <username>:<password> -X GET ${url}`;
   const retryTimeoutMs = opts?.retryTimeoutMs ?? 30_000;
   const captureCommand = opts?.captureCommand ?? capture;
   const deadline = Date.now() + retryTimeoutMs;
@@ -80,9 +80,12 @@ export async function runClusterDiag(cluster: SelectedCluster, opts?: ClusterDia
       // retryTimeoutMs itself and defeats the retry loop entirely (one hung attempt,
       // no actual retries). Bounding it matters especially for a freshly-linked
       // PrivateLink connection, which can need a few retries before it's reachable.
+      // -f treats non-2xx responses as failures — without it, a 503 route-error page
+      // (e.g. OpenShift's "Application is not available" when a CNG pod is briefly
+      // down) counts as a successful curl and this check falsely passes.
       await captureCommand(
         "curl",
-        ["-k", "--connect-timeout", "5", "-u", `${cluster.credentials.username}:${cluster.credentials.password}`, "-X", "GET", url],
+        ["-k", "-f", "--connect-timeout", "5", "-u", `${cluster.credentials.username}:${cluster.credentials.password}`, "-X", "GET", url],
         undefined,
         attempt > 0 ? { quiet: true } : undefined,
       );

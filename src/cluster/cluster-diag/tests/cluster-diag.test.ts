@@ -70,7 +70,7 @@ test("successful sanity tests print the command and success line", () => {
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Cluster sanity test succeeded with/);
-  assert.match(result.stdout, /curl -k --connect-timeout 5 -u <username>:<password> -X GET http:\/\/172\.18\.0\.2:8091\/pools\/default/);
+  assert.match(result.stdout, /curl -k -f --connect-timeout 5 -u <username>:<password> -X GET http:\/\/172\.18\.0\.2:8091\/pools\/default/);
   assert.doesNotMatch(result.stdout, /Sanity-testing the cluster with/);
   assert.doesNotMatch(result.stdout, /"name":"default"/);
 });
@@ -97,4 +97,43 @@ test("failed sanity tests still show the command and error", () => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Sanity-testing the cluster with/);
   assert.match(result.stderr, /curl exited with code 7: curl: \(7\) Failed to connect/);
+});
+
+test("the sanity test now passes -f, so a route-error HTTP response fails it rather than passing", () => {
+  // Regression test for the bug this fixes: an OpenShift/nginx route can be up but
+  // return an HTML "Application is not available" page for a backend that's briefly
+  // down. Without -f, curl exits 0 for any HTTP response (even 503), so the sanity
+  // check falsely passed. This stub emulates curl's actual -f behaviour (exit 22,
+  // nothing on stdout, error on stderr) to confirm the caller now treats it as a
+  // failure — real curl's -f semantics are curl's own well-tested behaviour, not
+  // something this suite needs to re-verify.
+  const dir = mkdtempSync(join(tmpdir(), "fit-cli-curl-"));
+  const curl = join(dir, "curl");
+  const modulePath = new URL("../cluster-diag.ts", import.meta.url).href;
+
+  writeFileSync(
+    curl,
+    [
+      "#!/bin/sh",
+      "# Simulates curl -f against a backend returning a 503 HTML error page.",
+      "if ! echo \"$@\" | grep -q -- '-f'; then echo 'test stub expected -f' >&2; exit 99; fi",
+      "echo 'curl: (22) The requested URL returned error: 503' >&2",
+      "exit 22",
+    ].join("\n"),
+  );
+  chmodSync(curl, 0o755);
+
+  const driver = [
+    `import { runClusterDiag } from ${JSON.stringify(modulePath)};`,
+    `const ok = await runClusterDiag(${JSON.stringify(cluster({ defaultHostname: "172.18.0.2" }))}, { retryTimeoutMs: 0 });`,
+    `process.exit(ok ? 0 : 1);`,
+  ].join("\n");
+
+  const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", driver], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: `${dir}:${process.env.PATH ?? ""}` },
+  });
+
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /curl exited with code 22: curl: \(22\) The requested URL returned error: 503/);
 });
