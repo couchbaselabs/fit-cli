@@ -37,6 +37,12 @@ export const DEFAULT_SSM_USER = "ubuntu";
 const SSM_LOG_GROUP_NAME = "/fit-cli/ssm-command-output";
 const SSM_LOG_RETENTION_DAYS = 3;
 const POLL_INTERVAL_MS = 1_500;
+// SendCommand's own response can return before the invocation record it just created is
+// visible to GetCommandInvocation yet (the eventual-consistency gap isTransientSsmError
+// treats as InvocationDoesNotExist) — checking status immediately after send meant almost
+// every command paid for one guaranteed-to-fail GetCommandInvocation call. This settle
+// delay lets that propagation finish first so the common case skips it.
+const POST_SEND_SETTLE_MS = 50;
 // SSM has two unrelated deadlines and only the second one bounds a running command:
 //   - SendCommand's TimeoutSeconds is a *delivery* deadline. If the command hasn't started
 //     on the instance by then it never runs; it says nothing about how long one that did
@@ -93,6 +99,12 @@ const SSM_RETRY_ATTEMPTS = 10;
 const SSM_RETRY_BASE_DELAY_MS = 250;
 const SSM_RETRY_MAX_DELAY_MS = 15_000;
 
+/** err.name if there is one, else err.message, else the bare error — so the "transient error" log below says what actually happened instead of hiding it behind that generic label. */
+function describeSsmError(err: unknown): string {
+  if (err instanceof Error) return err.name || err.message || "unnamed error";
+  return String(err);
+}
+
 async function withSsmRetry<T>(fn: () => Promise<T>): Promise<T> {
   for (let attempt = 1; ; attempt++) {
     try {
@@ -100,7 +112,7 @@ async function withSsmRetry<T>(fn: () => Promise<T>): Promise<T> {
     } catch (err) {
       if (!isTransientSsmError(err) || attempt >= SSM_RETRY_ATTEMPTS) throw err;
       const delayMs = Math.min(SSM_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1), SSM_RETRY_MAX_DELAY_MS);
-      console.error(`[ssm] transient error (attempt ${attempt}/${SSM_RETRY_ATTEMPTS}), retrying in ${Math.round(delayMs / 1000)}s…`);
+      console.error(`[ssm] transient error (${describeSsmError(err)}) (attempt ${attempt}/${SSM_RETRY_ATTEMPTS}), retrying in ${Math.round(delayMs / 1000)}s…`);
       await sleep(delayMs);
     }
   }
@@ -288,6 +300,7 @@ async function sendShellCommand(instanceId: string, command: string, runAsUser: 
   })));
   const commandId = resp.Command?.CommandId;
   if (!commandId) throw new Error(`SendCommand on ${instanceId} returned no CommandId.`);
+  await sleep(POST_SEND_SETTLE_MS);
   return { commandId };
 }
 
