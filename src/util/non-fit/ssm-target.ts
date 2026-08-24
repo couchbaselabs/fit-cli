@@ -222,12 +222,22 @@ async function fetchNewLogLines(commandId: string, instanceId: string, afterMs: 
   do {
     // The prefix deliberately spans both the stdout and stderr streams, so one read
     // gets everything; partitionLogEvents then keeps them apart by stream name.
-    const resp = await cloudWatchLogsClient.send(new FilterLogEventsCommand({
-      logGroupName: SSM_LOG_GROUP_NAME,
-      logStreamNamePrefix: `${commandId}/${instanceId}`,
-      ...(afterMs > 0 ? { startTime: afterMs + 1 } : {}),
-      nextToken,
-    }));
+    let resp;
+    try {
+      resp = await cloudWatchLogsClient.send(new FilterLogEventsCommand({
+        logGroupName: SSM_LOG_GROUP_NAME,
+        logStreamNamePrefix: `${commandId}/${instanceId}`,
+        ...(afterMs > 0 ? { startTime: afterMs + 1 } : {}),
+        nextToken,
+      }));
+    } catch (err) {
+      // Log streaming is best-effort display, not the source of truth for whether the
+      // command succeeded (that's pollUntilDone's GetCommandInvocation) - a blip here
+      // (e.g. DNS to the CloudWatch Logs endpoint) shouldn't take the whole run down.
+      // The next poll cycle retries this same window since lastMs is left unadvanced.
+      fitCliWarn(`Could not fetch SSM command output from CloudWatch Logs (will retry next poll): ${err instanceof Error ? err.message : String(err)}`);
+      break;
+    }
     for (const event of resp.events ?? []) {
       events.push(event);
       if (event.timestamp && event.timestamp > lastMs) lastMs = event.timestamp;
