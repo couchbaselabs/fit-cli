@@ -516,6 +516,9 @@ function validateSituationalDatabase(value: unknown, path: string): SituationalD
     throw new InvalidDefinitionError(`"${path}.mode" must be one of ${SITUATIONAL_DATABASE_MODES.join(", ")}; got ${JSON.stringify(record.mode)}`);
   }
   const resultsEnvironment = optionalEnvironmentName(record, "resultsEnvironment", path);
+  if (record.mode !== "hosted" && resultsEnvironment !== undefined) {
+    throw new InvalidDefinitionError(`"${path}.resultsEnvironment" only applies to mode "hosted".`);
+  }
   return { mode: record.mode, ...(resultsEnvironment !== undefined ? { resultsEnvironment } : {}) };
 }
 

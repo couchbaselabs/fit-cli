@@ -223,10 +223,17 @@ export interface TestsSection {
   maven?: MavenOptions;
 }
 
-export const SITUATIONAL_DATABASE_MODES = ["hosted", "local"] as const;
+export const SITUATIONAL_DATABASE_MODES = ["hosted", "local", "files"] as const;
 export type SituationalDatabaseMode = (typeof SITUATIONAL_DATABASE_MODES)[number];
 
 export interface SituationalDatabaseSetup {
+  /**
+   * hosted: driver writes results straight to Postgres.
+   * files: driver writes result files and we upload them to the results S3 bucket
+   * after the run, where a downstream job loads them into the results database.
+   * Needs the files-only driver change (transactions-fit-performer I3f285a9e) -
+   * point setup.repos at it until it merges.
+   */
   mode: SituationalDatabaseMode;
   /**
    * Which results environment to store/view results in (a key under `results` in

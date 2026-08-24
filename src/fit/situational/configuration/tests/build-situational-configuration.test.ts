@@ -62,6 +62,22 @@ test("the cbdino and database blocks are merged under situational, without the p
   });
 });
 
+test("files mode emits a files block and no database block", () => {
+  const situational = buildSituationalConfiguration("files").situational as Record<string, unknown>;
+  assert.deepEqual(situational.files, { outputDirectory: "results" });
+  assert.equal(situational.database, undefined);
+});
+
+test("files mode rejects a fitConfig piece that reintroduces situational.database", () => {
+  assert.throws(
+    () =>
+      buildSituationalConfiguration("files", DEFAULT_CBDINO_SETTINGS, 8060, {
+        situational: { database: { jdbc: "jdbc:postgresql://example/perf" } },
+      }),
+    /sets situational\.database/,
+  );
+});
+
 test("a gcp deployer and region are forwarded into the cbdino block", () => {
   const config = buildSituationalConfiguration(database, {
     version: "8.0",
