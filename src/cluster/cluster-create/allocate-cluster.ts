@@ -22,7 +22,7 @@ import { posixQuote, teeToFileCommand } from "../../util/non-fit/remote-target.j
 import { findOnPath } from "../../util/non-fit/which.js";
 import { loadEnvironments } from "../../fit/util/environments.js";
 import { buildClusterDef } from "./build-cluster-def.js";
-import { printCapellaDebugLinks, printCapellaUiLink } from "./capella-debug-links.js";
+import { printCapellaDebugLinks, printCapellaPreflightInfo, printCapellaUiLink } from "./capella-debug-links.js";
 import { ensureCbdinocluster } from "./ensure-cbdinocluster.js";
 import { parseAllocatedId } from "./parse-allocated-id.js";
 import { parseCloudClusterUuid } from "./parse-cloud-cluster-uuid.js";
@@ -162,6 +162,10 @@ export async function allocateCluster(
   console.log(`Wrote cbdinocluster def to ${localDefFile}:\n`);
   printFileContent(def);
   const defFile = await execution.stageFile(localDefFile, execution.targetFilePath(localDefFile));
+
+  if (deployer === "cloud" && capellaEnvironment) {
+    printCapellaPreflightInfo(capellaEnvironment);
+  }
 
   const args = ["--verbose", "allocate"];
   if (deployer) {

@@ -91,6 +91,34 @@ export function printCapellaDebugLinks(environment: string, couchbaseClusterUuid
 }
 
 /**
+ * Print what's already known about the Capella environment before calling
+ * `allocate` — environment name, org id, endpoint, and the org UI link. There's
+ * no cluster UUID yet at this point (the cluster doesn't exist), but the org
+ * UI link alone is enough to find it later if allocation fails outright before
+ * cbdinocluster logs anything cluster-specific (e.g. a project-quota error).
+ */
+export function printCapellaPreflightInfo(
+  environment: string,
+  environments: EnvironmentsFile = loadEnvironments(),
+): void {
+  const capellaEnv = environments.capella[environment];
+  if (!capellaEnv) {
+    return;
+  }
+  console.log(`  Capella environment: ${environment}`);
+  if (capellaEnv.oid) {
+    console.log(`  Capella org id: ${capellaEnv.oid}`);
+  }
+  if (capellaEnv.endpoint) {
+    console.log(`  Capella endpoint: ${capellaEnv.endpoint}`);
+  }
+  const uiUrl = capellaUiUrl(environment, environments);
+  if (uiUrl) {
+    console.log(`  Capella UI (${environment}): ${uiUrl}`);
+  }
+}
+
+/**
  * Print just the Capella UI link (no UUID needed) — for allocation failures,
  * where cbdinocluster never got far enough to log a Couchbase cluster UUID, so
  * the user has to find the cluster manually to investigate or clean it up.
