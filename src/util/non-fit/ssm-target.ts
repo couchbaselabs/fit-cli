@@ -82,20 +82,28 @@ export function isTransientSsmError(err: unknown): boolean {
   return !err.name && !err.message && metadata?.httpStatusCode !== undefined && metadata.httpStatusCode >= 400;
 }
 
-const SSM_RETRY_ATTEMPTS = 3;
-const SSM_RETRY_DELAY_MS = 3_000;
+// Backs off exponentially rather than retrying at a flat interval so that a burst of SSM
+// throttling on the shared account (several FIT jobs hitting the same quota at once) eases
+// off instead of hammering straight back into it. Applies the same schedule to every
+// transient error, not just throttling — a poll loop's own success resets it back to
+// attempt 1 for the next call, so a brief blip never taxes the budget of a later one.
+// The following figures try to balance not waiting forever in the face of transient problems, while also avoiding
+// the SSM throttling.
+const SSM_RETRY_ATTEMPTS = 10;
+const SSM_RETRY_BASE_DELAY_MS = 250;
+const SSM_RETRY_MAX_DELAY_MS = 15_000;
 
 async function withSsmRetry<T>(fn: () => Promise<T>): Promise<T> {
-  for (let attempt = 1; attempt <= SSM_RETRY_ATTEMPTS; attempt++) {
+  for (let attempt = 1; ; attempt++) {
     try {
       return await fn();
     } catch (err) {
-      if (!isTransientSsmError(err) || attempt === SSM_RETRY_ATTEMPTS) throw err;
-      console.error(`[ssm] transient error (attempt ${attempt}/${SSM_RETRY_ATTEMPTS}), retrying in ${SSM_RETRY_DELAY_MS / 1000}s…`);
-      await sleep(SSM_RETRY_DELAY_MS);
+      if (!isTransientSsmError(err) || attempt >= SSM_RETRY_ATTEMPTS) throw err;
+      const delayMs = Math.min(SSM_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1), SSM_RETRY_MAX_DELAY_MS);
+      console.error(`[ssm] transient error (attempt ${attempt}/${SSM_RETRY_ATTEMPTS}), retrying in ${Math.round(delayMs / 1000)}s…`);
+      await sleep(delayMs);
     }
   }
-  throw new Error("withSsmRetry: unreachable");
 }
 
 /**
