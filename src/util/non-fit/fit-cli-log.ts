@@ -107,7 +107,11 @@ function advanceLineStart(text: string, atLineStart: boolean): boolean {
 
 function stringify(arg: unknown): string {
   if (arg instanceof Error) {
-    return arg.stack ?? arg.message;
+    // In compiled Bun binaries, arg.stack can render as just the bare error
+    // name (e.g. "Error") with the message dropped, so a truthy stack isn't
+    // enough to trust it — fall back to the message when it isn't included.
+    if (arg.stack?.includes(arg.message)) return arg.stack;
+    return arg.message || arg.stack || String(arg);
   }
   return String(arg);
 }
