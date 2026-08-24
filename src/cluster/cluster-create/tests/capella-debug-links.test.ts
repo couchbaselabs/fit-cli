@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { capellaDebugLinks } from "../capella-debug-links.js";
+import { capellaDebugLinks, printCapellaPreflightInfo } from "../capella-debug-links.js";
 import type { EnvironmentsFile } from "../../../fit/util/environments.js";
 
 const environments: EnvironmentsFile = {
@@ -65,4 +65,33 @@ test("capellaDebugLinks omits capellaUiUrl when the environment has no oid", () 
 
 test("capellaDebugLinks returns undefined for an unconfigured environment", () => {
   assert.equal(capellaDebugLinks("staging", uuid, environments), undefined);
+});
+
+test("printCapellaPreflightInfo logs environment, org id, endpoint and the org UI link", () => {
+  const lines: string[] = [];
+  const original = console.log;
+  console.log = (line: string) => lines.push(line);
+  try {
+    printCapellaPreflightInfo("prod", environments);
+  } finally {
+    console.log = original;
+  }
+  assert.deepEqual(lines, [
+    "  Capella environment: prod",
+    "  Capella org id: 62488bdd-d416-467e-84f7-fc7c1583a083",
+    "  Capella endpoint: https://api.cloud.couchbase.com",
+    "  Capella UI (prod): https://cloud.couchbase.com/databases?oid=62488bdd-d416-467e-84f7-fc7c1583a083",
+  ]);
+});
+
+test("printCapellaPreflightInfo is a no-op for an unconfigured environment", () => {
+  const lines: string[] = [];
+  const original = console.log;
+  console.log = (line: string) => lines.push(line);
+  try {
+    printCapellaPreflightInfo("staging", environments);
+  } finally {
+    console.log = original;
+  }
+  assert.deepEqual(lines, []);
 });
