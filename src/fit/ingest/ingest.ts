@@ -10,8 +10,9 @@
  * Made to be run from a cron on the instance that hosts the results database, so the
  * database credentials come from the environment or from a ./.env file placed there.
  */
+import { S3Client } from "@aws-sdk/client-s3";
 import postgres from "postgres";
-import { s3Client } from "../../cloud/util/aws/aws-clients.js";
+import { AWS_REGION } from "../../cloud/util/aws/aws-target.js";
 import { isMain, runCli } from "../../util/non-fit/cli.js";
 import { loadDotenv } from "../../util/non-fit/dotenv.js";
 import { runScriptPrefix } from "../../util/non-fit/fit-cli-log.js";
@@ -178,7 +179,9 @@ async function cmdSituational(argv: string[]): Promise<{ status: ReportStatus; o
     max: 1,
   });
   const db = new Db(sql);
-  const queue = new S3Queue(s3Client, settings.bucket);
+  // Ambient credentials, not the shared fit-cli-role client. On the server the
+  // instance role holds the results-queue permissions, and fit-cli-role does not.
+  const queue = new S3Queue(new S3Client({ region: AWS_REGION }), settings.bucket);
 
   const reportId = await db.startReport();
   console.log(`Ingester run ${reportId} started (bucket ${settings.bucket}, database ${settings.host})`);
