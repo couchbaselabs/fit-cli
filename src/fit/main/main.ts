@@ -21,6 +21,7 @@ import { runRunMain } from "../run/run.js";
 import { runPresetWizard } from "../definition/preset-wizard/preset-wizard.js";
 import { runArchiveMain } from "../archive/archive.js";
 import { runCapsMain } from "../caps/caps.js";
+import { runIngestMain } from "../ingest/ingest.js";
 import { runConfigMain } from "../config/config.js";
 import { runEditWorkflow } from "../config/edit.js";
 import { defaultFitCliConfigPath } from "../util/config.js";
@@ -230,6 +231,7 @@ const COMMANDS: Record<string, { fn: () => void; description: string; hidden?: b
   "slack":           { fn: runSlackMain,             description: "Post a combined Slack summary", hidden: true },
   "maintenance":     { fn: runMaintenanceMain,       description: "Repo & release maintenance (branch channels)", hidden: true },
   "archive":         { fn: runArchiveMain,          description: "Archive run artifacts" },
+  "ingest":          { fn: runIngestMain,           description: "Ingest S3 run results into the results database" },
   "replay":          { fn: runReplayMain,           description: "Replay a recorded session" },
   "version":         { fn: printVersion,            description: "Print the fit-cli version" },
   "upgrade":         { fn: runUpgradeMain,           description: "Upgrade fit-cli to the latest released build" },

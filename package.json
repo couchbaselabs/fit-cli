@@ -20,6 +20,7 @@
     "secrets": "bun src/cloud/util/aws/secrets-cli.ts",
     "slack": "bun src/fit/slack/slack-cli.ts",
     "archive": "bun src/fit/archive/archive.ts",
+    "ingest": "bun src/fit/ingest/ingest.ts",
     "caps": "bun src/fit/caps/caps.ts",
     "upgrade": "bun src/fit/upgrade/upgrade.ts",
     "maintenance": "bun src/fit/maintenance/maintenance.ts",
