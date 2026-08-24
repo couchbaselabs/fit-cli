@@ -12,6 +12,9 @@ variable "gcp_iap_members" {
   type        = list(string)
   default     = [
       # Internal discussion here https://couchbase.slack.com/archives/G9682CWN7/p1786356769355469?thread_ts=1785939833.137899&cid=G9682CWN7 on which to use
-      "group:sdk_core@couchbase.com"
+      "group:sdk_core@couchbase.com",
+      # fit-cli's own GCP service account, so CI (impersonating it via workload identity)
+      # can open an IAP tunnel to the instances it launches, not just the instances themselves.
+      "serviceAccount:fit-cli-gcp@couchbase-qe.iam.gserviceaccount.com"
   ]
 }
