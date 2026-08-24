@@ -13,6 +13,7 @@
 import { S3Client } from "@aws-sdk/client-s3";
 import postgres from "postgres";
 import { AWS_REGION } from "../../cloud/util/aws/aws-target.js";
+import { RESULTS_BUCKET } from "../situational/upload-results/upload-results.js";
 import { isMain, runCli } from "../../util/non-fit/cli.js";
 import { loadDotenv } from "../../util/non-fit/dotenv.js";
 import { runScriptPrefix } from "../../util/non-fit/fit-cli-log.js";
@@ -28,8 +29,8 @@ import {
 } from "./parse.js";
 import { FAILED_PREFIX, type IncomingRun, PROCESSED_PREFIX, S3Queue } from "./s3-queue.js";
 
-const DEFAULT_BUCKET = "fit-cli";
-const DEFAULT_HOST = "localhost";
+// The ingest always runs on the instance that hosts the results database.
+const RESULTS_DB_HOST = "localhost";
 const DEFAULT_USERNAME = "results_writer";
 const RESULTS_DB_PORT = 5432;
 const RESULTS_DB_NAME = "perf";
@@ -51,15 +52,13 @@ export function overallStatus(outcomes: RunOutcome[]): "success" | "partial" | "
 }
 
 interface IngestSettings {
-  host: string;
   username: string;
   password: string;
-  bucket: string;
 }
 
 /**
- * Read the database and bucket settings from the environment, after pulling in
- * any ./.env. Real exported variables win over the file.
+ * Read the database credentials from the environment, after pulling in any
+ * ./.env. Real exported variables win over the file.
  */
 function resolveSettings(): IngestSettings {
   loadDotenv();
@@ -70,10 +69,8 @@ function resolveSettings(): IngestSettings {
     );
   }
   return {
-    host: process.env.CB_DATABASE ?? DEFAULT_HOST,
     username: process.env.CB_DATABASE_USERNAME ?? DEFAULT_USERNAME,
     password,
-    bucket: process.env.RESULTS_BUCKET ?? DEFAULT_BUCKET,
   };
 }
 
@@ -171,7 +168,7 @@ async function cmdSituational(argv: string[]): Promise<{ status: ReportStatus; o
 
   const settings = resolveSettings();
   const sql = postgres({
-    host: settings.host,
+    host: RESULTS_DB_HOST,
     port: RESULTS_DB_PORT,
     database: RESULTS_DB_NAME,
     username: settings.username,
@@ -181,10 +178,10 @@ async function cmdSituational(argv: string[]): Promise<{ status: ReportStatus; o
   const db = new Db(sql);
   // Ambient credentials, not the shared fit-cli-role client. On the server the
   // instance role holds the results-queue permissions, and fit-cli-role does not.
-  const queue = new S3Queue(new S3Client({ region: AWS_REGION }), settings.bucket);
+  const queue = new S3Queue(new S3Client({ region: AWS_REGION }), RESULTS_BUCKET);
 
   const reportId = await db.startReport();
-  console.log(`Ingester run ${reportId} started (bucket ${settings.bucket}, database ${settings.host})`);
+  console.log(`Ingester run ${reportId} started (bucket ${RESULTS_BUCKET})`);
 
   const outcomes: RunOutcome[] = [];
   let status: ReportStatus;
@@ -213,7 +210,7 @@ async function cmdSituational(argv: string[]): Promise<{ status: ReportStatus; o
     status = overallStatus(outcomes);
     await db.finishReport(reportId, status, countsOf(outcomes, failedBacklog), {
       version: resolvedGitSha(),
-      bucket: settings.bucket,
+      bucket: RESULTS_BUCKET,
       runs: outcomes,
       ...(strayKeys.length > 0 ? { strayKeys } : {}),
     });
@@ -221,7 +218,7 @@ async function cmdSituational(argv: string[]): Promise<{ status: ReportStatus; o
     await db
       .finishReport(reportId, "failed", countsOf(outcomes, null), {
         version: resolvedGitSha(),
-        bucket: settings.bucket,
+        bucket: RESULTS_BUCKET,
         runs: outcomes,
         error: (err as Error).message,
       })
@@ -243,16 +240,15 @@ Usage:
   ${p} --help
 
 Subcommands:
-  situational  Drain s3://${DEFAULT_BUCKET}/incoming/ into the results database. Each run
+  situational  Drain s3://${RESULTS_BUCKET}/incoming/ into the results database. Each run
                directory then moves to processed/ or failed/, and one ingester_runs row
                records what happened.
   performance  Not implemented yet.
 
-Reads these from the environment, or from a .env file in the current directory:
+The database is always ${RESULTS_DB_NAME} on ${RESULTS_DB_HOST}:${RESULTS_DB_PORT}. Credentials come from
+the environment, or from a .env file in the current directory:
   CB_DATABASE_PASSWORD  Password for the database user. Required.
-  CB_DATABASE           Database host. Defaults to "${DEFAULT_HOST}".
-  CB_DATABASE_USERNAME  Database user. Defaults to "${DEFAULT_USERNAME}".
-  RESULTS_BUCKET        S3 bucket to drain. Defaults to "${DEFAULT_BUCKET}".`;
+  CB_DATABASE_USERNAME  Database user. Defaults to "${DEFAULT_USERNAME}".`;
 }
 
 export function runIngestMain(): void {
