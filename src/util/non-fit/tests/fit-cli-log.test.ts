@@ -66,6 +66,17 @@ test("formatFitCliError avoids duplicating an existing prefix", () => {
   );
 });
 
+test("formatFitCliError surfaces an Error's message even when its stack doesn't include it", () => {
+  // Simulates the compiled Bun binary, where an Error's .stack can render as just
+  // the bare error name with the message dropped.
+  const err = new Error("performer does not match run type");
+  Object.defineProperty(err, "stack", { value: "Error" });
+  assert.equal(
+    formatFitCliError(err),
+    "FitCliError: \u001b[31mperformer does not match run type\u001b[0m",
+  );
+});
+
 test("formatFitCliError appends a failure classification to the label", () => {
   assert.equal(
     formatFitCliError({ classification: "FatalToRun" }, "\n✗ No JUnit reports"),
