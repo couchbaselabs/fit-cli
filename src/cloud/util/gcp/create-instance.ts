@@ -83,6 +83,8 @@ export async function createGcpInstance(spec: CreateGcpInstanceSpec): Promise<st
   return spec.name;
 }
 
+const GET_CALL_TIMEOUT_MS = 120_000;
+
 /** Block until the instance reaches RUNNING, polling describeInstance (GCP has no dedicated waiter like EC2's waitUntilInstanceRunning). */
 export async function waitForGcpInstanceRunning(
   project: string,
@@ -91,11 +93,23 @@ export async function waitForGcpInstanceRunning(
   { timeoutMs = 600_000, intervalMs = 5_000 }: { timeoutMs?: number; intervalMs?: number } = {},
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
+  let lastStatus: string | undefined;
   for (;;) {
-    const [raw] = await instancesClient.get({ project, zone, instance: name });
-    if (parseInstance(raw)?.status === "RUNNING") return;
+    // Each get() is raced against its own timeout so a stalled call (network
+    // blip, stuck token refresh) can't hang the loop forever without the
+    // deadline below ever getting checked. A genuine error from get() itself
+    // still propagates immediately, rather than being swallowed as a timeout.
+    let timedOut = false;
+    const raw = await Promise.race([
+      instancesClient.get({ project, zone, instance: name }).then(([r]) => r),
+      new Promise<undefined>((resolve) => setTimeout(() => { timedOut = true; resolve(undefined); }, GET_CALL_TIMEOUT_MS)),
+    ]);
+    if (!timedOut && raw) {
+      lastStatus = raw.status ?? undefined;
+      if (parseInstance(raw)?.status === "RUNNING") return;
+    }
     if (Date.now() >= deadline) {
-      throw new Error(`Timed out waiting for ${name} to reach RUNNING (last status: ${raw.status ?? "unknown"}).`);
+      throw new Error(`Timed out waiting for ${name} to reach RUNNING (last status: ${lastStatus ?? "unknown"}).`);
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
