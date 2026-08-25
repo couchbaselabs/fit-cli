@@ -154,7 +154,6 @@ test("runTestDriverArgs omits -Dtest when all tests are selected", () => {
   };
 
   assert.deepEqual(runTestDriverArgs(selection), [
-    "-q",
     "--no-transfer-progress",
     "--batch-mode",
     "--projects",
@@ -175,7 +174,6 @@ test("runTestDriverArgs adds the selected tests to -Dtest", () => {
   };
 
   assert.deepEqual(runTestDriverArgs(selection), [
-    "-q",
     "--no-transfer-progress",
     "--batch-mode",
     "--projects",
@@ -196,7 +194,6 @@ test("runTestDriverArgs adds the generated FIT config path", () => {
   };
 
   assert.deepEqual(runTestDriverArgs(selection, "/tmp/fit-cli/run-123/FITConfiguration.json"), [
-    "-q",
     "--no-transfer-progress",
     "--batch-mode",
     "--projects",
@@ -216,7 +213,6 @@ test("runTestDriverArgs targets the Analytics test-driver module with Analytics 
   assert.deepEqual(
     runTestDriverArgs(selection, undefined, ANALYTICS_MAVEN_TEST_ARGS, ANALYTICS_TEST_DRIVER_MODULE),
     [
-      "-q",
       "--no-transfer-progress",
       "--batch-mode",
       "--projects",
