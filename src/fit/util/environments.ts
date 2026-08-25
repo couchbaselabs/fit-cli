@@ -85,6 +85,16 @@ export interface GcpDefaults {
   serviceAccountEmail?: string | null;
 }
 
+/** The ephemeral Capella API key pool a remote run creates for itself. */
+export interface CapellaKeyPoolDefaults {
+  /** Whether remote runs create a pool at all. */
+  enabled: boolean;
+  /** How many extra API keys the pool holds, on top of the primary key. */
+  size: number;
+  /** How long a pooled key lives, in days, if teardown never removes it. */
+  expiryDays: number;
+}
+
 /** Global version defaults for cbdinocluster and related tools (not per-environment). */
 export interface Defaults {
   /** Default Couchbase Server version, e.g. "8.0-stable" or a pinned build. */
@@ -111,6 +121,8 @@ export interface Defaults {
   defaultResultsEnvironment: string;
   /** Default cbdinocluster release (a GitHub release tag) installed onto remote boxes. */
   cbdinoclusterVersion: string;
+  /** The per-run Capella API key pool cbdinocluster creates on the remote box. */
+  capellaKeyPool: CapellaKeyPoolDefaults;
   /** AWS account and network settings. */
   aws: AwsDefaults;
   /** GCP account and network settings. */

@@ -62,6 +62,11 @@ export interface ResumeClusterState {
    * attempting it.
    */
   capellaEnvironment?: string;
+  /**
+   * True when the run's `cbdinocluster init` created an ephemeral Capella API key
+   * pool on the box. Teardown must remove it even when no cluster was allocated.
+   */
+  capellaKeyPool?: boolean;
 }
 
 /** A performer a previous run left running, per run. */
