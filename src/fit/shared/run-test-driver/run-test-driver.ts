@@ -233,7 +233,6 @@ export function runTestDriverArgs(
   // no-op — reports always land in <module>/target/surefire-reports. We purge
   // that dir before each run and collect from it afterwards (see runTestDriver).
   return [
-    "-q",
     "--no-transfer-progress",
     "--batch-mode",
     "--projects",
