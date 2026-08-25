@@ -23,6 +23,9 @@ import { instancesClient, zoneOperationsClient } from "./gcp-clients.js";
 import { preflightGcpProject } from "./identity.js";
 import { parseInstance } from "./parse-instance.js";
 import { waitForZoneOperation } from "./wait-for-operation.js";
+import { TIMED_OUT, withCallTimeout } from "./with-call-timeout.js";
+
+const INSERT_CALL_TIMEOUT_MS = 120_000;
 
 /** Everything needed to launch one instance. */
 export interface CreateGcpInstanceSpec {
@@ -58,27 +61,34 @@ export interface CreateGcpInstanceSpec {
 
 /** Launch a single instance and return its name (it will still be starting up). */
 export async function createGcpInstance(spec: CreateGcpInstanceSpec): Promise<string> {
-  const [operation] = await instancesClient.insert({
-    project: spec.project,
-    zone: spec.zone,
-    instanceResource: {
-      name: spec.name,
-      machineType: `zones/${spec.zone}/machineTypes/${spec.machineType}`,
-      disks: [{
-        boot: true,
-        autoDelete: true,
-        initializeParams: { sourceImage: spec.sourceImage, diskSizeGb: String(spec.bootDiskSizeGb) },
-      }],
-      networkInterfaces: [{
-        network: `global/networks/${spec.network}`,
-        subnetwork: `regions/${spec.zone.replace(/-[a-z]$/, "")}/subnetworks/${spec.subnet}`,
-        ...(spec.assignExternalIp === true ? { accessConfigs: [{ name: "External NAT", type: "ONE_TO_ONE_NAT" }] } : {}),
-      }],
-      serviceAccounts: [{ email: spec.serviceAccountEmail, scopes: ["https://www.googleapis.com/auth/cloud-platform"] }],
-      ...(spec.labels && Object.keys(spec.labels).length > 0 ? { labels: spec.labels } : {}),
-      ...(spec.networkTags && spec.networkTags.length > 0 ? { tags: { items: spec.networkTags } } : {}),
-    },
-  });
+  const insertResult = await withCallTimeout(
+    instancesClient.insert({
+      project: spec.project,
+      zone: spec.zone,
+      instanceResource: {
+        name: spec.name,
+        machineType: `zones/${spec.zone}/machineTypes/${spec.machineType}`,
+        disks: [{
+          boot: true,
+          autoDelete: true,
+          initializeParams: { sourceImage: spec.sourceImage, diskSizeGb: String(spec.bootDiskSizeGb) },
+        }],
+        networkInterfaces: [{
+          network: `global/networks/${spec.network}`,
+          subnetwork: `regions/${spec.zone.replace(/-[a-z]$/, "")}/subnetworks/${spec.subnet}`,
+          ...(spec.assignExternalIp === true ? { accessConfigs: [{ name: "External NAT", type: "ONE_TO_ONE_NAT" }] } : {}),
+        }],
+        serviceAccounts: [{ email: spec.serviceAccountEmail, scopes: ["https://www.googleapis.com/auth/cloud-platform"] }],
+        ...(spec.labels && Object.keys(spec.labels).length > 0 ? { labels: spec.labels } : {}),
+        ...(spec.networkTags && spec.networkTags.length > 0 ? { tags: { items: spec.networkTags } } : {}),
+      },
+    }),
+    INSERT_CALL_TIMEOUT_MS,
+  );
+  if (insertResult === TIMED_OUT) {
+    throw new Error(`Timed out issuing the create request for GCP instance ${spec.name}.`);
+  }
+  const [operation] = insertResult;
   await waitForZoneOperation(zoneOperationsClient, spec.project, spec.zone, operation.name ?? undefined);
   return spec.name;
 }
@@ -99,12 +109,9 @@ export async function waitForGcpInstanceRunning(
     // blip, stuck token refresh) can't hang the loop forever without the
     // deadline below ever getting checked. A genuine error from get() itself
     // still propagates immediately, rather than being swallowed as a timeout.
-    let timedOut = false;
-    const raw = await Promise.race([
-      instancesClient.get({ project, zone, instance: name }).then(([r]) => r),
-      new Promise<undefined>((resolve) => setTimeout(() => { timedOut = true; resolve(undefined); }, GET_CALL_TIMEOUT_MS)),
-    ]);
-    if (!timedOut && raw) {
+    const result = await withCallTimeout(instancesClient.get({ project, zone, instance: name }), GET_CALL_TIMEOUT_MS);
+    if (result !== TIMED_OUT) {
+      const [raw] = result;
       lastStatus = raw.status ?? undefined;
       if (parseInstance(raw)?.status === "RUNNING") return;
     }

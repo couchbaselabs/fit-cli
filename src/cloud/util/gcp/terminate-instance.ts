@@ -12,6 +12,9 @@ import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { instancesClient, zoneOperationsClient } from "./gcp-clients.js";
 import { preflightGcpProject } from "./identity.js";
 import { waitForZoneOperation } from "./wait-for-operation.js";
+import { TIMED_OUT, withCallTimeout } from "./with-call-timeout.js";
+
+const DELETE_CALL_TIMEOUT_MS = 120_000;
 
 /**
  * GCP's "not found" error carries a code, not a distinct exception type — but
@@ -28,7 +31,11 @@ function isNotFound(err: unknown): boolean {
 /** Delete an instance by name, waiting for the deletion to complete. */
 export async function terminateGcpInstance(project: string, zone: string, name: string): Promise<void> {
   try {
-    const [operation] = await instancesClient.delete({ project, zone, instance: name });
+    const result = await withCallTimeout(instancesClient.delete({ project, zone, instance: name }), DELETE_CALL_TIMEOUT_MS);
+    if (result === TIMED_OUT) {
+      throw new Error(`Timed out issuing the delete request for GCP instance ${name}.`);
+    }
+    const [operation] = result;
     await waitForZoneOperation(zoneOperationsClient, project, zone, operation.name ?? undefined);
   } catch (err) {
     if (isNotFound(err)) return;
