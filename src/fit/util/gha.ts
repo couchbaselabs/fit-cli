@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { formatArtifactsTable } from "../../util/non-fit/artifacts.js";
 import { isMain } from "../../util/non-fit/cli.js";
+import { fitCliInfo } from "../../util/non-fit/fit-cli-log.js";
 import { parseJunitDataFromDir, renderJunitMarkdown } from "../shared/run-test-driver/junit-to-markdown.js";
 import { readSituationalResultsCsv, renderSituationalResultsMarkdown } from "../shared/run-test-driver/situational-results.js";
 
@@ -275,8 +276,12 @@ export function emitGhaArtifactNotice(s3Uri?: string): void {
 
   const url = s3Uri ?? `https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}`;
   const name = `fit-cli-run-${GITHUB_RUN_ID}`;
-  // GHA workflow command: printed to stdout, parsed by the runner.
-  console.log(`::notice title=Run artifacts (${name})::${url}`);
+  // GHA workflow command: the runner parses "::cmd::" lines from stderr just as well
+  // as stdout, so route it through fitCliInfo rather than console.log. Every command
+  // is wrapped in runCli()'s end-of-run summary, including ones whose stdout must
+  // stay machine-parseable (e.g. `secrets get | jq ...`) — stdout must carry only
+  // that command's own payload.
+  fitCliInfo(`::notice title=Run artifacts (${name})::${url}`);
 }
 
 const USAGE = `Usage: bun src/fit/util/gha.ts <subcommand> [options]
