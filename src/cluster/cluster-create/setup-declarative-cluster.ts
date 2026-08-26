@@ -260,6 +260,15 @@ export async function runCbdinoclusterInit(
   await execution.runHiddenUntilFailure("bash", ["-lc", initCmdline], undefined, {
     display: `cbdinocluster init ${args}`,
   });
+  if (poolArgs.length > 0) {
+    const poolName = poolArgs[poolArgs.indexOf("--capella-pool-name") + 1];
+    const size = poolArgs[poolArgs.indexOf("--capella-pool-size") + 1];
+    const expiry = poolArgs[poolArgs.indexOf("--capella-pool-expiry") + 1];
+    console.log(
+      `✓ setup-cluster: asked cbdinocluster init to create this run's Capella API key pool ${poolName} ` +
+        `(size ${size}, expiry ${expiry} days). Details in the debug log.`,
+    );
+  }
   const network = dockerNetworkFromInitArgs(args);
   if (network) {
     console.log(`→ setup-cluster: ensuring Docker network ${network} exists on ${execution.description}`);
