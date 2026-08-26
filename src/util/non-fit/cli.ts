@@ -138,6 +138,15 @@ export function runCli(main: () => Promise<void | Partial<RunOutput>>): void {
   );
   const logArtifacts = [sessionLogArtifact, debugLogArtifact];
   let runOutput: RunOutput | undefined;
+  // renderRunSummary uploads to S3 and prepends a step-summary block each call, so it
+  // must run at most once even if the success branch throws after already rendering
+  // (e.g. in worstFailureShouldExitNonZero) and control falls through to .catch.
+  let summaryRendered = false;
+  const renderRunSummaryOnce = async () => {
+    if (summaryRendered) return;
+    summaryRendered = true;
+    await renderRunSummary(promptSession.runDir, runOutput ?? { artifacts: logArtifacts, details: [] });
+  };
   Promise.resolve()
     .then(() => main())
     .then((result) => {
@@ -145,7 +154,7 @@ export function runCli(main: () => Promise<void | Partial<RunOutput>>): void {
       return promptSession.finishReplay();
     })
     .then(async () => {
-      await renderRunSummary(promptSession.runDir, runOutput ?? { artifacts: logArtifacts, details: [] });
+      await renderRunSummaryOnce();
       if (runOutput?.worstFailure && worstFailureShouldExitNonZero(runOutput.worstFailure)) {
         fitCliError(formatFailureSummaryLine(runOutput.worstFailure, runOutput.failureCount ?? 1));
         await Promise.all([sessionLog.flush(), debugLog.flush()]);
@@ -162,7 +171,7 @@ export function runCli(main: () => Promise<void | Partial<RunOutput>>): void {
       // artifact table (and S3 upload) to debug — so render the summary here too,
       // falling back to whatever artifacts we have (at least the session/debug
       // logs; reconcileArtifactsWithDir discovers the rest from the run dir).
-      await renderRunSummary(promptSession.runDir, runOutput ?? { artifacts: logArtifacts, details: [] });
+      await renderRunSummaryOnce();
       console.error(formatUncaughtError(err));
       // Flush tee'd logs before exiting so the final error line is persisted.
       await Promise.all([sessionLog.flush(), debugLog.flush()]);
