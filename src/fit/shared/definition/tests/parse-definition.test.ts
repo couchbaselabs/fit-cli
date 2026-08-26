@@ -3,6 +3,8 @@ import { test } from "node:test";
 import {
   InvalidDefinitionError,
   UnsupportedDefinitionVersionError,
+  localPathForUrl,
+  normalizeDefinitionUrl,
   parseDefinition,
 } from "../parse-definition.js";
 import { CURRENT_FIT_DEFINITION_VERSION } from "../types.js";
@@ -925,4 +927,43 @@ instances:
     (err: unknown) =>
       err instanceof InvalidDefinitionError && /cannot be "analytics-functional" under clusterlessSessions/.test(err.message),
   );
+});
+
+test("normalizeDefinitionUrl rewrites a gist.github.com page URL to its raw-content URL", () => {
+  assert.equal(
+    normalizeDefinitionUrl("https://gist.github.com/someuser/abc123def456"),
+    "https://gist.githubusercontent.com/someuser/abc123def456/raw",
+  );
+});
+
+test("normalizeDefinitionUrl drops a #file-… fragment (the raw URL doesn't need it)", () => {
+  assert.equal(
+    normalizeDefinitionUrl("https://gist.github.com/someuser/abc123def456#file-fusion-json5"),
+    "https://gist.githubusercontent.com/someuser/abc123def456/raw",
+  );
+});
+
+test("normalizeDefinitionUrl passes through a non-gist URL unchanged", () => {
+  const url = "https://raw.githubusercontent.com/someorg/somerepo/main/fusion.json5";
+  assert.equal(normalizeDefinitionUrl(url), url);
+});
+
+test("normalizeDefinitionUrl passes through an already-raw gist URL unchanged", () => {
+  const url = "https://gist.githubusercontent.com/someuser/abc123def456/raw";
+  assert.equal(normalizeDefinitionUrl(url), url);
+});
+
+test("localPathForUrl guesses .json5 for a gist URL with a #file-…-json5 fragment", () => {
+  const path = localPathForUrl("https://gist.github.com/someuser/abc123def456#file-fusion-json5", "/home/test");
+  assert.match(path, /\/gist\.json5$/);
+});
+
+test("localPathForUrl guesses .yaml for a gist URL with a #file-…-yaml fragment", () => {
+  const path = localPathForUrl("https://gist.github.com/someuser/abc123def456#file-fusion-yaml", "/home/test");
+  assert.match(path, /\/gist\.yaml$/);
+});
+
+test("localPathForUrl falls back to the last path segment for a gist URL with no file fragment", () => {
+  const path = localPathForUrl("https://gist.github.com/someuser/abc123def456", "/home/test");
+  assert.match(path, /\/abc123def456$/);
 });

@@ -1020,13 +1020,50 @@ export function isDefinitionUrl(s: string): boolean {
   return /^https?:\/\//i.test(s);
 }
 
+// GitHub renders a `#file-<name>` fragment on a gist page URL when it links to one
+// file of a multi-file gist, with every non-alphanumeric character (including the
+// extension's `.`) turned into `-`. We only need enough of that convention back to
+// guess the definition format for local caching — the `-json5` / `-yaml` / `-yml`
+// suffix — not the exact original filename.
+const GIST_FRAGMENT_FORMAT_PATTERN = /-(json5|ya?ml)$/i;
+
+function gistFormatHintFromFragment(hash: string): DefinitionFormat | undefined {
+  const match = GIST_FRAGMENT_FORMAT_PATTERN.exec(hash.replace(/^#file-/, ""));
+  if (!match) return undefined;
+  return match[1].toLowerCase().startsWith("json5") ? "json5" : "yaml";
+}
+
 function basenameFromUrl(url: string): string {
   try {
-    const parts = new URL(url).pathname.split("/").filter(Boolean);
+    const parsed = new URL(url);
+    if (parsed.hostname === "gist.github.com") {
+      const formatHint = gistFormatHintFromFragment(parsed.hash);
+      if (formatHint) return `gist.${formatHint}`;
+    }
+    const parts = parsed.pathname.split("/").filter(Boolean);
     return parts.at(-1) ?? "definition.json5";
   } catch {
     return "definition.json5";
   }
+}
+
+/**
+ * A gist.github.com page URL (e.g. `https://gist.github.com/user/<id>`) is the HTML
+ * gist page, not fetchable definition content — it needs rewriting to gist's raw-
+ * content URL, mirroring the recipe in run-guidance.ts. Any other URL passes through
+ * unchanged (e.g. an already-raw gist URL, or a plain https:// definition link).
+ */
+export function normalizeDefinitionUrl(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+  if (parsed.hostname !== "gist.github.com") return url;
+  const [user, id] = parsed.pathname.split("/").filter(Boolean);
+  if (!user || !id) return url;
+  return `https://gist.githubusercontent.com/${user}/${id}/raw`;
 }
 
 /** Stable local cache path for a URL: ~/.fit-cli/url-cache/<12-char-hash>/<basename> */
@@ -1039,20 +1076,24 @@ export function localPathForUrl(url: string, home: string = homedir()): string {
  * Fetch a definition file from a URL, write it to a stable local cache path, and
  * return that path. The stable path means resume state written next to it can be
  * found again when the same URL is passed to a later `--resume-at` invocation.
+ * A gist.github.com page URL is rewritten to its raw-content URL before fetching
+ * (see {@link normalizeDefinitionUrl}); the cache path is keyed off the original
+ * URL so both forms of the same gist link reuse the same cache entry.
  */
 export async function cacheDefinition(url: string): Promise<string> {
+  const fetchUrl = normalizeDefinitionUrl(url);
   let text: string;
   try {
-    const response = await fetch(url);
+    const response = await fetch(fetchUrl);
     if (!response.ok) {
       throw new InvalidDefinitionError(
-        `Failed to fetch definition from ${url}: HTTP ${response.status} ${response.statusText}`,
+        `Failed to fetch definition from ${fetchUrl}: HTTP ${response.status} ${response.statusText}`,
       );
     }
     text = await response.text();
   } catch (err) {
     if (err instanceof InvalidDefinitionError) throw err;
-    throw new InvalidDefinitionError(`Failed to fetch definition from ${url}: ${(err as Error).message}`);
+    throw new InvalidDefinitionError(`Failed to fetch definition from ${fetchUrl}: ${(err as Error).message}`);
   }
   const localPath = localPathForUrl(url);
   mkdirSync(dirname(localPath), { recursive: true });
