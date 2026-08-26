@@ -13,7 +13,7 @@
         {
           performer: {
             image: '{{PERFORMER_IMAGE}}',
-            onPortInUse: 'reuse',
+            onPortInUse: 'restart',
           },
           runs: [
             {

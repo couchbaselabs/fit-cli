@@ -15,7 +15,7 @@
         {
           performer: {
             image: '{{PERFORMER_IMAGE}}',
-            onPortInUse: 'reuse',
+            onPortInUse: 'restart',
           },
           runs: [
             {
@@ -47,7 +47,7 @@
         {
           performer: {
             image: '{{PERFORMER_IMAGE}}',
-            onPortInUse: 'reuse',
+            onPortInUse: 'restart',
           },
           runs: [
             {
