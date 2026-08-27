@@ -64,13 +64,15 @@
 
   // Level 2: per-family, per-type, across that family's clusters.
   // op-capella-func-* is currently excluded as it needs more work to be stable
+  // op-cng-sit-* is temporarily excluded pending
+  // https://couchbase.slack.com/archives/C04DB7P157T/p1786097447668529 — restore once resolved.
   'op-multi-func-sanity':  { tags: ['operational', 'functional'], order: 15, presets: ['op-onprem-func-sanity', 'op-cng-func-sanity', /* 'op-capella-func-sanity', 'op-capella-pe-func-sanity' */] },
   'op-multi-func-lite':    { tags: ['operational', 'functional'], order: 25, presets: ['op-onprem-func-lite', 'op-cng-func-lite', /* 'op-capella-func-lite', 'op-capella-pe-func-lite' */] },
   'op-multi-func-release': { tags: ['operational', 'functional'], order: 35, presets: ['op-onprem-func-release', 'op-cng-func-release', /* 'op-capella-func-release', 'op-capella-pe-func-release' */] },
 
-  'op-multi-sit-sanity':  { tags: ['operational', 'situational'], order: 15, presets: ['op-cng-sit-sanity', 'op-capella-sit-sanity', 'op-capella-pe-sit-sanity'] },
-  'op-multi-sit-lite':    { tags: ['operational', 'situational'], order: 25, presets: ['op-cng-sit-lite', 'op-capella-sit-lite', 'op-capella-pe-sit-lite'] },
-  'op-multi-sit-release': { tags: ['operational', 'situational'], order: 35, presets: ['op-cng-sit-release', 'op-capella-sit-release', 'op-capella-pe-sit-release'] },
+  'op-multi-sit-sanity':  { tags: ['operational', 'situational'], order: 15, presets: [/* 'op-cng-sit-sanity', */ 'op-capella-sit-sanity', 'op-capella-pe-sit-sanity'] },
+  'op-multi-sit-lite':    { tags: ['operational', 'situational'], order: 25, presets: [/* 'op-cng-sit-lite', */ 'op-capella-sit-lite', 'op-capella-pe-sit-lite'] },
+  'op-multi-sit-release': { tags: ['operational', 'situational'], order: 35, presets: [/* 'op-cng-sit-release', */ 'op-capella-sit-release', 'op-capella-pe-sit-release'] },
 
   // enterprise-analytics and columnar each have exactly one cluster today, so their
   // "-multi-func-*" is a trivial single-member wrapper — kept for naming consistency
