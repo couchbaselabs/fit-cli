@@ -67,8 +67,13 @@ export function gcpFitInstanceName(creator: string, now: Date = new Date()): str
 
 type RequiredGcpDefaults = { [K in "project" | "zone" | "network" | "subnet" | "serviceAccountEmail"]: string };
 
-/** Read defaults.gcp from environments.json5, failing fast (with guidance) if any required field is unset. */
-function requireGcpConfig(): RequiredGcpDefaults {
+/**
+ * Read defaults.gcp from environments.json5, failing fast (with guidance) if any
+ * required field is unset. Exported so callers that need just the project id for
+ * an upfront credentials check (run-from-definition.ts's willRunOnGcp check) don't
+ * have to duplicate this parsing.
+ */
+export function requireGcpConfig(): RequiredGcpDefaults {
   const gcp: GcpDefaults = loadEnvironments().defaults.gcp ?? {};
   const keys = ["project", "zone", "network", "subnet", "serviceAccountEmail"] as const;
   const missing = keys.filter((key) => !gcp[key]);

@@ -64,6 +64,8 @@ import { buildSlackRunResults, postSlackRunResults } from "../../slack/post-run-
 import type { SlackRunResult } from "../../slack/util/slack-results.js";
 import { deleteVpcEndpointsForCluster } from "../../../cloud/util/aws/delete-vpc-endpoints.js";
 import { checkAwsCredentials, type AwsCredentials } from "../../../cloud/util/aws/identity.js";
+import { checkGcpCredentials } from "../../../cloud/util/gcp/identity.js";
+import { requireGcpConfig } from "../../util/gcp/fit-instance.js";
 import {
   localClusterCommandExecutor,
   type ClusterCommandExecutor,
@@ -1920,6 +1922,10 @@ export async function runFromDefinition(
       executionGroups.slice(startCycleIndex).some((group) => group.type === "situational") ||
       (executionOverride.kind === "definition" &&
         executionGroups.slice(startCycleIndex).some((g) => g.instance.kind === "aws")));
+  const willRunOnGcp =
+    !forceLocalhost &&
+    executionOverride.kind === "definition" &&
+    executionGroups.slice(startCycleIndex).some((g) => g.instance.kind === "gcp");
 
   // AWS is needed for EC2 execution groups AND for situational cbdinocluster cloud-deployer
   // runs (even on localhost's own machine, credentials get forwarded to the remote box).
@@ -1940,6 +1946,22 @@ export async function runFromDefinition(
       return finalizeRunFromDefinition([], [], undefined, tracker.worst, tracker.failureCount);
     }
     awsCredentials = result.credentials;
+  }
+
+  // GCP's mirror of the AWS check above: confirm ADC, project reachability, IAM
+  // permissions, and the separate `gcloud` CLI login session (needed for
+  // IAP-tunneled SSH) all work before provisioning anything. Without this, a
+  // problem here only surfaced after a GCP instance was already launched and
+  // waitForIapSsh's multi-minute timeout expired — e.g. a stale `gcloud auth
+  // login` session, seen live: it silently ate ~4 minutes and skipped the whole
+  // execution group deep into an otherwise-healthy multi-hour run.
+  if (willRunOnGcp) {
+    const result = await checkGcpCredentials(requireGcpConfig().project);
+    if (!result.ok) {
+      fitCliError({ classification: "FatalToAll" }, `\n✗ ${result.message}`);
+      tracker.record("FatalToAll", result.message, preconditionCtx);
+      return finalizeRunFromDefinition([], [], undefined, tracker.worst, tracker.failureCount);
+    }
   }
 
   // Resolve GitHub credentials upfront so we fail before provisioning an instance.
