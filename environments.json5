@@ -91,7 +91,7 @@
     // Needs a cbdinoclusterVersion with the pool flags (first release after SDKQE-3993).
     capellaKeyPool: {
       enabled: true,
-      size: 10,
+      size: 4,
       expiryDays: 1,
     },
 
