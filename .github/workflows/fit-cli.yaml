@@ -34,6 +34,14 @@ on:
         description: Build cbdinocluster from this couchbaselabs/cbdinocluster PR number instead of installing the latest release.
         type: string
         default: ""
+      env_override:
+        description: >-
+          Overrides applied to environments.json5 while the preset is rendered, as comma-separated
+          <path>=<value> pairs, e.g. "defaults.clusterVersion=8.1.0-2710". Each pair is passed to
+          `fit run` as --env-override, and each path is the one the preset's
+          {{environments.<path>}} placeholder names.
+        type: string
+        default: ""
       slack_thread:
         description: Slack thread to post a run summary into (e.g. https://couchbase.slack.com/archives/C05LNBVQRE3/p1786376341783169).
         type: string
@@ -69,6 +77,14 @@ on:
         default: ""
       cbdinocluster_pr:
         description: Build cbdinocluster from this couchbaselabs/cbdinocluster PR number instead of installing the latest release.
+        type: string
+        default: ""
+      env_override:
+        description: >-
+          Overrides applied to environments.json5 while the preset is rendered, as comma-separated
+          <path>=<value> pairs, e.g. "defaults.clusterVersion=8.1.0-2710". Each pair is passed to
+          `fit run` as --env-override, and each path is the one the preset's
+          {{environments.<path>}} placeholder names.
         type: string
         default: ""
       slack_thread:
@@ -126,6 +142,7 @@ jobs:
         env:
           GERRIT_REF: ${{ inputs.transactionsFitPerformerRef || '' }}
           CBDINOCLUSTER_PR: ${{ inputs.cbdinocluster_pr || '' }}
+          ENV_OVERRIDE: ${{ inputs.env_override || '' }}
           CHANNEL: ${{ inputs.channel }}
           PRESET: ${{ matrix.preset }}
           PERFORMER: ${{ inputs.performer }}
@@ -142,6 +159,15 @@ jobs:
           fi
           if [ -n "$CBDINOCLUSTER_PR" ]; then
             args+=(--override "setup.cbdinocluster.source.git.pr=$CBDINOCLUSTER_PR")
+          fi
+          if [ -n "$ENV_OVERRIDE" ]; then
+            # Comma-separated, so one input can carry several overrides; --env-override is repeatable.
+            # Surrounding whitespace is trimmed and empty segments dropped, so that "a=1, b=2" and a
+            # trailing comma both behave, rather than passing " b=2" or "" through to fit.
+            while IFS= read -r env_override; do
+              [ -n "$env_override" ] || continue
+              args+=(--env-override "$env_override")
+            done < <(printf '%s\n' "$ENV_OVERRIDE" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
           fi
           if [ -n "$SLACK_THREAD" ]; then
             fit slack write-placeholder "$RUNNER_TEMP/slack-result.json" "$PRESET"
