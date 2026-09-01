@@ -1,13 +1,40 @@
 /**
- * retryWhole — re-run an operation from the start after it fails. For work that
- * can't be resumed part-way, so recovery means doing it again: an S3 upload whose
- * read stream has already been consumed, say. The operation is handed its 1-based
- * attempt number so a retry can be a *different* attempt (smaller batch, less
- * concurrency) rather than a repeat of one that just failed.
+ * retryWhole — re-run an operation from the start after it fails. Two shapes of
+ * caller use it:
+ *
+ * - Work that can't be resumed part-way, so recovery means doing it again: an S3
+ *   upload whose read stream has already been consumed, say. The operation is
+ *   handed its 1-based attempt number so a retry can be a *different* attempt
+ *   (smaller batch, less concurrency) rather than a repeat of one that just failed.
+ * - A thin retry around a single remote call that is simply repeated as-is until
+ *   it stops failing transiently — see {@link exponentialDelays} for the backoff
+ *   such callers usually want.
  *
  * Pure control flow (the only IO is sleeping between attempts), so it's unit
  * tested directly — see tests/retry.test.ts.
  */
+
+/**
+ * Build a doubling backoff schedule for {@link RetryWholeOptions.delaysMs}:
+ * `baseMs`, then doubling, capped at `maxMs`, for a run of `attempts` total
+ * attempts. Returns the *gaps between* attempts, so its length is
+ * `attempts - 1` and `attempts: 1` means "no retries".
+ *
+ * Deliberately un-jittered: the schedules it produces are tuned per caller
+ * against observed failure bursts, and jitter would make that tuning
+ * unreproducible. Add jitter at a call site that wants it, not here.
+ */
+export function exponentialDelays({
+  attempts,
+  baseMs,
+  maxMs,
+}: {
+  attempts: number;
+  baseMs: number;
+  maxMs: number;
+}): number[] {
+  return Array.from({ length: Math.max(0, attempts - 1) }, (_, i) => Math.min(baseMs * 2 ** i, maxMs));
+}
 
 /** When to retry, how long to wait, and what to say when one happens. */
 export interface RetryWholeOptions {

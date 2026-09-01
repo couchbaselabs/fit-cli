@@ -9,7 +9,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { retryWhole } from "../retry.js";
+import { exponentialDelays, retryWhole } from "../retry.js";
 
 /** An operation that fails its first `failures` calls, then succeeds. Counts its calls. */
 function failsThenSucceeds(failures: number): { op: () => Promise<string>; calls: () => number } {
@@ -206,4 +206,39 @@ test("retryWhole: a budget with room to spare still retries", async () => {
     },
   });
   assert.equal(calls(), 2);
+});
+
+test("exponentialDelays: doubles from baseMs and plateaus at maxMs", () => {
+  assert.deepEqual(exponentialDelays({ attempts: 10, baseMs: 250, maxMs: 15_000 }), [
+    250, 500, 1_000, 2_000, 4_000, 8_000, 15_000, 15_000, 15_000,
+  ]);
+});
+
+test("exponentialDelays: returns the gaps between attempts, so length is attempts - 1", () => {
+  for (const attempts of [2, 3, 6, 10]) {
+    assert.equal(exponentialDelays({ attempts, baseMs: 250, maxMs: 15_000 }).length, attempts - 1);
+  }
+});
+
+test("exponentialDelays: a single attempt means no retries", () => {
+  assert.deepEqual(exponentialDelays({ attempts: 1, baseMs: 250, maxMs: 15_000 }), []);
+  assert.deepEqual(exponentialDelays({ attempts: 0, baseMs: 250, maxMs: 15_000 }), []);
+});
+
+test("exponentialDelays: a maxMs below baseMs caps every delay", () => {
+  assert.deepEqual(exponentialDelays({ attempts: 4, baseMs: 5_000, maxMs: 1_000 }), [1_000, 1_000, 1_000]);
+});
+
+test("exponentialDelays: the schedule it builds drives retryWhole the expected number of times", async () => {
+  // Ties the helper to its consumer: 10 attempts must mean 9 retries, matching withSsmRetry.
+  const { op, calls } = failsThenSucceeds(Number.MAX_SAFE_INTEGER);
+  const retries: number[] = [];
+  await assert.rejects(() =>
+    retryWhole(op, {
+      delaysMs: exponentialDelays({ attempts: 10, baseMs: 0, maxMs: 0 }),
+      onRetry: (_err, _waitMs, nextAttempt) => retries.push(nextAttempt),
+    }),
+  );
+  assert.equal(calls(), 10);
+  assert.deepEqual(retries, [2, 3, 4, 5, 6, 7, 8, 9, 10]);
 });

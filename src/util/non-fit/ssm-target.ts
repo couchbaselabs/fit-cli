@@ -28,6 +28,7 @@ import { ensureSsmLogGroup } from "../../cloud/util/aws/ssm-log-group.js";
 import { commandOn, echoCommand, fitCliWarn, formatCommandLine, startGreyTextOutput, stopGreyTextOutput } from "./fit-cli-log.js";
 import { buildRemoteCommand, posixQuote } from "./remote-target.js";
 import { writeCommandOutputToDebugLog, type RunOptions } from "./proc.js";
+import { exponentialDelays, retryWhole } from "./retry.js";
 import type { ExecutionTarget } from "./target.js";
 import { ssmGetFile, ssmPutFile } from "./ssm-file-relay.js";
 
@@ -105,17 +106,22 @@ function describeSsmError(err: unknown): string {
   return String(err);
 }
 
+const SSM_RETRY_DELAYS_MS = exponentialDelays({
+  attempts: SSM_RETRY_ATTEMPTS,
+  baseMs: SSM_RETRY_BASE_DELAY_MS,
+  maxMs: SSM_RETRY_MAX_DELAY_MS,
+});
+
 async function withSsmRetry<T>(fn: () => Promise<T>): Promise<T> {
-  for (let attempt = 1; ; attempt++) {
-    try {
-      return await fn();
-    } catch (err) {
-      if (!isTransientSsmError(err) || attempt >= SSM_RETRY_ATTEMPTS) throw err;
-      const delayMs = Math.min(SSM_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1), SSM_RETRY_MAX_DELAY_MS);
-      console.error(`[ssm] transient error (${describeSsmError(err)}) (attempt ${attempt}/${SSM_RETRY_ATTEMPTS}), retrying in ${Math.round(delayMs / 1000)}s…`);
-      await sleep(delayMs);
-    }
-  }
+  return retryWhole(fn, {
+    delaysMs: SSM_RETRY_DELAYS_MS,
+    shouldRetry: isTransientSsmError,
+    // nextAttempt counts the first attempt, so the one that just failed is nextAttempt - 1.
+    onRetry: (err, waitMs, nextAttempt) =>
+      console.error(
+        `[ssm] transient error (${describeSsmError(err)}) (attempt ${nextAttempt - 1}/${SSM_RETRY_ATTEMPTS}), retrying in ${Math.round(waitMs / 1000)}s…`,
+      ),
+  });
 }
 
 /**
