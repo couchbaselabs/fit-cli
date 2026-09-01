@@ -41,6 +41,18 @@ export interface ResumeClusterState {
   clusterId?: string;
   /** The cbdinocluster command (path) on the target, for teardown removal. */
   cbdinoclusterCommand?: string;
+  /**
+   * The cbdinocluster deployer the cluster lives on ("cloud", "docker", "cao").
+   * Teardown reads it to know whether the box's cbdinocluster can talk to Capella.
+   * Absent on run-state files written before this field existed.
+   */
+  deployer?: string;
+  /**
+   * The per-run purpose stamp the cluster was allocated with (see
+   * allocate-purpose.ts). Persisted so a resumed run, which gets a fresh run id,
+   * still sweeps the original run's leftovers at teardown.
+   */
+  purpose?: string;
   /** The cluster's artifacts dir, where cbcollect diagnostics are gathered before removal. */
   logsDir?: string;
   /**
