@@ -208,7 +208,9 @@ export function dockerNetworkFromInitArgs(args: string): string | undefined {
  * `--github-user/--github-token` (which enables GitHub), without them
  * `--disable-github`. The run's own Capella API key pool flags are appended the
  * same way (see {@link capellaKeyPoolInitArgs}), and the returned
- * `capellaKeyPool` tells teardown whether there is a pool to remove. Afterwards
+ * `capellaKeyPool` tells teardown whether there is a pool to remove. The run's
+ * purpose stamp also becomes the config's purpose prefix, so every allocate on the
+ * box carries it, including the ones the FIT suite makes on its own. Afterwards
  * the docker network the args name is created if it isn't a built-in
  * (cbdinocluster init records the network but doesn't create it).
  *
@@ -232,6 +234,11 @@ export async function runCbdinoclusterInit(
     ? ["--github-user", githubCredentials.user, "--github-token", githubCredentials.token]
     : ["--disable-github"];
   const poolArgs = capellaKeyPoolInitArgs(initArgs, allocatePurpose());
+  // FIT drives cbdinocluster on the box and passes its own --purpose. The prefix
+  // puts the run stamp in front of it, so teardown and the hourly sweep, which
+  // both match by prefix, own those clusters too. Applied whatever the deployer,
+  // and this is a throwaway box config.
+  const purposeArgs = ["--purpose-prefix", allocatePurpose()];
   console.log(
     `→ setup-cluster: initializing cbdinocluster on ${execution.description} with \`cbdinocluster init ${args}\``,
   );
@@ -257,7 +264,7 @@ export async function runCbdinoclusterInit(
   // Hidden unless it fails: the SSH transport itself can print unrelated
   // diagnostics on stderr (e.g. a cloud provider's OS Login banner naming the
   // account), which we don't want streamed live for every init.
-  const initCmdline = [cbdinocluster, "init", ...initArgs, ...credArgs, ...poolArgs].map(posixQuote).join(" ");
+  const initCmdline = [cbdinocluster, "init", ...initArgs, ...credArgs, ...poolArgs, ...purposeArgs].map(posixQuote).join(" ");
   await execution.runHiddenUntilFailure("bash", ["-lc", initCmdline], undefined, {
     display: `cbdinocluster init ${args}`,
   });
@@ -481,6 +488,12 @@ export interface SetupDeclarativeClusterResult extends RunOutput {
   /** The resolved cbdinocluster command, present when one was found — for teardown. */
   cbdinocluster?: string;
   /**
+   * The cbdinocluster deployer this cluster lives on ("cloud", "docker", "cao"),
+   * resolved from the plan's default. Teardown reads it to know whether the box's
+   * cbdinocluster can talk to Capella, so it can sweep this run's leftovers there.
+   */
+  deployer?: string;
+  /**
    * The Couchbase cluster's own UUID (distinct from cbdinocluster's own tracking
    * id, `clusterId`) — a generic concept that applies beyond Capella/PE. Populated
    * for any `cloud` (Capella) cluster, PE or not — cbdinocluster's `--verbose
@@ -673,6 +686,10 @@ async function selectedClusterFor(
   };
 }
 
+// The bound exists because a foreign cluster stuck in destroying held a deletion wait
+// for 100 minutes. The next sweep takes what a timed out removal leaves behind.
+export const CBDINOCLUSTER_REMOVE_ALL_TIMEOUT = "45m";
+
 /** Build the `cbdinocluster rm <id>` args. */
 export function removeClusterArgs(id: string): string[] {
   return ["remove", id];
@@ -715,6 +732,41 @@ export async function removeCapellaApiKeyPool(
     return true;
   } catch (err) {
     fitCliWarn(`\n⚠ Failed to remove this run's Capella API key pool: ${(err as Error).message}`);
+    return false;
+  }
+}
+
+/** Build the `cbdinocluster remove-all cloud --purpose <purpose>` args. Matched by prefix. */
+export function removeRunCapellaClustersArgs(purpose: string): string[] {
+  return ["remove-all", "cloud", "--purpose", purpose, "--timeout", CBDINOCLUSTER_REMOVE_ALL_TIMEOUT];
+}
+
+/**
+ * Remove every Capella cluster and project still carrying this run's purpose
+ * stamp. The per-group `rm` removes the cluster fit-cli knows the id of, but an
+ * allocate that failed part way, or a group whose `rm` failed, leaves projects
+ * fit-cli holds no id for. `remove-all` matches the purpose by prefix, so a cluster
+ * whose purpose is the stamp plus a FIT label still matches. The stamp is unique to
+ * the run, so this can never touch another run's clusters. No `--expired-only`
+ * because the run is over, so anything still stamped with it is garbage.
+ *
+ * Must run before the key pool is removed (it needs working keys) and before the
+ * box is terminated (the config lives on the box). Best effort like
+ * {@link removeCluster}. The hourly capella-clusters sweep catches what a
+ * failure here leaves behind.
+ */
+export async function removeRunCapellaClusters(
+  cbdinocluster: string,
+  purpose: string,
+  execution: ClusterCommandExecutor,
+): Promise<boolean> {
+  console.log(`\nRemoving any leftover Capella clusters stamped ${purpose}...`);
+  try {
+    await execution.run(cbdinocluster, removeRunCapellaClustersArgs(purpose));
+    console.log(`\n✓ Removed this run's leftover Capella clusters`);
+    return true;
+  } catch (err) {
+    fitCliWarn(`\n⚠ Failed to remove this run's leftover Capella clusters: ${(err as Error).message}`);
     return false;
   }
 }
@@ -1097,6 +1149,7 @@ async function allocate(
     allocated: true,
     clusterId: allocated.clusterId,
     cbdinocluster,
+    ...(deployer ? { deployer } : {}),
     ...(couchbaseClusterUuid ? { couchbaseClusterUuid } : {}),
     ...(deployer === "cloud" && capellaEnvironment ? { capellaEnvironment } : {}),
     // Only true when PE was actually set up this run — gates whether teardown should
@@ -1237,6 +1290,7 @@ export async function setupDeclarativeCluster(plan: {
       ...(cluster ? { cluster } : {}),
       allocated: false,
       cbdinocluster,
+      ...(plan.deployer ? { deployer: plan.deployer } : {}),
       ...poolResult,
       artifacts: [],
       details: [],
