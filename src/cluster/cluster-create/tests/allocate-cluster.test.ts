@@ -3,7 +3,8 @@ import { readFileSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { allocateCluster, allocatePurpose, type ClusterCommandExecutor, writeClusterDef } from "../allocate-cluster.js";
+import { allocateCluster, type ClusterCommandExecutor, writeClusterDef } from "../allocate-cluster.js";
+import { allocatePurpose } from "../allocate-purpose.js";
 import { ensureRunDir } from "../../../util/non-fit/replay.js";
 
 test("writeClusterDef writes into the provided cluster directory", () => {
