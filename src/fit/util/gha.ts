@@ -279,7 +279,7 @@ export function emitGhaArtifactNotice(s3Uri?: string): void {
   // GHA workflow command: the runner parses "::cmd::" lines from stderr just as well
   // as stdout, so route it through fitCliInfo rather than console.log. Every command
   // is wrapped in runCli()'s end-of-run summary, including ones whose stdout must
-  // stay machine-parseable (e.g. `secrets get | jq ...`) — stdout must carry only
+  // stay machine-parseable (e.g. `a mini CLI's JSON output piped into jq`) — stdout must carry only
   // that command's own payload.
   fitCliInfo(`::notice title=Run artifacts (${name})::${url}`);
 }

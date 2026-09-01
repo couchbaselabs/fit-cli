@@ -8,7 +8,6 @@
  * objects of fields, e.g. {"username":"…","password":"…"}.
  *
  *   bun run secrets list                       # every env's secretId + whether it exists + which keys it has
- *   bun run secrets get  <secretId>            # print a secret's JSON (values shown)
  *   bun run secrets set  <secretId> k=v [k=v…] # create or update (merges with existing keys)
  *
  * <secretId> may be a registry name (e.g. capella/dev → resolved via environments.json5)
@@ -16,7 +15,7 @@
  */
 import { SecretsManagerClient, CreateSecretCommand, PutSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
-import { printWithoutTimestamps, runScriptPrefix } from "../../../util/non-fit/fit-cli-log.js";
+import { runScriptPrefix } from "../../../util/non-fit/fit-cli-log.js";
 import { loadEnvironments } from "../../../fit/util/environments.js";
 import { getJsonSecret, AwsSecretError } from "./secrets.js";
 import { AWS_REGION } from "./aws-target.js";
@@ -66,13 +65,6 @@ async function cmdList(): Promise<void> {
   }
 }
 
-async function cmdGet(idOrName: string): Promise<void> {
-  const secret = await getJsonSecret(resolveSecretId(idOrName));
-  // Raw, untimestamped output — this is meant to be piped (e.g. `| jq -r '.token'`),
-  // so stdout must carry nothing but the JSON.
-  printWithoutTimestamps(JSON.stringify(secret, null, 2));
-}
-
 async function cmdSet(idOrName: string, pairs: string[]): Promise<void> {
   if (pairs.length === 0) throw new Error("set needs at least one key=value pair.");
   const updates: Record<string, string> = {};
@@ -109,7 +101,6 @@ function helpText(): string {
 
 Usage:
   ${p} list
-  ${p} get <secretId|name>
   ${p} set <secretId|name> key=value [key=value ...]
 
 <name> may be a registry name from environments.json5 (e.g. capella/dev, results/prod)
@@ -122,10 +113,6 @@ export function runSecretsMain(): void {
     switch (command) {
       case "list":
         await cmdList();
-        return;
-      case "get":
-        if (!rest[0]) throw new Error("get needs a <secretId|name>.");
-        await cmdGet(rest[0]);
         return;
       case "set":
         if (!rest[0]) throw new Error("set needs a <secretId|name>.");

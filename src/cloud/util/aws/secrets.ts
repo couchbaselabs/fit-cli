@@ -5,10 +5,13 @@
  * and results-DB credentials are resolved at run time, so CI and laptops resolve
  * identically (see environments.json5 / resolveCapellaConfig / resolveResultsDbCredentials).
  *
- * Run on its own:
+ * Run on its own. Reports which fields a secret has and how long each is, never
+ * their values — fit-cli has no command that prints a secret value, deliberately.
+ * Use the AWS CLI directly if you genuinely need one:
+ *   aws secretsmanager get-secret-value --secret-id <id> --query SecretString --output text
+ *
  *   bun src/cloud/util/aws/secrets.ts <secret-id>
  *   bun src/cloud/util/aws/secrets.ts fit-cli/gerrit/ssh-key
- *   bun src/cloud/util/aws/secrets.ts fit-cli/slack/token --reveal   # print full key/token/password fields
  */
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 import { AWS_REGION } from "./aws-target.js";
@@ -96,22 +99,20 @@ export async function getJsonSecret(secretId: string): Promise<Record<string, st
 }
 
 if (isMain(import.meta.url)) {
-  const args = process.argv.slice(2);
-  const reveal = args.includes("--reveal");
-  const [secretId] = args.filter((a) => a !== "--reveal");
+  const [secretId] = process.argv.slice(2);
   if (!secretId) {
-    console.error("Usage: bun src/cloud/util/aws/secrets.ts <secret-id> [--reveal]");
+    console.error("Usage: bun src/cloud/util/aws/secrets.ts <secret-id>");
     process.exit(2);
   }
   try {
     const secret = await getJsonSecret(secretId);
     const keys = Object.keys(secret);
     console.log(`\nSecret "${secretId}" (${keys.length} field(s)):\n`);
+    // Names and lengths only. Enough to tell whether a secret is populated and
+    // shaped as expected, without ever putting a credential in a terminal, a
+    // scrollback, or an agent transcript.
     for (const key of keys) {
-      const val = secret[key];
-      const isSensitive = key.toLowerCase().includes("key") || key.toLowerCase().includes("token") || key.toLowerCase().includes("password");
-      const display = isSensitive && !reveal ? `${val.slice(0, 8)}... (${val.length} chars)` : val;
-      console.log(`  ${key}: ${display}`);
+      console.log(`  ${key}: ${secret[key].length} chars`);
     }
   } catch (err) {
     console.error((err as Error).message);

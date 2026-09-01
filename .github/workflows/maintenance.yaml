@@ -83,7 +83,8 @@ jobs:
       - name: Fetch GitHub token from AWS secret
         id: gh-secret
         run: |
-          TOKEN=$(bun run secrets get fit-cli/github/token | jq -r '.token')
+          TOKEN=$(aws secretsmanager get-secret-value --secret-id fit-cli/github/token \
+            --query SecretString --output text | jq -r '.token')
           if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
             echo "::error::Could not read .token from AWS secret fit-cli/github/token"
             exit 1
