@@ -72,7 +72,8 @@ import {
 } from "../../../cluster/cluster-create/allocate-cluster.js";
 import { runClusterDiag } from "../../../cluster/cluster-diag/cluster-diag.js";
 import { printClusterUiAccess } from "../../../cluster/cluster-diag/cluster-ui-link.js";
-import { prepareCbdinoclusterInit, remoteCbdinoclusterCloudEnabled, removeCapellaApiKeyPool, removeCluster, setupDeclarativeCluster } from "../../../cluster/cluster-create/setup-declarative-cluster.js";
+import { prepareCbdinoclusterInit, remoteCbdinoclusterCloudEnabled, removeCapellaApiKeyPool, removeCluster, removeRunCapellaClusters, setupDeclarativeCluster } from "../../../cluster/cluster-create/setup-declarative-cluster.js";
+import { allocatePurpose } from "../../../cluster/cluster-create/allocate-purpose.js";
 import { capellaFunctionalCbdinoclusterInitArgs, capellaAnalyticsCbdinoclusterInitArgs, situationalCbdinoclusterInitArgs } from "../../../cluster/cluster-create/default-cbdinocluster-init-config.js";
 import { isAlias, resolveAlias } from "../../../cluster/cluster-create/cb-alias.js";
 import { collectClusterLogsIfSupported } from "../../../cluster/cluster-cbcollect/cluster-cbcollect.js";
@@ -703,6 +704,9 @@ export async function setupCluster(
           allocated: outcome.allocated,
           ...(outcome.clusterId ? { clusterId: outcome.clusterId } : {}),
           ...(outcome.cbdinocluster ? { cbdinoclusterCommand: outcome.cbdinocluster } : {}),
+          ...(outcome.deployer ? { deployer: outcome.deployer } : {}),
+          // allocateCluster stamped this same value (same process, same run dir).
+          ...(outcome.allocated ? { purpose: allocatePurpose() } : {}),
           logsDir: join(clusterDir, "server-logs"),
           ...(outcome.couchbaseClusterUuid ? { couchbaseClusterUuid: outcome.couchbaseClusterUuid } : {}),
           ...(outcome.privateEndpointEnabled ? { privateEndpointEnabled: true } : {}),
@@ -1674,6 +1678,33 @@ async function removeCapellaKeyPool(
 }
 
 /**
+ * Remove every Capella cluster still stamped with this run's purpose, through the
+ * box's cbdinocluster. Catches what the per-group `rm` cannot know about, an
+ * allocate that failed part way, or a group whose `rm` failed. Only runs when the
+ * box's cbdinocluster can talk to Capella (a cloud-deployer functional run, or a
+ * situational run that created the key pool).
+ *
+ * Must run before {@link removeCapellaKeyPool} (it needs working keys) and before
+ * the box is terminated (the config lives on the box). Best effort, a failure
+ * never blocks pool removal or instance termination.
+ */
+async function removeRunCapellaLeftovers(
+  clusterState: ResumeClusterState | undefined,
+  keyPool: { cbdinoclusterCommand: string } | undefined,
+  execution: ClusterCommandExecutor,
+): Promise<void> {
+  const cbdinocluster =
+    (clusterState?.deployer === "cloud" ? clusterState.cbdinoclusterCommand : undefined) ??
+    keyPool?.cbdinoclusterCommand;
+  if (!cbdinocluster) {
+    return;
+  }
+  // A resumed run gets a fresh run id, so its recomputed stamp would miss the
+  // original run's clusters. The persisted stamp wins.
+  await removeRunCapellaClusters(cbdinocluster, clusterState?.purpose ?? allocatePurpose(), execution);
+}
+
+/**
  * Tear down just an execution group's own cluster and performers (not the box):
  * stop its performers and remove a cluster it allocated. Used when the box is shared
  * with later execution groups from the same definition instance, so the instance is
@@ -1721,8 +1752,10 @@ async function disposeCycleResources(
 ): Promise<RunOutput> {
   await disposeGroupClusterAndPerformers(execution, clusterState, performers, cbcollect);
   const stopped = await stopExternalServices(execution, EXTERNAL_SERVICES, externalServices);
-  // The box goes next, so the pool has to go first.
+  // The box goes next, so the run's Capella leftovers and the pool have to go
+  // first, in that order (the leftover sweep needs the pool's keys).
   if (execution) {
+    await removeRunCapellaLeftovers(clusterState, capellaKeyPool, execution);
     await removeCapellaKeyPool(clusterState, capellaKeyPool, execution);
   }
   if (teardown.terminate) {
@@ -1941,8 +1974,10 @@ export async function teardownRun(
       }
       popLogContext("cluster");
     }
-    // Outside the block above. A pool can exist when allocation failed, or when the
-    // run reused a cluster it did not allocate.
+    // Outside the block above. Leftovers and a pool can exist when allocation
+    // failed, or when the run reused a cluster it did not allocate. The leftover
+    // sweep goes first because it needs the pool's keys.
+    await removeRunCapellaLeftovers(clusterState, capellaKeyPool, execution);
     await removeCapellaKeyPool(clusterState, capellaKeyPool, execution);
   }
   if (teardown.terminate) {

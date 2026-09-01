@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ClusterCommandExecutor } from "../allocate-cluster.js";
-import { cbdinoclusterNeedsInit, dockerNetworkFromInitArgs, remoteCbdinoclusterCloudEnabled, setupDeclarativeCluster } from "../setup-declarative-cluster.js";
+import { CBDINOCLUSTER_REMOVE_ALL_TIMEOUT, cbdinoclusterNeedsInit, dockerNetworkFromInitArgs, remoteCbdinoclusterCloudEnabled, removeRunCapellaClustersArgs, setupDeclarativeCluster } from "../setup-declarative-cluster.js";
 
 const CLUSTER_PS_OUTPUT = `2026-06-03T13:02:18.157+0100    INFO    logger initialized
 Clusters:
@@ -161,10 +161,12 @@ test("setupDeclarativeCluster runs `cbdinocluster init` for the docker args path
   assert.ok(initCall, "expected a `cbdinocluster init` call");
   // init runs in a login shell so it picks up forwarded CAPELLA_*/AWS_* env; the
   // editable args are passed through and the GitHub credentials are appended.
-  // The run's Capella key pool flags follow, with a name unique to the run.
+  // The run's Capella key pool flags follow, with a name unique to the run, then
+  // the run stamp as the config's purpose prefix so every allocate on the box
+  // carries it, including the ones the FIT suite makes on its own.
   assert.match(
     initCall.args[1] ?? "",
-    /^cbdinocluster init --auto --disable-k8s --docker-network fit --github-user alice --github-token ghtoken --capella-create-pool --capella-pool-name fitcli-\S+ --capella-pool-size \d+ --capella-pool-expiry \S+$/,
+    /^cbdinocluster init --auto --disable-k8s --docker-network fit --github-user alice --github-token ghtoken --capella-create-pool --capella-pool-name fitcli-\S+ --capella-pool-size \d+ --capella-pool-expiry \S+ --purpose-prefix fitcli-\S+$/,
   );
   assert.equal(result.capellaKeyPool, true);
   // The stale `~/.cbdinocluster` is removed before init so `init --auto` keys off
@@ -213,7 +215,12 @@ test("setupDeclarativeCluster adds no key pool flags when the init args disable 
   const initCall = execution.runCalls.find(
     (c) => c.command === "bash" && c.args[0] === "-lc" && (c.args[1] ?? "").includes("cbdinocluster init"),
   );
-  assert.equal(initCall?.args[1], "cbdinocluster init --auto --disable-capella --docker-network fit --disable-github");
+  // No pool flags, but the purpose prefix is still set. The stamp also labels
+  // docker clusters.
+  assert.match(
+    initCall?.args[1] ?? "",
+    /^cbdinocluster init --auto --disable-capella --docker-network fit --disable-github --purpose-prefix fitcli-\S+$/,
+  );
   assert.equal(result.capellaKeyPool, undefined);
 });
 
@@ -248,4 +255,19 @@ test("setupDeclarativeCluster initializes cbdinocluster before retrying ps", asy
   ]);
   assert.equal(result.allocated, false);
   assert.equal(result.cluster?.defaultHostname, "172.18.0.2");
+});
+
+test("removeRunCapellaClustersArgs targets the cloud deployer with the run's exact stamp", () => {
+  assert.deepEqual(removeRunCapellaClustersArgs("fitcli-20260615-090000-ab12-someone"), [
+    "remove-all",
+    "cloud",
+    "--purpose",
+    "fitcli-20260615-090000-ab12-someone",
+    "--timeout",
+    CBDINOCLUSTER_REMOVE_ALL_TIMEOUT,
+  ]);
+});
+
+test("removeRunCapellaClustersArgs bounds the removal", () => {
+  assert.ok(removeRunCapellaClustersArgs("fitcli-20260615-090000-ab12-someone").includes("--timeout"));
 });
