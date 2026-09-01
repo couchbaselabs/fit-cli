@@ -128,6 +128,32 @@ export function capellaFunctionalCbdinoclusterInitArgs(
 }
 
 /**
+ * The `cbdinocluster init` arguments for a throwaway config whose only job is to
+ * sweep a Capella organization. Only Capella stays enabled, so `--auto` fills its
+ * block from the caller's `CAPELLA_*` variables and nothing else can fail to
+ * configure. The regions are irrelevant to a sweep but `init` still writes them.
+ *
+ * `--capella-create-pool` and `--purpose-prefix` are deliberately absent. An
+ * hourly sweep must never mint Capella API keys (the shared primary key is
+ * enough for sweep volume) and never claim ownership through a purpose prefix.
+ */
+export function capellaCleanupCbdinoclusterInitArgs(): string {
+  return [
+    "--auto",
+    "--disable-docker",
+    "--disable-aws",
+    "--disable-azure",
+    "--disable-gcp",
+    "--disable-k8s",
+    "--disable-dns",
+    "--disable-github",
+    "--capella-aws-region us-west-2",
+    "--capella-azure-region westus2",
+    "--capella-gcp-region us-west1",
+  ].join(" ");
+}
+
+/**
  * The extra `cbdinocluster init` flags that create this run's own Capella API key
  * pool on the box. Capella rate limits each v4 API key, so cbdinocluster spreads
  * its Management API calls over the pool.

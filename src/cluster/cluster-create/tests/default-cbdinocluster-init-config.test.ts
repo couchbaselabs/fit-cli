@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  capellaCleanupCbdinoclusterInitArgs,
   capellaFunctionalCbdinoclusterInitArgs,
   capellaKeyPoolInitArgs,
   defaultCbdinoclusterInitArgs,
@@ -84,4 +85,16 @@ test("key pool args are empty when the pool is disabled", () => {
 test("key pool args are empty when the init args disable Capella", () => {
   const initArgs = defaultCbdinoclusterInitArgs().split(" ");
   assert.deepEqual(capellaKeyPoolInitArgs(initArgs, "fitcli-run-user", POOL), []);
+});
+
+test("capella cleanup init args enable only Capella, with no key pool and no purpose prefix", () => {
+  const args = capellaCleanupCbdinoclusterInitArgs();
+  assert.doesNotMatch(args, /--disable-capella/);
+  for (const disabled of ["docker", "aws", "azure", "gcp", "k8s", "dns", "github"]) {
+    assert.match(args, new RegExp(`--disable-${disabled}`));
+  }
+  // An hourly sweep must never mint pool keys, and must never claim ownership of
+  // anything through a purpose prefix.
+  assert.doesNotMatch(args, /--capella-create-pool/);
+  assert.doesNotMatch(args, /--purpose-prefix/);
 });
