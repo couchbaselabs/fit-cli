@@ -78,10 +78,13 @@
     // This is the database and UI for FIT/SIT and FIT/PERF results.
     defaultResultsEnvironment: "prod",
 
-    // Default cbdinocluster release (a GitHub release tag) installed onto remote boxes.
-    // Pinned rather than tracking "latest" so that cbdino breakages (which have occurred with
-    // v0.0.121) do not break the "ci" channel.
+    // Default cbdinocluster build installed onto remote boxes: either a GitHub release tag
+    // (pinned rather than tracking "latest" so that cbdino breakages, which have occurred with
+    // v0.0.121, do not break the "ci" channel), or a { pr: <n> } / { branch: "<name>" } object
+    // (optionally with a `repo: "owner/repo"` override) to build from a PR or branch instead.
     cbdinoclusterVersion: "v0.0.120",
+    // cbdinoclusterVersion: { pr: 123 },
+    // cbdinoclusterVersion: { branch: "my-fix" },
 
     // Per-run Capella API key pool created on the remote box at cbdinocluster init
     // and deleted at teardown. Capella allows 100 requests a minute per key, so a
