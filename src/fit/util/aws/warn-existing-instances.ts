@@ -15,7 +15,7 @@
  */
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { logAwsAction } from "../../../cloud/util/aws/aws-cli.js";
-import { checkAwsCredentials } from "../../../cloud/util/aws/identity.js";
+import { callerCreator, checkAwsCredentials } from "../../../cloud/util/aws/identity.js";
 import { listInstances, LIVE_STATES } from "../../../cloud/util/aws/list-instances.js";
 import { type InstanceInfo } from "../../../cloud/util/aws/parse-instance.js";
 import { fitCliWarn } from "../../../util/non-fit/fit-cli-log.js";
@@ -53,7 +53,7 @@ if (isMain(import.meta.url)) {
       states: LIVE_STATES,
     });
     const context: InstanceListContext | undefined = creds.ok
-      ? { account: creds.identity.account, creator: creds.identity.arn.split("/").at(-1) ?? creds.identity.userId }
+      ? { account: creds.identity.account, creator: callerCreator(creds.identity) }
       : undefined;
     const creator = context?.creator;
     const existing = await warnAboutExistingInstances(context, { creator });

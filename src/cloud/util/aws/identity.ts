@@ -42,6 +42,22 @@ export interface AwsCredentials {
   sessionToken?: string;
 }
 
+/**
+ * The readable creator id fit-cli stamps as an instance's `created-by` tag and
+ * matches against when scoping list/remove/manage to "your own" instances.
+ *
+ * Derived from the last segment of the caller's ARN:
+ *   arn:aws:iam::123:user/alice          → alice
+ *   arn:aws:sts::123:assumed-role/R/sess → sess
+ * The assumed-role session name is itself stamped "fit-cli-<user>" (see
+ * aws-cli.ts), so strip that prefix here — every caller needs the same bare
+ * <user> value, both when tagging a newly created instance and when comparing
+ * against tags on existing ones.
+ */
+export function callerCreator(identity: { arn: string; userId: string }): string {
+  return (identity.arn.split("/").at(-1) ?? identity.userId).replace(/^fit-cli-/, "");
+}
+
 /** A configured AWS profile, with its account/tenant when we could determine it. */
 export interface AwsProfileEntry {
   name: string;

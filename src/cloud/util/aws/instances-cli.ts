@@ -7,7 +7,7 @@
  */
 import { logAwsAction } from "./aws-cli.js";
 import { AWS_REGION } from "./aws-target.js";
-import { checkAwsCredentials } from "./identity.js";
+import { callerCreator, checkAwsCredentials } from "./identity.js";
 import { listInstances, LIVE_STATES } from "./list-instances.js";
 import { terminateInstance } from "./terminate-instance.js";
 import { describeInstance } from "./describe-instance.js";
@@ -25,11 +25,6 @@ import type { InstanceRow } from "../instance-row.js";
 
 export { AWS_REGION };
 export type { InstanceQuery };
-
-/** Derive the readable creator id fit-cli stamps as the `created-by` tag. */
-function callerCreator(identity: { arn: string; userId: string }): string {
-  return identity.arn.split("/").at(-1) ?? identity.userId;
-}
 
 export async function listInstanceRows(allUsers: boolean): Promise<InstanceRow[]> {
   const creds = await checkAwsCredentials();

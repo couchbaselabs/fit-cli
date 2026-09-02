@@ -16,7 +16,7 @@ import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { AWS_REGION, AWS_SUBNET_ID, AWS_VPC_ID } from "../../../cloud/util/aws/aws-target.js";
 import { loadEnvironments } from "../../util/environments.js";
 import type { PrivateEndpointSetup } from "../../shared/definition/types.js";
-import { checkAwsCredentials } from "../../../cloud/util/aws/identity.js";
+import { callerCreator, checkAwsCredentials } from "../../../cloud/util/aws/identity.js";
 import { findUbuntuAmi } from "../../../cloud/util/aws/image.js";
 import { createInstance, waitForInstanceRunning, type BlockDeviceMapping } from "../../../cloud/util/aws/create-instance.js";
 import { describeInstance } from "../../../cloud/util/aws/describe-instance.js";
@@ -123,13 +123,7 @@ export async function provisionFitInstance(options: ProvisionOptions = {}): Prom
   if (!creds.ok) {
     throw new Error(`AWS credentials are not usable: ${creds.message}`);
   }
-  // Last segment of the ARN is the most readable creator identifier:
-  //   arn:aws:iam::123:user/alice          → alice
-  //   arn:aws:sts::123:assumed-role/R/sess → sess
-  // The assumed-role session name is itself stamped "fit-cli-<user>" (see
-  // aws-cli.ts), so strip that prefix here or fitInstanceName() below doubles it
-  // up into "fit-cli-fit-cli-<user>-...".
-  const creatorTag = (creds.identity.arn.split("/").at(-1) ?? creds.identity.userId).replace(/^fit-cli-/, "");
+  const creatorTag = callerCreator(creds.identity);
 
   // Before launching anything, silently fetch fit-cli boxes already running in
   // this region. We suppress the banner here — it will be shown in the
