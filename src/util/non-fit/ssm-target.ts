@@ -72,19 +72,22 @@ function ensureLogGroup(): Promise<string> {
  * True for SSM errors worth retrying — throttling, the instance not yet
  * visible to SSM right after boot, GetCommandInvocation being called before
  * the invocation record it just SendCommand'd has propagated (a real AWS
- * eventual-consistency gap, not a caller bug), or a malformed response that
- * never made it into a modeled exception. That last case shows up as a bare
- * `Error` with an empty name/message: @smithy/core's deserializer occasionally
- * can't parse an SSM error body (seen on the command issued right after a
- * multi-hour AWS-RunShellScript invocation completes) and throws before
- * attaching one, leaving only `$metadata.httpStatusCode` to go on. Treating
- * that shape as transient too lets a one-off glitch retry instead of taking
- * the whole run down. Exported so callers that catch SsmTarget errors higher
- * up can apply the same test (mirrors ssh.ts's isTransientSshError).
+ * eventual-consistency gap, not a caller bug), a stalled request hitting the
+ * client's own requestTimeout (see aws-clients.ts — a network blip shouldn't
+ * take the whole run down any more than a real throttling response would),
+ * or a malformed response that never made it into a modeled exception. That
+ * last case shows up as a bare `Error` with an empty name/message:
+ * @smithy/core's deserializer occasionally can't parse an SSM error body
+ * (seen on the command issued right after a multi-hour AWS-RunShellScript
+ * invocation completes) and throws before attaching one, leaving only
+ * `$metadata.httpStatusCode` to go on. Treating that shape as transient too
+ * lets a one-off glitch retry instead of taking the whole run down. Exported
+ * so callers that catch SsmTarget errors higher up can apply the same test
+ * (mirrors ssh.ts's isTransientSshError).
  */
 export function isTransientSsmError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
-  if (/Throttling|InvalidInstanceId|InvocationDoesNotExist/.test(err.name) || /Throttling|InvalidInstanceId|InvocationDoesNotExist/.test(err.message)) return true;
+  if (/Throttling|InvalidInstanceId|InvocationDoesNotExist|TimeoutError/.test(err.name) || /Throttling|InvalidInstanceId|InvocationDoesNotExist|TimeoutError|ETIMEDOUT/.test(err.message)) return true;
   const metadata = (err as { $metadata?: { httpStatusCode?: number } }).$metadata;
   return !err.name && !err.message && metadata?.httpStatusCode !== undefined && metadata.httpStatusCode >= 400;
 }

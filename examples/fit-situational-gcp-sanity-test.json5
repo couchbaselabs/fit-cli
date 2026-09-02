@@ -1,0 +1,52 @@
+// GCP counterpart of fit-situational-sanity-test.json5: runs the standard-qe
+// FIT/SIT situational test set against a single SDK, on a GCP instance
+// instead of AWS. FIT/SIT builds its own Capella/CNG clusters remotely
+// regardless of instance kind, so the instance here is just where the
+// test-driver process runs.
+//
+// Validate / run with:
+//   bun run definition validate examples/fit-situational-gcp-sanity-test.json5
+//   bun run run definition --interactive examples/fit-situational-gcp-sanity-test.json5
+{
+  version: 1,
+  type: 'fit',
+  description: '{GCP:{clusterless:[{Java@main,situational,standard-qe}]}}',
+  instances: [
+    {
+      gcp: {},
+      setup: {
+        capellaEnvironment: 'prod',
+      },
+      // FIT/SIT creates its own clusters, so none are set up here.
+      clusters: [],
+      // Sessions not tied to any particular cluster (the name distinguishes these from sessions nested under clusters:)
+      clusterlessSessions: [
+        {
+          performer: {
+            image: 'java-fit-performer:main',
+            onPortInUse: 'reuse',
+          },
+          runs: [
+            {
+              type: 'situational',
+              tests: {
+                presets: [
+                  'standard-qe',
+                ],
+              },
+              situational: {
+                database: {
+                  mode: 'hosted',
+                  // 'dev' (faas.couchbase.com) is only reachable from the AWS network;
+                  // GCP instances need 'prod' (performance-sdk.couchbase.com), matching
+                  // what the real op-*-sit-* presets use.
+                  resultsEnvironment: 'prod',
+                },
+              },
+            },
+          ],
+        },
+      ],
+    },
+  ],
+}

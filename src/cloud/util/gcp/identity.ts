@@ -8,6 +8,8 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
+import { preflightGcloudCli } from "../../../util/non-fit/gcp-iap.js";
+import { capture } from "../../../util/non-fit/proc.js";
 import { projectsClient } from "./gcp-clients.js";
 
 /** The bits of a GCP project confirmation we care about. */
@@ -95,6 +97,36 @@ async function checkIapTunnelAccess(project: string): Promise<void> {
 }
 
 /**
+ * Confirm the `gcloud` CLI itself has a valid, non-stale login session —
+ * separate from Application Default Credentials, which only covers the
+ * `@google-cloud/*` SDK's own direct API calls (project reachability, IAM
+ * permission checks, instance create/delete/etc.). IAP-tunneled SSH
+ * (util/non-fit/gcp-iap.ts) is the one transport with no SDK equivalent, so
+ * it shells out to the `gcloud` binary directly, which keeps its own
+ * `gcloud auth login` session — that session can go stale (e.g. overnight)
+ * independently of ADC. Without this check, a stale `gcloud` session let
+ * every ADC-based check above pass, then only surfaced as
+ * "Reauthentication failed" deep inside `waitForIapSsh`'s full multi-minute
+ * timeout, after an instance had already been launched. Checked upfront
+ * instead, alongside everything else.
+ */
+async function checkGcloudCliAuth(): Promise<void> {
+  await preflightGcloudCli();
+  try {
+    await capture("gcloud", ["auth", "print-access-token"], undefined, { quiet: true });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `The "gcloud" CLI's own login session looks stale — this is separate from Application Default ` +
+        `Credentials (which just passed) and is what IAP-tunneled SSH shells out to directly. Run ` +
+        `"gcloud auth login" to refresh it.\n(${detail})`,
+      { cause: err },
+    );
+  }
+  console.log(`✓ Confirmed "gcloud" CLI has a valid login session (needed for IAP-tunneled SSH)`);
+}
+
+/**
  * Confirm ADC resolves to *some* usable identity and that identity can read
  * the given project — the GCP equivalent of AWS's `GetCallerIdentity` +
  * fit-cli-role assume, minus the assume step (there's nothing to assume into).
@@ -123,6 +155,7 @@ export async function preflightGcpProject(project: string): Promise<GcpProjectCh
     );
   }
   await checkIapTunnelAccess(project);
+  await checkGcloudCliAuth();
   return { project, name: info.name ?? undefined };
 }
 

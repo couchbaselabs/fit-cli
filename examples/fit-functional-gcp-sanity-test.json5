@@ -1,0 +1,65 @@
+// GCP counterpart of the AWS op-onprem-func-release preset: runs the full
+// functional test set against a single SDK, in a clean environment, on a GCP
+// instance instead of AWS.
+//
+// Validate / run with:
+//   bun run definition validate examples/fit-functional-gcp-sanity-test.json5
+//   bun run run definition --interactive examples/fit-functional-gcp-sanity-test.json5
+{
+  version: 1,
+  type: 'fit',
+  description: '{GCP:{cbdino(3n@8.0-stable):[{Java@main,functional,all}]}}',
+  instances: [
+    {
+      gcp: {},
+      clusters: [
+        {
+          clusterConfig: 'cluster-0',
+          sessions: [
+            {
+              performer: {
+                image: 'java-fit-performer:main',
+                onPortInUse: 'reuse',
+              },
+              runs: [
+                {
+                  type: 'functional',
+                  tests: {
+                    presets: ['all'],
+                    reincludeDefaultExcludedGroups: ['slow'],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ],
+  clusterConfigs: [
+    {
+      id: 'cluster-0',
+      cbdinocluster: {
+        config: {
+          nodes: [
+            {
+              count: 3,
+              version: '8.0-stable',  // resolved by fit-cli at runtime
+              services: [
+                'kv',
+                'n1ql',
+                'index',
+                'fts',
+              ],
+            },
+          ],
+          docker: {
+            'kv-memory': 4096,
+            'fts-memory': 4096,
+          },
+        },
+        onClusterExists: 'useExisting',
+      },
+    },
+  ],
+}
