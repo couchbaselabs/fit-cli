@@ -76,7 +76,8 @@
     // (pinned rather than tracking "latest" so that cbdino breakages, which have occurred with
     // v0.0.121, do not break the "ci" channel), or a { pr: <n> } / { branch: "<name>" } object
     // (optionally with a `repo: "owner/repo"` override) to build from a PR or branch instead.
-    cbdinoclusterVersion: "v0.0.120",
+    // temp: pinning `ci` to CapellaV2LatestDino - see https://couchbase.slack.com/archives/C05LNBVQRE3/p1788347348059869?thread_ts=1788259939.482939&cid=C05LNBVQRE3
+    cbdinoclusterVersion: { branch: "CapellaV2LatestDino" },
     // cbdinoclusterVersion: { pr: 123 },
     // cbdinoclusterVersion: { branch: "my-fix" },
 
