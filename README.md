@@ -113,7 +113,7 @@ User-facing (using the installed binary):
 - `fit performer run <sdk> [version]` — pull and start a single prebuilt performer image, for manual testing outside a full FIT run (e.g. `fit performer run scala`). Leaves it running; stop it yourself when done.
 - `fit performer metadata <sdk> [version]` — pull a performer image and print all its metadata: Docker image labels (build time, revision, source, PR, CI run) and everything it reports over the `performerCapsFetch` gRPC call (user agent, library version, transactions protocol, and every capability).
 - `fit caps table | sync` — show which FIT capabilities each SDK's performer reports (see Capabilities).
-- `fit ingest situational` drains the situational results uploaded to `s3://fit-cli/incoming/` into the perf Postgres database, moving each run to `processed/` or `failed/`. Meant for the cron on the database host, which supplies the credentials in a `.env` (see `--help`).
+- `fit ingest situational` drains the situational results uploaded to `s3://fit-cli/incoming/` into the perf Postgres database, moving each run to `processed/` or `failed/`. Meant for the cron on the database host, which reads the database password from AWS Secrets Manager using its own IAM role (see `--help`).
 
 For development (from source with Bun):
 - `bun run typecheck` — type-check without emitting.

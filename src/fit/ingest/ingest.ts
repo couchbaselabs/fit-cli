@@ -7,17 +7,24 @@
  * situational: drains s3://<bucket>/incoming/ into the results database, moves each run
  *              directory to processed/ or failed/, and records one ingester_runs report row.
  *
- * Made to be run from a cron on the instance that hosts the results database, so the
- * database credentials come from the environment or from a ./.env file placed there.
+ * Made to be run from a cron on the instance that hosts the results database. The
+ * password comes from AWS Secrets Manager, never from a file (see ./credentials.ts).
  */
 import { S3Client } from "@aws-sdk/client-s3";
 import postgres from "postgres";
 import { AWS_REGION } from "../../cloud/util/aws/aws-target.js";
 import { RESULTS_BUCKET } from "../situational/upload-results/upload-results.js";
 import { isMain, runCli } from "../../util/non-fit/cli.js";
-import { loadDotenv } from "../../util/non-fit/dotenv.js";
 import { runScriptPrefix } from "../../util/non-fit/fit-cli-log.js";
 import { resolvedGitSha } from "../version/version.js";
+import {
+  INGEST_DB_USERNAME,
+  INGEST_PASSWORD_ENV_VAR,
+  INGEST_SECRET_ID,
+  IngestCredentialsError,
+  ingestDbFailureLine,
+  resolveIngestPassword,
+} from "./credentials.js";
 import { Db, type ReportStatus, type RunData } from "./db.js";
 import {
   isUuid,
@@ -31,7 +38,6 @@ import { FAILED_PREFIX, type IncomingRun, PROCESSED_PREFIX, S3Queue } from "./s3
 
 // The ingest always runs on the instance that hosts the results database.
 const RESULTS_DB_HOST = "localhost";
-const DEFAULT_USERNAME = "results_writer";
 const RESULTS_DB_PORT = 5432;
 const RESULTS_DB_NAME = "perf";
 
@@ -49,29 +55,6 @@ interface RunOutcome {
 export function overallStatus(outcomes: RunOutcome[]): "success" | "partial" | "nothing_to_do" {
   if (outcomes.length === 0) return "nothing_to_do";
   return outcomes.some((o) => o.outcome === "failed") ? "partial" : "success";
-}
-
-interface IngestSettings {
-  username: string;
-  password: string;
-}
-
-/**
- * Read the database credentials from the environment, after pulling in any
- * ./.env. Real exported variables win over the file.
- */
-function resolveSettings(): IngestSettings {
-  loadDotenv();
-  const password = process.env.CB_DATABASE_PASSWORD;
-  if (!password) {
-    throw new Error(
-      "CB_DATABASE_PASSWORD is not set. Export it, or put it in a .env file in the directory you run this from.",
-    );
-  }
-  return {
-    username: process.env.CB_DATABASE_USERNAME ?? DEFAULT_USERNAME,
-    password,
-  };
 }
 
 /** Throwing here is a permanent failure, so the run moves to failed/. */
@@ -160,29 +143,18 @@ function countsOf(outcomes: RunOutcome[], failedBacklog: number | null) {
   };
 }
 
-async function cmdSituational(argv: string[]): Promise<{ status: ReportStatus; outcomes: RunOutcome[] }> {
-  if (argv.length > 0) {
-    console.error(`Usage: ${runScriptPrefix("ingest")} situational`);
-    process.exit(2);
-  }
+/** Print one line and stop. Used for failures where a stack trace tells the operator nothing. */
+function failFast(line: string): never {
+  console.error(line);
+  process.exit(1);
+}
 
-  const settings = resolveSettings();
-  const sql = postgres({
-    host: RESULTS_DB_HOST,
-    port: RESULTS_DB_PORT,
-    database: RESULTS_DB_NAME,
-    username: settings.username,
-    password: settings.password,
-    max: 1,
-  });
-  const db = new Db(sql);
-  // Ambient credentials, not the shared fit-cli-role client. On the server the
-  // instance role holds the results-queue permissions, and fit-cli-role does not.
-  const queue = new S3Queue(new S3Client({ region: AWS_REGION }), RESULTS_BUCKET);
-
-  const reportId = await db.startReport();
-  console.log(`Ingester run ${reportId} started (bucket ${RESULTS_BUCKET})`);
-
+async function drainIncoming(
+  sql: postgres.Sql,
+  db: Db,
+  queue: S3Queue,
+  reportId: string,
+): Promise<{ status: ReportStatus; outcomes: RunOutcome[] }> {
   const outcomes: RunOutcome[] = [];
   let status: ReportStatus;
   try {
@@ -231,6 +203,48 @@ async function cmdSituational(argv: string[]): Promise<{ status: ReportStatus; o
   return { status, outcomes };
 }
 
+async function cmdSituational(argv: string[]): Promise<{ status: ReportStatus; outcomes: RunOutcome[] }> {
+  if (argv.length > 0) {
+    console.error(`Usage: ${runScriptPrefix("ingest")} situational`);
+    process.exit(2);
+  }
+
+  let password: string;
+  try {
+    ({ password } = await resolveIngestPassword());
+  } catch (err) {
+    if (err instanceof IngestCredentialsError) failFast(err.message);
+    throw err;
+  }
+
+  const sql = postgres({
+    host: RESULTS_DB_HOST,
+    port: RESULTS_DB_PORT,
+    database: RESULTS_DB_NAME,
+    username: INGEST_DB_USERNAME,
+    password,
+    max: 1,
+  });
+  const db = new Db(sql);
+  // Ambient credentials, not the shared fit-cli-role client. On the server the
+  // instance role holds the results-queue permissions, and fit-cli-role does not.
+  const queue = new S3Queue(new S3Client({ region: AWS_REGION }), RESULTS_BUCKET);
+
+  // The first statement is where a dead database or a wrong password shows up. Later
+  // failures are transient and already land in the run report as deferrals.
+  let reportId: string;
+  try {
+    reportId = await db.startReport();
+  } catch (err) {
+    const line = ingestDbFailureLine(err, { host: RESULTS_DB_HOST, port: RESULTS_DB_PORT });
+    if (line) failFast(line);
+    throw err;
+  }
+  console.log(`Ingester run ${reportId} started (bucket ${RESULTS_BUCKET})`);
+
+  return await drainIncoming(sql, db, queue, reportId);
+}
+
 function helpText(): string {
   const p = runScriptPrefix("ingest");
   return `Ingest S3 run results into the results database.
@@ -245,10 +259,11 @@ Subcommands:
                records what happened.
   performance  Not implemented yet.
 
-The database is always ${RESULTS_DB_NAME} on ${RESULTS_DB_HOST}:${RESULTS_DB_PORT}. Credentials come from
-the environment, or from a .env file in the current directory:
-  CB_DATABASE_PASSWORD  Password for the database user. Required.
-  CB_DATABASE_USERNAME  Database user. Defaults to "${DEFAULT_USERNAME}".`;
+The database is always ${RESULTS_DB_NAME} on ${RESULTS_DB_HOST}:${RESULTS_DB_PORT} and the user is always
+${INGEST_DB_USERNAME}. The password is read from the AWS Secrets Manager secret
+${INGEST_SECRET_ID}, using the host's own IAM role. Nothing is read from a file.
+
+For local development, set ${INGEST_PASSWORD_ENV_VAR} to skip Secrets Manager.`;
 }
 
 export function runIngestMain(): void {
