@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   capellaFunctionalCbdinoclusterInitArgs,
+  capellaKeyPoolInitArgs,
   defaultCbdinoclusterInitArgs,
   situationalCbdinoclusterInitArgs,
 } from "../default-cbdinocluster-init-config.js";
@@ -58,4 +59,29 @@ test("capella functional init args enable only gcp for a GCP private endpoint", 
   assert.doesNotMatch(args, /--disable-gcp/);
   assert.match(args, /--gcp-project-id /);
   assert.match(args, /--gcp-region /);
+});
+
+const POOL = { enabled: true, size: 10, expiryDays: 1 };
+
+test("key pool args carry the pool name, size and expiry when Capella is enabled", () => {
+  const initArgs = capellaFunctionalCbdinoclusterInitArgs("aws").split(" ");
+  assert.deepEqual(capellaKeyPoolInitArgs(initArgs, "fitcli-run-user", POOL), [
+    "--capella-create-pool",
+    "--capella-pool-name",
+    "fitcli-run-user",
+    "--capella-pool-size",
+    "10",
+    "--capella-pool-expiry",
+    "1",
+  ]);
+});
+
+test("key pool args are empty when the pool is disabled", () => {
+  const initArgs = capellaFunctionalCbdinoclusterInitArgs("aws").split(" ");
+  assert.deepEqual(capellaKeyPoolInitArgs(initArgs, "fitcli-run-user", { ...POOL, enabled: false }), []);
+});
+
+test("key pool args are empty when the init args disable Capella", () => {
+  const initArgs = defaultCbdinoclusterInitArgs().split(" ");
+  assert.deepEqual(capellaKeyPoolInitArgs(initArgs, "fitcli-run-user", POOL), []);
 });

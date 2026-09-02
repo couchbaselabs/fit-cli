@@ -17,6 +17,7 @@ const environments: EnvironmentsFile = {
     defaultCapellaEnvironment: "prod",
     defaultResultsEnvironment: "prod",
     cbdinoclusterVersion: "v0.0.120",
+    capellaKeyPool: { enabled: true, size: 10, expiryDays: 1 },
     aws: { region: "us-west-2", vpcId: "vpc-x", subnetId: "subnet-x" },
   },
   testSets: {

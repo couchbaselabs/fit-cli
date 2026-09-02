@@ -1,5 +1,5 @@
 import { AWS_REGION } from "../../cloud/util/aws/aws-target.js";
-import { loadEnvironments } from "../../fit/util/environments.js";
+import { loadEnvironments, type CapellaKeyPoolDefaults } from "../../fit/util/environments.js";
 import type { CapellaCloudProvider } from "./build-cluster-def.js";
 
 /** The docker network clean FIT environments allocate their clusters on. */
@@ -125,6 +125,39 @@ export function capellaFunctionalCbdinoclusterInitArgs(
     "--disable-dns",
     `--docker-network ${dockerNetwork}`,
   ].join(" ");
+}
+
+/**
+ * The extra `cbdinocluster init` flags that create this run's own Capella API key
+ * pool on the box. Capella rate limits each v4 API key, so cbdinocluster spreads
+ * its Management API calls over the pool.
+ *
+ * The flags are safe on an init that ends with Capella disabled. cbdinocluster
+ * only runs the pool section after Capella is enabled with credentials, so a
+ * docker-only init just ignores them. They are still skipped outright when the
+ * args carry `--disable-capella`, so nothing suggests a pool where none can exist.
+ *
+ * `poolName` must be unique to the run. It is what keeps concurrent CI runs apart.
+ * With a shared name one run would rotate keys another run still holds, and delete
+ * them at its own teardown.
+ */
+export function capellaKeyPoolInitArgs(
+  initArgs: readonly string[],
+  poolName: string,
+  pool: CapellaKeyPoolDefaults = loadEnvironments().defaults.capellaKeyPool,
+): string[] {
+  if (!pool.enabled || initArgs.includes("--disable-capella")) {
+    return [];
+  }
+  return [
+    "--capella-create-pool",
+    "--capella-pool-name",
+    poolName,
+    "--capella-pool-size",
+    String(pool.size),
+    "--capella-pool-expiry",
+    String(pool.expiryDays),
+  ];
 }
 
 /**

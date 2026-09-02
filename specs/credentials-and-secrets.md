@@ -22,6 +22,7 @@ We use the known sdkqe@couchbase.com accounts, which are setup in all Capella en
 These are stored in environments.json5 and AWS Secrets [SECRETS1].
 [CAPELLA1] The user can provide a different acount in their fit-cli.  This is used both for localhost testing and clean cloud instance testing, an exception to the [CONFIG1] rule.  
 [CAPELLA2] cbdinocluster's cloud deployer authenticates with a v4 organization API key and secret.  These live per environment in the same AWS secret (apiKey/apiSecret keys) and can be overridden personally, like the password [CAPELLA1].  The v2 username/password are kept alongside: custom or unreleased image deploys, server version changes, and columnar operations still need them.
+[CAPELLA3] A run creates its own ephemeral pool of v4 API keys.  When `defaults.capellaKeyPool.enabled` is set, `cbdinocluster init` on the box creates the pool, and cbdinocluster round robins over its keys.  Capella rate limits per API key, so the pool raises the request budget for the run.  The pool is named after the run's unique stamp, so two runs never share a pool and never rotate each other's keys.  The pool lives in the cbdinocluster config on the box only, never in an env var.  Teardown removes the pool best effort.  The keys also carry an expiry, which is the backstop for a run that dies before its teardown.
 
 ## AWS
 [SECRETS2] After encountering various problems when using user's localhost credentials in the clean EC2 testing, have decided to settle on EC2 testing exclusively using info from AWS secrets (Github PAT, Gerrit creds, etc).

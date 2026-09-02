@@ -83,6 +83,17 @@
     // v0.0.121) do not break the "ci" channel.
     cbdinoclusterVersion: "v0.0.120",
 
+    // Per-run Capella API key pool created on the remote box at cbdinocluster init
+    // and deleted at teardown. Capella allows 100 requests a minute per key, so a
+    // pool of N keys plus the primary gives (N+1)x100. The expiry is the backstop
+    // for runs that die before teardown.
+    // Needs a cbdinoclusterVersion with the pool flags (first release after SDKQE-3993).
+    capellaKeyPool: {
+      enabled: true,
+      size: 4,
+      expiryDays: 1,
+    },
+
     // AWS account and network settings. fit-cli targets exactly one region and one VPC;
     // none of these are configurable per-run. If terraform recreates the VPC the ids
     // below change and must be updated here.
