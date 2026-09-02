@@ -6,6 +6,8 @@
  *
  * situational: drains s3://<bucket>/incoming/ into the results database, moves each run
  *              directory to processed/ or failed/, and records one ingester_runs report row.
+ *              A directory is only taken once the uploader's marker object is there, so a
+ *              run in the middle of uploading is left for the next tick.
  *
  * Made to be run from a cron on the instance that hosts the results database. The
  * password comes from AWS Secrets Manager, never from a file (see ./credentials.ts).
@@ -13,7 +15,7 @@
 import { S3Client } from "@aws-sdk/client-s3";
 import postgres from "postgres";
 import { AWS_REGION } from "../../cloud/util/aws/aws-target.js";
-import { RESULTS_BUCKET } from "../situational/upload-results/upload-results.js";
+import { DONE_MARKER, RESULTS_BUCKET } from "../situational/upload-results/upload-results.js";
 import { isMain, runCli } from "../../util/non-fit/cli.js";
 import { runScriptPrefix } from "../../util/non-fit/fit-cli-log.js";
 import { resolvedGitSha } from "../version/version.js";
@@ -34,7 +36,14 @@ import {
   parseRunJson5,
   parseScoresJson5,
 } from "./parse.js";
-import { FAILED_PREFIX, type IncomingRun, PROCESSED_PREFIX, S3Queue } from "./s3-queue.js";
+import {
+  FAILED_PREFIX,
+  hasDoneMarker,
+  type IncomingRun,
+  PROCESSED_PREFIX,
+  runDataFilesByName,
+  S3Queue,
+} from "./s3-queue.js";
 
 // The ingest always runs on the instance that hosts the results database.
 const RESULTS_DB_HOST = "localhost";
@@ -51,7 +60,7 @@ interface RunOutcome {
   rows?: { buckets: number; metrics: number; events: number };
 }
 
-/** Only a real failure makes a run partial. Deferrals are normal, an upload can still be in flight. */
+/** Only a real failure makes a run partial. Deferrals are normal, an unmarked directory is still uploading. */
 export function overallStatus(outcomes: RunOutcome[]): "success" | "partial" | "nothing_to_do" {
   if (outcomes.length === 0) return "nothing_to_do";
   return outcomes.some((o) => o.outcome === "failed") ? "partial" : "success";
@@ -65,8 +74,10 @@ async function loadRun(queue: S3Queue, incoming: IncomingRun): Promise<RunData> 
     throw new Error(`Run path segment is not a UUID: ${incoming.runSegment}`);
   }
 
-  const fileByName = new Map(incoming.files.map((f) => [f.key.split("/").slice(3).join("/"), f]));
+  const fileByName = runDataFilesByName(incoming);
   const runJson5 = fileByName.get("run.json5");
+  // The uploader never uploads a directory without a valid run.json5, and it
+  // writes the marker last. A marked directory without one is broken for good.
   if (runJson5 === undefined) throw new Error("no run.json5");
 
   const run = parseRunJson5(await queue.getText(runJson5.key));
@@ -97,14 +108,12 @@ async function loadRun(queue: S3Queue, incoming: IncomingRun): Promise<RunData> 
 async function processRun(queue: S3Queue, db: Db, incoming: IncomingRun): Promise<RunOutcome> {
   const outcome: RunOutcome = { sit: incoming.sitSegment, run: incoming.runSegment, outcome: "deferred" };
 
-  // A missing run.json5 can mean the upload is still in flight, so defer. A
-  // directory that stays like this shows up in every report.
-  if (!incoming.files.some((f) => f.key.endsWith("/run.json5"))) {
-    outcome.error = "no run.json5 (yet)";
+  // The marker is the uploader's last write, so anything else is a partial
+  // upload. A directory that stays unmarked shows up in every report.
+  if (!hasDoneMarker(incoming)) {
+    outcome.error = `no ${DONE_MARKER} marker, the upload is still in flight`;
     return outcome;
   }
-
-  const keysAtIngest = incoming.files.map((f) => f.key).sort();
 
   let data: RunData;
   try {
@@ -119,15 +128,6 @@ async function processRun(queue: S3Queue, db: Db, incoming: IncomingRun): Promis
   outcome.kind = data.run.kind;
   outcome.rows = { buckets: data.buckets.length, metrics: data.metrics.length, events: data.events.length };
   await db.ingestRun(data);
-
-  // The uploader sends files one at a time, so this listing may have caught a
-  // directory mid-upload. If it grew since, leave it. The next tick re-ingests
-  // the whole directory and moves it then.
-  const keysNow = await queue.listRunKeys(incoming);
-  if (keysNow.join("\n") !== keysAtIngest.join("\n")) {
-    outcome.error = "upload still in flight (directory changed during ingest)";
-    return outcome;
-  }
 
   outcome.movedTo = await queue.moveRun(incoming, PROCESSED_PREFIX, new Date());
   outcome.outcome = "ingested";
@@ -256,7 +256,8 @@ Usage:
 Subcommands:
   situational  Drain s3://${RESULTS_BUCKET}/incoming/ into the results database. Each run
                directory then moves to processed/ or failed/, and one ingester_runs row
-               records what happened.
+               records what happened. Only a directory holding the uploader's ${DONE_MARKER}
+               marker is read, so a run still uploading waits for the next tick.
   performance  Not implemented yet.
 
 The database is always ${RESULTS_DB_NAME} on ${RESULTS_DB_HOST}:${RESULTS_DB_PORT} and the user is always

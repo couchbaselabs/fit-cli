@@ -2,7 +2,8 @@
  * upload-results: upload a FIT/SIT run's results directories to S3, where the
  * ingest job on the results database server picks them up. The test-driver
  * writes one directory per run (transactions-fit-performer I3f285a9e); each
- * complete one goes to s3://fit-cli/incoming/<situationalRunUuid>/<runUuid>/.
+ * complete one goes to s3://fit-cli/incoming/<situationalRunUuid>/<runUuid>/,
+ * followed by the DONE_MARKER object that makes the run visible to the ingest.
  *
  * Run on its own:
  *   bun src/fit/situational/upload-results/upload-results.ts <resultsDir>
@@ -10,9 +11,11 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { PutObjectCommand } from "@aws-sdk/client-s3";
 import JSON5 from "json5";
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { type Detail, type RunOutput } from "../../../util/non-fit/artifacts.js";
+import { s3Client } from "../../../cloud/util/aws/aws-clients.js";
 import { uploadDirectoryToS3 } from "../../../cloud/util/aws/upload-directory.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -22,6 +25,13 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * (see ARTIFACTS_BUCKET), under the incoming/ prefix the ingest job reads.
  */
 export const RESULTS_BUCKET = "fit-cli";
+
+/**
+ * Empty object written as the very last step of a run's upload. The ingest only
+ * takes a run directory that has it, so it never reads a half-uploaded run.
+ * Shared with the ingest side so the two ends cannot drift.
+ */
+export const DONE_MARKER = ".done";
 
 /** One run directory found under the results output directory. */
 export interface ResultsRunDir {
@@ -113,6 +123,13 @@ function readResultsDir(resultsDir: string): ResultsRunDir[] {
     });
 }
 
+/** Publishes the run to the ingest. Must be the last write of the directory. */
+async function writeDoneMarker(bucket: string, keyPrefix: string): Promise<void> {
+  await s3Client.send(
+    new PutObjectCommand({ Bucket: bucket, Key: `${keyPrefix}/${DONE_MARKER}`, Body: "", ContentLength: 0 }),
+  );
+}
+
 /**
  * Upload every complete run directory under `resultsDir` to the results bucket,
  * via {@link uploadDirectoryToS3} with the ambient AWS credentials.
@@ -135,6 +152,8 @@ export async function uploadSituationalResults(
     const destination = `s3://${bucket}/${upload.keyPrefix}`;
     console.log(`Uploading run ${upload.runUuid} to ${destination}/`);
     await uploadDirectoryToS3(join(resultsDir, upload.dirName), destination);
+    await writeDoneMarker(bucket, upload.keyPrefix);
+    console.log(`  ${DONE_MARKER} (the run is now visible to the ingest)`);
     details.push({ label: `Run ${upload.dirName}`, value: `${destination}/` });
   }
   return { artifacts: [], details };
