@@ -1,6 +1,27 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { remoteInstallScript, remoteBuildFromPrScript, PINNED_GO_VERSION } from "../install-cbdinocluster.js";
+import {
+  remoteInstallScript,
+  remoteBuildFromPrScript,
+  installCbdinoclusterRemote,
+  PINNED_GO_VERSION,
+} from "../install-cbdinocluster.js";
+
+/** A {@link CaptureExecutor}-shaped stub that just records the last `sh -lc <script>` it ran. */
+function fakeExecutor() {
+  let lastScript = "";
+  return {
+    description: "fake box",
+    lastScript: () => lastScript,
+    capture(command: string, args: string[]) {
+      if (command === "sh" && args[0] === "-lc") {
+        lastScript = args[1];
+      }
+      // Any non-empty stdout line satisfies parseInstalledPath / the version-log capture.
+      return Promise.resolve("/home/ubuntu/.local/bin/cbdinocluster");
+    },
+  };
+}
 
 test("remoteInstallScript: normalises amd64 arch", () => {
   const script = remoteInstallScript();
@@ -112,4 +133,22 @@ test("remoteBuildFromPrScript: fetches a branch by name when given instead of a 
 test("remoteBuildFromPrScript: branch build clones fork when repo is specified", () => {
   const script = remoteBuildFromPrScript({ branch: "my-fix", repo: "myfork/cbdinocluster" });
   assert.ok(script.includes("https://github.com/myfork/cbdinocluster"));
+});
+
+test("installCbdinoclusterRemote: downloads a release when given a version string", async () => {
+  const executor = fakeExecutor();
+  await installCbdinoclusterRemote(executor, undefined, "v0.0.120");
+  assert.ok(executor.lastScript().includes("releases/download/v0.0.120/cbdinocluster-"));
+});
+
+test("installCbdinoclusterRemote: builds from a PR when given a { pr } source", async () => {
+  const executor = fakeExecutor();
+  await installCbdinoclusterRemote(executor, undefined, { pr: 123 });
+  assert.ok(executor.lastScript().includes("refs/pull/123/head"));
+});
+
+test("installCbdinoclusterRemote: builds from a branch when given a { branch } source", async () => {
+  const executor = fakeExecutor();
+  await installCbdinoclusterRemote(executor, undefined, { branch: "my-fix" });
+  assert.ok(executor.lastScript().includes("fetch origin my-fix"));
 });

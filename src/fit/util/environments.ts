@@ -14,6 +14,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import JSON5 from "json5";
+import type { CbdinoclusterSourceGit } from "../shared/definition/types.js";
 
 export interface CapellaEnvironment {
   endpoint?: string | null;
@@ -79,8 +80,13 @@ export interface Defaults {
   defaultCapellaEnvironment: string;
   /** Default results environment key (a key under `results` in this file). */
   defaultResultsEnvironment: string;
-  /** Default cbdinocluster release (a GitHub release tag) installed onto remote boxes. */
-  cbdinoclusterVersion: string;
+  /**
+   * Default cbdinocluster build installed onto remote boxes: either a GitHub
+   * release tag (e.g. "v0.0.120"), or a {@link CbdinoclusterSourceGit} object
+   * to build from a PR or branch instead (e.g. `{ pr: 123 }` or
+   * `{ branch: "my-fix" }`).
+   */
+  cbdinoclusterVersion: string | CbdinoclusterSourceGit;
   /** AWS account and network settings. */
   aws: AwsDefaults;
 }

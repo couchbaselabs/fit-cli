@@ -63,6 +63,22 @@ export type CaptureExecutor = {
 };
 
 /**
+ * The configured `defaults.cbdinoclusterVersion`, asserted as a release tag
+ * string. Throws if the config default has been set to build from a PR/branch
+ * instead — callers of {@link remoteInstallScript} with no explicit version
+ * only make sense on the release-download path.
+ */
+function defaultReleaseVersion(): string {
+  const version = loadEnvironments().defaults.cbdinoclusterVersion;
+  if (typeof version !== "string") {
+    throw new Error(
+      "remoteInstallScript: defaults.cbdinoclusterVersion is a PR/branch source, not a release tag — use remoteBuildFromPrScript instead.",
+    );
+  }
+  return version;
+}
+
+/**
  * The shell script that runs on the remote host to install cbdinocluster. It
  * maps `uname` output to the release asset naming (`cbdinocluster-<os>-<arch>`),
  * downloads the pinned release (defaults.cbdinoclusterVersion in environments.json5)
@@ -72,7 +88,7 @@ export type CaptureExecutor = {
  */
 export function remoteInstallScript(
   binDir: string = DEFAULT_REMOTE_BIN_DIR,
-  version: string = loadEnvironments().defaults.cbdinoclusterVersion,
+  version: string = defaultReleaseVersion(),
 ): string {
   return [
     "set -e",
@@ -155,16 +171,23 @@ export function remoteBuildFromPrScript(
 }
 
 /**
- * Install the pinned cbdinocluster release (defaults.cbdinoclusterVersion in
- * environments.json5) on the host `execution` runs on, and resolve with the
- * absolute path to the installed binary. Throws (via the executor) if the
- * download or install fails, or if nothing usable came back.
+ * Install cbdinocluster on the host `execution` runs on per
+ * `defaults.cbdinoclusterVersion` (environments.json5), and resolve with the
+ * absolute path to the installed binary. When that default is a plain
+ * version string, downloads the matching GitHub release; when it's a
+ * {@link CbdinoclusterSourceGit} object, builds from that PR/branch on the
+ * box instead (see {@link buildCbdinoclusterFromPr}). Throws (via the
+ * executor) if the download/build fails, or if nothing usable came back.
  */
 export async function installCbdinoclusterRemote(
   execution: CaptureExecutor,
   binDir: string = DEFAULT_REMOTE_BIN_DIR,
+  version: string | CbdinoclusterSourceGit = loadEnvironments().defaults.cbdinoclusterVersion,
 ): Promise<string> {
-  const version = loadEnvironments().defaults.cbdinoclusterVersion;
+  if (typeof version !== "string") {
+    return buildCbdinoclusterFromPr(execution, version, binDir);
+  }
+
   console.log(
     `→ Installing cbdinocluster ${version} on ${execution.description} from ${CBDINOCLUSTER_URL}...`,
   );
