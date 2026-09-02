@@ -82,7 +82,8 @@
     // (pinned rather than tracking "latest" so that cbdino breakages, which have occurred with
     // v0.0.121, do not break the "ci" channel), or a { pr: <n> } / { branch: "<name>" } object
     // (optionally with a `repo: "owner/repo"` override) to build from a PR or branch instead.
-    cbdinoclusterVersion: "v0.0.120",
+    // Temp pinning https://couchbase.slack.com/archives/C05LNBVQRE3/p1788347581325079?thread_ts=1788259939.482939&cid=C05LNBVQRE3
+    cbdinoclusterVersion: { branch: "SDKQE-3993" },
     // cbdinoclusterVersion: { pr: 123 },
     // cbdinoclusterVersion: { branch: "my-fix" },
 
