@@ -33,6 +33,11 @@ Moving to using AWS SSM for running commands brings some odd constraints.  GetCo
 So for some LogTypes we use what appears to be the standard workaround: direct the logs to a transient AWS CloudWatch, and poll that.
 Nb AWS on the instance will only send logs to CloudWatch after 30s or when its buffer exceeds 200kb.  
 Nb we intentionally avoid using AWS Session Manager, which would work better for this, as it brings in an external dependency.  SSM works from the AWS SDK.
+
+Because of that 30s/200kb flush, CloudWatch is only consulted when it can actually add something: when GetCommandInvocation's inline copy is under the caps above it already *is* the whole output, so we use it directly.  Waiting on CloudWatch regardless used to add ~20s to every command that printed anything.
+
+Nb the instance's CloudWatch publishing is not dependable for long-running commands — it has been seen to stop publishing an hour in and silently lose every line after that, which looks exactly like a hang.  So a streamed command that goes quiet for 5 minutes says so rather than sitting silent, and where the caller knows which file the command is writing (LogType3) we read that file directly, with a separate short command, to get real proof-of-life.
+
 So under AWS SSM:
 LogType1: Uses the CloudWatch approach above.
 LogType2: CloudWatch is used.  Read at end of process.

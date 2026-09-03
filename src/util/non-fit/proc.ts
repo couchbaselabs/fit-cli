@@ -142,6 +142,17 @@ export interface RunOptions {
    * that deadline, so it still gets several tries (see `waitForIapSsh`).
    */
   timeoutMs?: number;
+  /**
+   * A file on the execution target that this command is writing its real output to, so a
+   * remote target can read it directly if its own output stream goes quiet. Only meaningful
+   * remotely (see ssm-target's stall watchdog) and only for the models that redirect output
+   * to a file — LogType3's `streamToArtifactFile` sets it to the artifact path. Local runs
+   * ignore it: there is no transport in between to go wrong.
+   *
+   * Distinct from `timeoutMs`: that bounds a command we want to give up on, this keeps us
+   * informed about one we want to keep waiting for.
+   */
+  livenessPath?: string;
 }
 
 /** Knobs for the CaptureValue models (capture / captureValueSync). */
