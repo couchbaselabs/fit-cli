@@ -15,7 +15,9 @@ working/
 !.claude/skills/
 .local/
 CLAUDE.local.md
-tests
+# Anchored: unanchored, this matched every src/**/tests/ directory too, so a newly
+# added unit test was silently ignored rather than committed.
+/tests
 
 terraform/aws/terraform.tfstate.backup
 terraform/gcp/terraform.tfstate.backup

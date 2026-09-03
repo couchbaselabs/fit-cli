@@ -10,12 +10,19 @@ import {
   reconcileArtifactsWithDir,
   worstFailureShouldExitNonZero,
   formatFailureSummaryLine,
+  producedOnlyBoilerplate,
+  SESSION_LOG_NAME,
   type RunOutput,
 } from "./artifacts.js";
 import { installFitCliConsoleFormatting, printInvocationOnce, fitCliError, fitCliInfo, runScriptPrefix } from "./fit-cli-log.js";
 import { startSessionLog, startDebugLog } from "./proc.js";
 import { ensurePromptSession } from "./replay.js";
-import { emitGhaArtifactNotice, appendArtifactFetchToGhaSummary } from "../../fit/util/gha.js";
+import {
+  emitGhaArtifactNotice,
+  appendArtifactFetchToGhaSummary,
+  appendFailureSnippetToGhaSummary,
+  type FailureHeading,
+} from "../../fit/util/gha.js";
 import { maybeUploadRunArtifacts } from "../../fit/util/aws/upload-run-artifacts.js";
 
 /**
@@ -33,11 +40,17 @@ import { maybeUploadRunArtifacts } from "../../fit/util/aws/upload-run-artifacts
  * one from teardown after a completed run) must not swallow the artifact table
  * the user needs to debug.
  */
-async function renderRunSummary(runDir: string, runOutput: RunOutput): Promise<void> {
-  const sections = [
-    formatArtifactsSection(runDir, reconcileArtifactsWithDir(runDir, runOutput.artifacts)),
-    formatDetailsSection(runOutput.details),
-  ].filter(Boolean);
+async function renderRunSummary(
+  runDir: string,
+  runOutput: RunOutput,
+  context: { sessionTail: () => string; uncaughtError?: unknown },
+): Promise<void> {
+  // Grabbed first: from the next line on, the terminal output is the artifact table and
+  // the zip/upload chatter, not whatever went wrong.
+  const sessionTail = context.sessionTail();
+
+  const artifacts = reconcileArtifactsWithDir(runDir, runOutput.artifacts);
+  const sections = [formatArtifactsSection(runDir, artifacts), formatDetailsSection(runOutput.details)].filter(Boolean);
   const summaryOutput = sections.join("\n\n") || undefined;
   if (summaryOutput) {
     fitCliInfo(`\n${summaryOutput}`);
@@ -47,6 +60,16 @@ async function renderRunSummary(runDir: string, runOutput: RunOutput): Promise<v
       fitCliInfo(`\n${formatCallToActionBanner(detail.label, detail.value)}`);
     }
   }
+
+  const heading = failureHeading(runOutput, context.uncaughtError);
+
+  // A bookkeeping command that succeeded has nothing worth uploading, and a second
+  // "Run artifacts" block in the job summary is just noise. It still uploads when it
+  // fails, because then the logs are the only record of why.
+  if (!heading && producedOnlyBoilerplate(artifacts)) {
+    return;
+  }
+
   const s3Uri = await maybeUploadRunArtifacts(runDir);
   if (!s3Uri) {
     fitCliInfo(`\nTo upload run artifacts to S3 (optional):\n  ${runScriptPrefix("archive")} s3-upload --zip ${runDir} s3://fit-cli/runs/`);
@@ -54,6 +77,32 @@ async function renderRunSummary(runDir: string, runOutput: RunOutput): Promise<v
     appendArtifactFetchToGhaSummary(s3Uri);
   }
   emitGhaArtifactNotice(s3Uri ?? undefined);
+
+  // Last of the writers that prepend, so the failure lands above the artifacts block and
+  // is the first thing on the summary page.
+  if (heading) {
+    appendFailureSnippetToGhaSummary(heading, sessionTail);
+  }
+}
+
+/**
+ * How to title the failure block, or undefined when the run didn't fail. Prefers the
+ * recorded failure — it carries the classification and the standardised position label —
+ * and falls back to a thrown error, which is what a failure before any run produces.
+ */
+function failureHeading(runOutput: RunOutput, uncaughtError: unknown): FailureHeading | undefined {
+  const { worstFailure } = runOutput;
+  if (worstFailure) {
+    return {
+      classification: worstFailure.classification,
+      message: worstFailure.message,
+      label: worstFailure.context.label,
+    };
+  }
+  if (uncaughtError !== undefined) {
+    return { message: uncaughtError instanceof Error ? uncaughtError.message : renderErrorValue(uncaughtError) };
+  }
+  return undefined;
 }
 
 /** True when the module at `metaUrl` is the script node/tsx was invoked with. */
@@ -124,7 +173,7 @@ export function runCli(main: () => Promise<void | Partial<RunOutput>>): void {
   installFitCliConsoleFormatting();
   printInvocationOnce();
   const promptSession = ensurePromptSession(process.argv.slice(2));
-  const sessionLog = startSessionLog(join(promptSession.runDir, "session.info.log"));
+  const sessionLog = startSessionLog(join(promptSession.runDir, SESSION_LOG_NAME));
   const debugLog = startDebugLog(join(promptSession.runDir, "session.debug.log"));
   const sessionLogArtifact = artifactFromPath(
     sessionLog.path,
@@ -142,10 +191,13 @@ export function runCli(main: () => Promise<void | Partial<RunOutput>>): void {
   // must run at most once even if the success branch throws after already rendering
   // (e.g. in worstFailureShouldExitNonZero) and control falls through to .catch.
   let summaryRendered = false;
-  const renderRunSummaryOnce = async () => {
+  const renderRunSummaryOnce = async (uncaughtError?: unknown) => {
     if (summaryRendered) return;
     summaryRendered = true;
-    await renderRunSummary(promptSession.runDir, runOutput ?? { artifacts: logArtifacts, details: [] });
+    await renderRunSummary(promptSession.runDir, runOutput ?? { artifacts: logArtifacts, details: [] }, {
+      sessionTail: sessionLog.tail,
+      uncaughtError,
+    });
   };
   Promise.resolve()
     .then(() => main())
@@ -171,7 +223,7 @@ export function runCli(main: () => Promise<void | Partial<RunOutput>>): void {
       // artifact table (and S3 upload) to debug — so render the summary here too,
       // falling back to whatever artifacts we have (at least the session/debug
       // logs; reconcileArtifactsWithDir discovers the rest from the run dir).
-      await renderRunSummaryOnce();
+      await renderRunSummaryOnce(err);
       console.error(formatUncaughtError(err));
       // Flush tee'd logs before exiting so the final error line is persisted.
       await Promise.all([sessionLog.flush(), debugLog.flush()]);
