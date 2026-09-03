@@ -688,11 +688,12 @@ async function selectedClusterFor(
 
 // The bound exists because a foreign cluster stuck in destroying held a deletion wait
 // for 100 minutes. The next sweep takes what a timed out removal leaves behind.
+export const CBDINOCLUSTER_RM_TIMEOUT = "30m";
 export const CBDINOCLUSTER_REMOVE_ALL_TIMEOUT = "45m";
 
-/** Build the `cbdinocluster rm <id>` args. */
+/** Build the `cbdinocluster rm --timeout <duration> <id>` args. */
 export function removeClusterArgs(id: string): string[] {
-  return ["remove", id];
+  return ["rm", "--timeout", CBDINOCLUSTER_RM_TIMEOUT, id];
 }
 
 /** Remove a cbdinocluster cluster, streaming progress. Resolves whether it worked. */
