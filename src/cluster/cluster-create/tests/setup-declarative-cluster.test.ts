@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ClusterCommandExecutor } from "../allocate-cluster.js";
-import { CBDINOCLUSTER_REMOVE_ALL_TIMEOUT, cbdinoclusterNeedsInit, dockerNetworkFromInitArgs, remoteCbdinoclusterCloudEnabled, removeRunCapellaClustersArgs, setupDeclarativeCluster } from "../setup-declarative-cluster.js";
+import { CBDINOCLUSTER_REMOVE_ALL_TIMEOUT, CBDINOCLUSTER_RM_TIMEOUT, cbdinoclusterNeedsInit, dockerNetworkFromInitArgs, remoteCbdinoclusterCloudEnabled, removeClusterArgs, removeRunCapellaClustersArgs, setupDeclarativeCluster } from "../setup-declarative-cluster.js";
 
 const CLUSTER_PS_OUTPUT = `2026-06-03T13:02:18.157+0100    INFO    logger initialized
 Clusters:
@@ -255,6 +255,11 @@ test("setupDeclarativeCluster initializes cbdinocluster before retrying ps", asy
   ]);
   assert.equal(result.allocated, false);
   assert.equal(result.cluster?.defaultHostname, "172.18.0.2");
+});
+
+test("removeClusterArgs bounds the removal so a foreign stuck cluster cannot hold the wait", () => {
+  assert.deepEqual(removeClusterArgs("abc123"), ["rm", "--timeout", CBDINOCLUSTER_RM_TIMEOUT, "abc123"]);
+  assert.ok(removeClusterArgs("abc123").includes("--timeout"));
 });
 
 test("removeRunCapellaClustersArgs targets the cloud deployer with the run's exact stamp", () => {
