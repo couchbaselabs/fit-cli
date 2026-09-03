@@ -99,3 +99,79 @@ test("run tees child output into the session log by default", async () => {
   assert.match(sessionOutput, /child stdout/);
   assert.match(sessionOutput, /child stderr/);
 });
+
+/**
+ * Resolves once `pid` no longer exists. Signal 0 only checks for the process's
+ * existence, so this is a poll for "has the kill landed yet" rather than a fixed
+ * sleep — it keeps these tests instant while staying robust on a loaded machine.
+ */
+async function waitForPidGone(pid: number, timeoutMs = 5_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    if (Date.now() >= deadline) {
+      return false;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+test("capture rejects when a command outlives its timeoutMs", async () => {
+  const startedAt = Date.now();
+  await assert.rejects(
+    // Without a timeout this sits here forever, which is the failure being fixed.
+    capture(process.execPath, ["-e", "setInterval(() => {}, 1000)"], undefined, { quiet: true, timeoutMs: 300 }),
+    /timed out after/,
+  );
+  // Rejecting at all isn't enough: it has to reject *on* the timeout rather than
+  // wait out the (endless) command.
+  assert.ok(Date.now() - startedAt < 4_000, `took ${Date.now() - startedAt}ms`);
+});
+
+test("capture's timeout error quotes the real command so it can be rerun by hand", async () => {
+  await assert.rejects(
+    capture(process.execPath, ["-e", "setInterval(() => {}, 1000)"], undefined, {
+      quiet: true,
+      timeoutMs: 200,
+      // A `display` override must not hide the real command in a timeout error.
+      display: "something tidier",
+    }),
+    (err: Error) => err.message.includes("setInterval") && err.message.includes("Reproduce with"),
+  );
+});
+
+test("capture's timeout kills the whole process group, not just the direct child", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "fit-cli-proc-timeout-"));
+  const pidFile = join(dir, "pids.json");
+  // Mirrors the real target: `gcloud compute ssh --tunnel-through-iap` is a
+  // process tree (a Python tunnel helper plus ssh), so killing only the direct
+  // child would leave descendants alive holding the pipes open.
+  const script = [
+    'const { spawn } = require("node:child_process");',
+    'const { writeFileSync } = require("node:fs");',
+    'const grandchild = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });',
+    `writeFileSync(${JSON.stringify(pidFile)}, JSON.stringify({ child: process.pid, grandchild: grandchild.pid }));`,
+    "setInterval(() => {}, 1000);",
+  ].join("\n");
+
+  await assert.rejects(
+    capture(process.execPath, ["-e", script], undefined, { quiet: true, timeoutMs: 500 }),
+    /timed out after/,
+  );
+
+  const pids = JSON.parse(readFileSync(pidFile, "utf8")) as { child: number; grandchild: number };
+  assert.ok(await waitForPidGone(pids.child), `child ${pids.child} survived the timeout`);
+  assert.ok(await waitForPidGone(pids.grandchild), `grandchild ${pids.grandchild} survived the timeout`);
+});
+
+test("capture with a timeoutMs still returns normally when the command finishes in time", async () => {
+  const out = await capture(process.execPath, ["-e", "process.stdout.write('quick')"], undefined, {
+    quiet: true,
+    timeoutMs: 30_000,
+  });
+  assert.equal(out, "quick");
+});

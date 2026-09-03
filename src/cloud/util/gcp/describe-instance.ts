@@ -11,6 +11,15 @@ import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { instancesClient } from "./gcp-clients.js";
 import { preflightGcpProject } from "./identity.js";
 import { parseInstance, type GcpInstanceInfo } from "./parse-instance.js";
+import { TIMED_OUT, withCallTimeout } from "./with-call-timeout.js";
+
+/**
+ * Per-call bound, matching create-instance.ts's GET_CALL_TIMEOUT_MS. The compute
+ * client has no deadline of its own, and unlike the polling loops there this is
+ * a single un-retried call with nothing above it to notice it never returned —
+ * so a stalled get() here hangs the whole run outright.
+ */
+const GET_CALL_TIMEOUT_MS = 120_000;
 
 /**
  * GCP's "not found" error carries a code, not a distinct exception type — but
@@ -27,7 +36,14 @@ function isNotFound(err: unknown): boolean {
 /** Describe a single instance, or null if it isn't found. */
 export async function describeGcpInstance(project: string, zone: string, name: string): Promise<GcpInstanceInfo | null> {
   try {
-    const [raw] = await instancesClient.get({ project, zone, instance: name });
+    const result = await withCallTimeout(instancesClient.get({ project, zone, instance: name }), GET_CALL_TIMEOUT_MS);
+    // Deliberately throws rather than returning null: null means "no such
+    // instance", and a caller acting on that after a mere timeout would decide
+    // a perfectly healthy box had vanished.
+    if (result === TIMED_OUT) {
+      throw new Error(`Timed out describing GCP instance ${name} in ${project}/${zone}.`);
+    }
+    const [raw] = result;
     return parseInstance(raw);
   } catch (err) {
     if (isNotFound(err)) return null;

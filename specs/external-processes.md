@@ -12,6 +12,14 @@ The models:
 - `CaptureValue` (`capture`) / `CaptureValueSync` (`captureValueSync`) — run a process to get a value we parse (a SHA, a username, a file list), not to produce log noise.  No LogType.
 - `ReexecInherit` (`reexecInherit`) — hand the terminal and signals to a replacement process (the replay bootstrap).  No LogType.
 
+## Timeouts
+By default a subprocess may run forever — appropriate for the long test-driver runs, dangerous for anything that can stall silently.
+`RunOptions.timeoutMs` bounds one, and is honoured by `run` and `capture` (the models the GCP IAP transport uses).
+On expiry the child's whole **process group** is signalled (SIGTERM, then SIGKILL after a grace period), not just the direct child: `gcloud compute ssh --tunnel-through-iap` is a process tree (a Python tunnel helper plus `ssh`), and killing only the direct child leaves descendants holding the stdio pipes, which turns a hang in the call into a hang at process exit.
+Rejection is deliberately deferred until the child has actually exited, so racing a still-live process (e.g. via `Promise.race`) never happens.
+The error quotes the literal command, even when `display` was set, so it can be rerun by hand.
+A caller with its own polling deadline should set this *per attempt*, well below that deadline — a deadline checked only after an `await` that never returns is not a deadline at all (see `waitForIapSsh`).
+
 ## Logging
 For the logged-step models above, stdout/stderr from the process can be either:
 LogType1: Streamed to stdout/stderr of this process.

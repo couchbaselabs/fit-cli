@@ -110,10 +110,13 @@ export function buildIapScpArgs(
  */
 let gcloudPreflightDone = false;
 
+/** `gcloud --version` is local and offline; if it hasn't answered by now it never will. */
+const GCLOUD_VERSION_TIMEOUT_MS = 60_000;
+
 export async function preflightGcloudCli(): Promise<void> {
   if (gcloudPreflightDone) return;
   try {
-    await capture("gcloud", ["--version"], undefined, { quiet: true });
+    await capture("gcloud", ["--version"], undefined, { quiet: true, timeoutMs: GCLOUD_VERSION_TIMEOUT_MS });
     gcloudPreflightDone = true;
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
@@ -221,6 +224,19 @@ export async function iapScpDown(host: IapHost, remotePath: string, localPath: s
 }
 
 /**
+ * How long a single reachability probe gets before it is killed and counted as a
+ * failed attempt. Needed because a stalled `gcloud compute ssh` produces no
+ * output and never exits — the tunnel can come up while sshd never answers — so
+ * without it the `deadline` below is simply never reached: the loop is stuck
+ * inside its first `await`, not going round. That is exactly how a GCP FIT run
+ * silently consumed its full 6h GHA budget having logged nothing.
+ *
+ * Kept well under the overall deadline so a slow-booting box still gets several
+ * probes rather than one long one.
+ */
+const IAP_PROBE_TIMEOUT_MS = 45_000;
+
+/**
  * Poll until `host` accepts an IAP-tunneled SSH connection (by running `true`
  * on it), or until `timeoutMs` elapses. Freshly launched instances take a
  * little while before OS Login propagates the caller's ephemeral key and sshd
@@ -235,7 +251,10 @@ export async function waitForIapSsh(
   for (;;) {
     try {
       // Polling for the tunnel + sshd to come up — don't echo every probe.
-      await iapSshCapture(host, "true", [], { quiet: true });
+      // A probe timeout isn't a transient IAP error, so withIapRetry rethrows it
+      // rather than burning its 3 attempts here; the deadline check below then
+      // decides whether to probe again.
+      await iapSshCapture(host, "true", [], { quiet: true, timeoutMs: IAP_PROBE_TIMEOUT_MS });
       return true;
     } catch {
       if (Date.now() >= deadline) {

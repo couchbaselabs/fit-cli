@@ -6,6 +6,15 @@ import {
   installCbdinoclusterRemote,
   PINNED_GO_VERSION,
 } from "../install-cbdinocluster.js";
+import { loadEnvironments } from "../../../fit/util/environments.js";
+
+/**
+ * An explicit release tag for the tests that are about the *shape* of the install
+ * script. They used to rely on `defaults.cbdinoclusterVersion`, which broke all of
+ * them the moment that was pinned to a branch build (4954de6) — the script shape
+ * has nothing to do with which version is configured, so it is passed in here.
+ */
+const A_RELEASE_TAG = "v0.0.120";
 
 /** A {@link CaptureExecutor}-shaped stub that just records the last `sh -lc <script>` it ran. */
 function fakeExecutor() {
@@ -24,12 +33,12 @@ function fakeExecutor() {
 }
 
 test("remoteInstallScript: normalises amd64 arch", () => {
-  const script = remoteInstallScript();
+  const script = remoteInstallScript(undefined, A_RELEASE_TAG);
   assert.ok(script.includes("x86_64|amd64) arch=amd64"));
 });
 
 test("remoteInstallScript: normalises arm64 arch", () => {
-  const script = remoteInstallScript();
+  const script = remoteInstallScript(undefined, A_RELEASE_TAG);
   assert.ok(script.includes("aarch64|arm64) arch=arm64"));
 });
 
@@ -39,13 +48,20 @@ test("remoteInstallScript: downloads the pinned release", () => {
   assert.ok(script.includes("releases/download/v0.0.120/cbdinocluster-"));
 });
 
-test("remoteInstallScript: defaults to the pinned cbdinoclusterVersion from environments.json5", () => {
-  const script = remoteInstallScript();
-  assert.ok(script.includes("releases/download/v0.0.120/cbdinocluster-"));
+test("remoteInstallScript: with no version given, follows defaults.cbdinoclusterVersion", () => {
+  // Deliberately asserts against whatever is configured rather than a hardcoded
+  // tag: this default legitimately moves between a release tag and a
+  // { branch } / { pr } build, and only the release form is installable here.
+  const configured = loadEnvironments().defaults.cbdinoclusterVersion;
+  if (typeof configured !== "string") {
+    assert.throws(() => remoteInstallScript(), /not a release tag/);
+    return;
+  }
+  assert.ok(remoteInstallScript().includes(`releases/download/${configured}/cbdinocluster-`));
 });
 
 test("remoteInstallScript: last stdout line prints the installed path", () => {
-  const script = remoteInstallScript();
+  const script = remoteInstallScript(undefined, A_RELEASE_TAG);
   const lines = script.split("\n").filter(Boolean);
   const last = lines[lines.length - 1];
   assert.ok(last.includes("printf '%s\\n'"), `unexpected last line: ${last}`);
@@ -53,12 +69,12 @@ test("remoteInstallScript: last stdout line prints the installed path", () => {
 });
 
 test("remoteInstallScript: uses custom binDir", () => {
-  const script = remoteInstallScript("/opt/mybin");
+  const script = remoteInstallScript("/opt/mybin", A_RELEASE_TAG);
   assert.ok(script.includes('bindir="/opt/mybin"'));
 });
 
 test("remoteInstallScript: default binDir is $HOME/.local/bin", () => {
-  const script = remoteInstallScript();
+  const script = remoteInstallScript(undefined, A_RELEASE_TAG);
   assert.ok(script.includes('bindir="$HOME/.local/bin"'));
 });
 

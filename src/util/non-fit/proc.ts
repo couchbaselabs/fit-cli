@@ -129,6 +129,19 @@ export interface RunOptions {
    * `data` events) just lets that one line through rather than breaking output.
    */
   stripLines?: readonly RegExp[];
+  /**
+   * Kill the command (and reject) if it hasn't finished within this many
+   * milliseconds. For transports that can stall indefinitely with no output and
+   * no error — `gcloud compute ssh --tunnel-through-iap` will sit forever if the
+   * tunnel comes up but sshd never answers, which is how a GCP FIT run once
+   * burned its whole 6h GHA budget in silence.
+   *
+   * Only honoured by `run()` and `capture()` (the models the IAP transport uses);
+   * see `armTimeout` for how the kill is done. A polling caller that already has
+   * its own overall deadline should set this *per attempt*, comfortably below
+   * that deadline, so it still gets several tries (see `waitForIapSsh`).
+   */
+  timeoutMs?: number;
 }
 
 /** Knobs for the CaptureValue models (capture / captureValueSync). */
@@ -150,6 +163,96 @@ function announce(command: string, args: readonly string[], opts?: RunOptions): 
     return;
   }
   echoCommand(opts?.display ?? formatCommandLine(command, args));
+}
+
+/** How long a timed-out child gets to exit on SIGTERM before it is SIGKILLed. */
+const KILL_GRACE_MS = 5_000;
+
+/**
+ * `detached: true` makes the child a process-group leader, so a timeout can
+ * signal its whole descendant tree rather than just the direct child (see
+ * `signalChildGroup`). Applied only when a timeout is set, because detaching
+ * also stops the terminal's Ctrl-C from reaching the child — fine for the short
+ * bounded probes that use `timeoutMs`, not something to impose on the
+ * long-running streamed commands that don't.
+ */
+function detachedForTimeout(opts?: RunOptions): { detached?: boolean } {
+  return opts?.timeoutMs !== undefined ? { detached: true } : {};
+}
+
+/**
+ * Signal a timed-out child's whole process group. `gcloud compute ssh
+ * --tunnel-through-iap` is not one process: it spawns a Python tunnel helper and
+ * an `ssh` of its own. Killing only the direct child would leave those holding
+ * the stdio pipes open, which turns a hang in the call into a hang at process
+ * exit — indistinguishable in a CI log, so it would read as another failed fix.
+ * Best-effort: falls back to the direct child, and does nothing if the group has
+ * already gone.
+ */
+function signalChildGroup(child: ReturnType<typeof spawn>, signal: NodeJS.Signals): void {
+  if (child.pid === undefined) {
+    return;
+  }
+  try {
+    process.kill(-child.pid, signal);
+  } catch {
+    try {
+      child.kill(signal);
+    } catch {
+      // Already exited between the timer firing and this call.
+    }
+  }
+}
+
+/** Handle for a child's optional runtime bound; see `armTimeout`. */
+interface TimeoutGuard {
+  /** True once the timeout fired, so `close` rejects as a timeout, not as an exit code. */
+  timedOut: boolean;
+  /** Stop the timers. Must be called on both the `close` and `error` paths. */
+  disarm: () => void;
+}
+
+/**
+ * Bound a child's runtime when `opts.timeoutMs` is set, escalating SIGTERM to
+ * SIGKILL after a grace period.
+ *
+ * Deliberately does *not* reject: it only kills and records that it did, leaving
+ * the caller's `close` handler to reject once the child has actually exited.
+ * Rejecting from the timer instead (e.g. via `Promise.race`) would abandon a
+ * live child still holding the pipes, so the command would appear to time out
+ * and the process would then hang on exit anyway.
+ */
+function armTimeout(child: ReturnType<typeof spawn>, opts?: RunOptions): TimeoutGuard {
+  const guard: TimeoutGuard = { timedOut: false, disarm: () => {} };
+  const timeoutMs = opts?.timeoutMs;
+  if (timeoutMs === undefined) {
+    return guard;
+  }
+  let killTimer: ReturnType<typeof setTimeout> | undefined;
+  const timer = setTimeout(() => {
+    guard.timedOut = true;
+    signalChildGroup(child, "SIGTERM");
+    killTimer = setTimeout(() => signalChildGroup(child, "SIGKILL"), KILL_GRACE_MS);
+  }, timeoutMs);
+  guard.disarm = () => {
+    clearTimeout(timer);
+    if (killTimer !== undefined) {
+      clearTimeout(killTimer);
+    }
+  };
+  return guard;
+}
+
+/**
+ * The error a timed-out command rejects with. Always quotes the literal
+ * command+args, even when `display` was set to something tidier, because the
+ * first thing anyone debugging one of these needs is a line they can paste into
+ * a shell to reproduce it by hand.
+ */
+export function formatTimeoutError(command: string, args: readonly string[], timeoutMs: number): Error {
+  return new Error(
+    `${command} timed out after ${Math.round(timeoutMs / 1000)}s and was killed. Reproduce with:\n  ${formatCommandLine(command, args)}`,
+  );
 }
 
 function teeChildOutput(stream: NodeJS.ReadableStream | null, target: NodeJS.WriteStream, stripLines?: readonly RegExp[]): void {
@@ -178,20 +281,25 @@ export function run(command: string, args: string[], cwd: string = process.cwd()
   const greyIndent = !opts?.noGreyOutput && !opts?.greyTextOutput;
   const greyText = opts?.greyTextOutput ?? false;
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"], ...detachedForTimeout(opts) });
     if (greyIndent) startGreyIndentedOutput();
     if (greyText) startGreyTextOutput();
     teeChildOutput(child.stdout, process.stdout, opts?.stripLines);
     teeChildOutput(child.stderr, process.stderr, opts?.stripLines);
+    const guard = armTimeout(child, opts);
     child.on("error", (err) => {
+      guard.disarm();
       if (greyIndent) stopGreyIndentedOutput();
       if (greyText) stopGreyTextOutput();
       reject(err);
     });
     child.on("close", (code) => {
+      guard.disarm();
       if (greyIndent) stopGreyIndentedOutput();
       if (greyText) stopGreyTextOutput();
-      if (code === 0) {
+      if (guard.timedOut) {
+        reject(formatTimeoutError(command, args, opts?.timeoutMs ?? 0));
+      } else if (code === 0) {
         resolve();
       } else {
         reject(new Error(`${command} exited with code ${code}`));
@@ -216,16 +324,23 @@ export function capture(command: string, args: string[], cwd: string = process.c
   announce(command, args, opts);
   const okCodes = opts?.allowExitCodes ?? [0];
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd });
+    const child = spawn(command, args, { cwd, ...detachedForTimeout(opts) });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk) => (stdout += chunk));
     child.stderr.on("data", (chunk) => (stderr += chunk));
-    child.on("error", reject);
+    const guard = armTimeout(child, opts);
+    child.on("error", (err) => {
+      guard.disarm();
+      reject(err);
+    });
     child.on("close", (code) => {
+      guard.disarm();
       appendToDebugLog(stdout);
       appendToDebugLog(stderr);
-      if (code !== null && okCodes.includes(code)) {
+      if (guard.timedOut) {
+        reject(formatTimeoutError(command, args, opts?.timeoutMs ?? 0));
+      } else if (code !== null && okCodes.includes(code)) {
         resolve(stdout);
       } else {
         const detail = stderr.trim();

@@ -166,15 +166,25 @@ export async function provisionFitGcpInstance(options: GcpProvisionOptions = {})
     console.log(`  launched ${name}, waiting for it to start...`);
     await waitForGcpInstanceRunning(config.project, config.zone, name);
 
+    // Every progress line from here on is newline-terminated, and each of these
+    // three waits announces itself separately, so a stalled run can be pinned to
+    // one of them from the log alone. A partial `process.stdout.write` is invisible
+    // in GitHub Actions until a newline arrives, which is why an earlier hang here
+    // looked like it was in instance startup: the real stall was the IAP wait
+    // below, and two fix attempts went to the wrong code path as a result.
+    console.log("  running, looking up its address...");
     const info = await describeGcpInstance(config.project, config.zone, name);
     const address = info?.internalIp ?? name;
 
     const host: IapHost = { instance: name, zone: config.zone, project: config.project, user: FIT_INSTANCE_USER };
-    process.stdout.write("  waiting for IAP-tunneled SSH to become reachable...");
+    console.log(`  address ${address}, waiting for IAP-tunneled SSH to become reachable...`);
     if (!(await waitForIapSsh(host))) {
-      throw new Error(`Timed out waiting for IAP-tunneled SSH on ${name}.`);
+      throw new Error(
+        `Timed out waiting for IAP-tunneled SSH on ${name}. The instance reached RUNNING, so this is the ` +
+          `tunnel or sshd, not the box failing to launch. Check with:\n  ${gcpDebugAccessCommand(name, config.zone, config.project)}`,
+      );
     }
-    console.log(" ready");
+    console.log("  IAP-tunneled SSH is ready");
 
     const target = new IapTarget(host);
     // See aws/fit-instance.ts's forceNtpSync call for why: a fresh box's clock can
