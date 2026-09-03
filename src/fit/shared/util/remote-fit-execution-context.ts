@@ -247,6 +247,10 @@ export async function createRemoteFitExecutionContext(
       return target.run("bash", ["-lc", heartbeatShellCommand(innerCommand, targetPath)], cwd, {
         display: commandOn(formatCommandLine(command, args), target.description),
         greyTextOutput: true,
+        // The heartbeat's proof-of-life only reaches us if the target's output stream keeps
+        // working for the whole (potentially many-hour) command. This is the same file it
+        // tails, so the target can read it directly if that stream goes quiet.
+        livenessPath: targetPath,
       });
     },
     streamToArtifactFileInBackground: async (command, args, targetPath, cwd): Promise<BackgroundStream> => {

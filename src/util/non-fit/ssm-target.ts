@@ -295,6 +295,28 @@ async function settledLogLines(commandId: string, instanceId: string, afterMs: n
  */
 const INLINE_TRUNCATION_MARKER = /output truncated/i;
 
+// The caps GetCommandInvocation applies to its inline copy of each stream.
+const INLINE_STDOUT_CAP = 24_000;
+const INLINE_STDERR_CAP = 8_000;
+
+/**
+ * True when GetCommandInvocation's inline copy is already the whole output, so there is
+ * nothing CloudWatch could add. Reading back from CloudWatch is what makes output
+ * unbounded, but it is only *needed* past these caps — and it is never free, because the
+ * instance only flushes to CloudWatch every 30s or 200kb (specs/external-processes.md).
+ * Waiting on that ingestion for output we already hold in full cost ~20s on every single
+ * command that printed anything.
+ *
+ * Both the marker and a stream sitting at its cap count as incomplete: the marker is what
+ * SSM documents, the length check is the belt-and-braces for output that lands exactly on
+ * the boundary without one. Guessing "complete" wrongly is the expensive direction —
+ * that is what silently truncated a `docker inspect` and cost a whole run (see capture()).
+ */
+export function inlineOutputIsComplete(inline: StreamedOutput): boolean {
+  if (INLINE_TRUNCATION_MARKER.test(inline.combined)) return false;
+  return inline.stdout.length < INLINE_STDOUT_CAP && inline.stderr.length < INLINE_STDERR_CAP;
+}
+
 /** Best-effort: the log group's own retention policy is the real safety net. */
 async function deleteLogStreams(commandId: string, instanceId: string): Promise<void> {
   for (const suffix of SSM_STREAM_SUFFIXES) {
@@ -323,10 +345,81 @@ async function sendShellCommand(instanceId: string, command: string, runAsUser: 
   return { commandId };
 }
 
-async function runShellCommandStreamed(instanceId: string, remoteCmd: string, runAsUser: string): Promise<void> {
+/**
+ * How long streamed output may go quiet before we stop trusting the stream and say so.
+ *
+ * The SSM Agent's CloudWatch publishing is not guaranteed to keep pace with a long-running
+ * command. On one situational run it stopped publishing 57 minutes in, silently dropped
+ * every proof-of-life line after that, and surfaced only the already-buffered ones when the
+ * invocation finally went terminal — 3h20m of apparent silence over a command that was
+ * healthy the whole time, which read exactly like a hang and was investigated as one. We
+ * can't make the agent publish, but we can refuse to present its silence as the command's.
+ */
+const OUTPUT_STALL_WARN_MS = 5 * 60 * 1_000;
+
+/**
+ * A diagnostic must never outlast the thing it is diagnosing: this runs inside the poll
+ * loop of a command we still want to stream, and the instance it is questioning is by
+ * definition already behaving oddly. So it gets its own deadline rather than
+ * pollUntilDone's unbounded wait.
+ */
+const PROBE_TIMEOUT_MS = 60_000;
+
+/**
+ * Read the last line of a file on the instance with a *separate*, short-lived command.
+ *
+ * Deliberately reads only GetCommandInvocation's inline copy and never CloudWatch: this
+ * exists precisely for when the CloudWatch path has stopped delivering, so routing the
+ * rescue through it too would be pointless. One tail line is far below the inline caps.
+ */
+async function probeRemoteTail(instanceId: string, path: string, runAsUser: string): Promise<string | undefined> {
+  const { commandId } = await sendShellCommand(instanceId, `tail -n 1 ${posixQuote(path)}`, runAsUser);
+  const deadline = Date.now() + PROBE_TIMEOUT_MS;
+  for (;;) {
+    const status = await withSsmRetry(() => getInvocationStatus(instanceId, commandId));
+    if (status.done) {
+      void deleteLogStreams(commandId, instanceId);
+      return status.inline.stdout.trim() || undefined;
+    }
+    if (Date.now() >= deadline) throw new Error(`it did not finish within ${PROBE_TIMEOUT_MS / 1_000}s`);
+    await sleep(POLL_INTERVAL_MS);
+  }
+}
+
+/**
+ * Tell the user that the *stream* has gone quiet, not necessarily the command — and, when
+ * the caller told us which file the command is writing, prove it either way by reading that
+ * file directly. Best-effort throughout: a failed probe still leaves the warning, and
+ * nothing here may take the run down.
+ */
+async function reportStalledOutput(
+  instanceId: string,
+  status: string,
+  runAsUser: string,
+  quietForMs: number,
+  livenessPath?: string,
+): Promise<void> {
+  const preamble =
+    `No output from ${instanceId} for ${Math.round(quietForMs / 60_000)}m. SSM still reports the command as ` +
+    `${status}, so this is most likely the instance's SSM Agent having stopped publishing to CloudWatch Logs ` +
+    `rather than the command itself being stuck.`;
+  if (!livenessPath) {
+    fitCliWarn(preamble);
+    return;
+  }
+  try {
+    const line = await probeRemoteTail(instanceId, livenessPath, runAsUser);
+    fitCliWarn(`${preamble}\nLast line of ${livenessPath}, read directly just now:\n  ${line ?? "(the file is still empty)"}`);
+  } catch (err) {
+    fitCliWarn(`${preamble}\nReading ${livenessPath} directly failed too: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+async function runShellCommandStreamed(instanceId: string, remoteCmd: string, runAsUser: string, livenessPath?: string): Promise<void> {
   const { commandId } = await sendShellCommand(instanceId, remoteCmd, runAsUser);
   let lastMs = 0;
   let wroteAnything = false;
+  let lastOutputAt = Date.now();
   for (;;) {
     // Streamed output is for a human to read, so both streams go to the terminal
     // interleaved — only capture() needs them kept apart.
@@ -334,12 +427,20 @@ async function runShellCommandStreamed(instanceId: string, remoteCmd: string, ru
     if (chunk.combined) {
       process.stdout.write(chunk.combined);
       wroteAnything = true;
+      lastOutputAt = Date.now();
     }
     lastMs = chunk.lastMs;
 
     const status = await withSsmRetry(() => getInvocationStatus(instanceId, commandId));
     if (status.done) {
-      const tail = await settledLogLines(commandId, instanceId, lastMs, status.inline.combined.length > 0 && !wroteAnything);
+      const tail = await settledLogLines(
+        commandId,
+        instanceId,
+        lastMs,
+        // Same shortcut as the captured path: if the inline copy is whole, it is already
+        // everything the command said, so there is nothing to wait on CloudWatch for.
+        status.inline.combined.length > 0 && !wroteAnything && !inlineOutputIsComplete(status.inline),
+      );
       if (tail.combined) {
         process.stdout.write(tail.combined);
         wroteAnything = true;
@@ -352,6 +453,14 @@ async function runShellCommandStreamed(instanceId: string, remoteCmd: string, ru
         throw new Error(`command on ${instanceId} exited with status ${status.status} (code ${status.exitCode})`);
       }
       return;
+    }
+
+    const quietForMs = Date.now() - lastOutputAt;
+    if (quietForMs >= OUTPUT_STALL_WARN_MS) {
+      // Re-arm before reporting, so a persistent stall repeats at this cadence rather than
+      // on every 1.5s poll — and so a slow probe doesn't immediately re-trip it.
+      lastOutputAt = Date.now();
+      await reportStalledOutput(instanceId, status.status, runAsUser, quietForMs, livenessPath);
     }
     await sleep(POLL_INTERVAL_MS);
   }
@@ -383,21 +492,27 @@ function truncationExplanation(instanceId: string): string {
 async function runShellCommandCaptured(instanceId: string, remoteCmd: string, runAsUser: string): Promise<CapturedResult> {
   const { commandId } = await sendShellCommand(instanceId, remoteCmd, runAsUser);
   const result = await pollUntilDone(instanceId, commandId);
+  // Below SSM's inline caps there is nothing to go to CloudWatch for, and going anyway is
+  // what made every output-producing command take ~23s instead of ~3s: the settle loop
+  // waited out its full 20s for events the instance had not flushed yet, then fell back to
+  // the inline copy it already had. Only pay that when the inline copy is genuinely short.
   // A non-empty inline output means the command definitely produced output, so an empty
-  // CloudWatch read at this point is ingestion lag rather than a genuinely silent
+  // CloudWatch read at that point is ingestion lag rather than a genuinely silent
   // command - wait it out instead of falling straight through to the capped inline copy.
-  const fromLogs = await settledLogLines(commandId, instanceId, 0, result.inline.combined.length > 0);
+  const fromLogs = inlineOutputIsComplete(result.inline)
+    ? undefined
+    : await settledLogLines(commandId, instanceId, 0, result.inline.combined.length > 0);
   void deleteLogStreams(commandId, instanceId);
   // Falling back to GetCommandInvocation's inline content is fine as far as it goes, but
   // it is capped. Whether that matters depends on the caller: harmless for output only
   // shown to a human, corrupting for output parsed as data - see capture().
-  const output = fromLogs.combined ? fromLogs : result.inline;
+  const output = fromLogs?.combined ? fromLogs : result.inline;
   return {
     output,
     ok: result.status === "Success",
     status: result.status,
     exitCode: result.exitCode,
-    truncated: !fromLogs.combined && INLINE_TRUNCATION_MARKER.test(result.inline.combined),
+    truncated: !fromLogs?.combined && !inlineOutputIsComplete(result.inline),
   };
 }
 
@@ -423,7 +538,7 @@ export class SsmTarget implements ExecutionTarget {
     const greyText = opts?.greyTextOutput ?? false;
     if (greyText) startGreyTextOutput();
     try {
-      await runShellCommandStreamed(this.instanceId, buildRemoteCommand(command, args, cwd), this.runAsUser);
+      await runShellCommandStreamed(this.instanceId, buildRemoteCommand(command, args, cwd), this.runAsUser, opts?.livenessPath);
     } finally {
       if (greyText) stopGreyTextOutput();
     }

@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { partitionLogEvents } from "../ssm-target.js";
+import { inlineOutputIsComplete, partitionLogEvents } from "../ssm-target.js";
 
 const stdoutStream = "cmd-1/i-abc/aws-runShellScript/stdout";
 const stderrStream = "cmd-1/i-abc/aws-runShellScript/stderr";
@@ -62,4 +62,25 @@ test("partitionLogEvents skips events with no message", () => {
 test("partitionLogEvents handles an empty read", () => {
   const out = partitionLogEvents([]);
   assert.deepEqual(out, { stdout: "", stderr: "", combined: "" });
+});
+
+const inline = (stdout: string, stderr = "") => ({ stdout, stderr, combined: stdout + stderr });
+
+test("inlineOutputIsComplete accepts ordinary short output", () => {
+  assert.equal(inlineOutputIsComplete(inline("true\n")), true);
+  assert.equal(inlineOutputIsComplete(inline("")), true);
+});
+
+test("inlineOutputIsComplete rejects output SSM marked as truncated", () => {
+  assert.equal(inlineOutputIsComplete(inline("lots of stuff\n---output truncated---\n")), false);
+  // The marker can land on either stream, and `combined` is what we scan.
+  assert.equal(inlineOutputIsComplete(inline("fine\n", "Output truncated")), false);
+});
+
+test("inlineOutputIsComplete rejects a stream sitting at its cap even with no marker", () => {
+  // Belt-and-braces: output landing exactly on the boundary without a marker must not be
+  // mistaken for whole, since capture()'s callers parse it as data.
+  assert.equal(inlineOutputIsComplete(inline("x".repeat(24_000))), false);
+  assert.equal(inlineOutputIsComplete(inline("ok", "e".repeat(8_000))), false);
+  assert.equal(inlineOutputIsComplete(inline("x".repeat(23_999))), true);
 });
