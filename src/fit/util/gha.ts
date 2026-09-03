@@ -10,9 +10,10 @@
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { formatArtifactsTable } from "../../util/non-fit/artifacts.js";
+import { formatArtifactsTable, SESSION_LOG_NAME } from "../../util/non-fit/artifacts.js";
 import { isMain } from "../../util/non-fit/cli.js";
 import { fitCliInfo } from "../../util/non-fit/fit-cli-log.js";
+import { stripAnsi } from "../../util/non-fit/proc.js";
 import { parseJunitDataFromDir, renderJunitMarkdown } from "../shared/run-test-driver/junit-to-markdown.js";
 import { readSituationalResultsCsv, renderSituationalResultsMarkdown } from "../shared/run-test-driver/situational-results.js";
 
@@ -26,10 +27,110 @@ export const STEP_SUMMARY_HARD_LIMIT_BYTES = 1024 * 1024;
  * What we allow ourselves to write. The headroom below the hard limit covers the
  * "Run artifacts" block prepended at the end of the run (whose S3 URI isn't known until
  * then, so it cannot be counted as it is written) plus anything else in the job writing to
- * the same file. That block is ~400 bytes, so 24k of margin is generous; the earlier 900k
+ * the same file. That block is ~400 bytes and the failure snippet is capped at
+ * {@link FAILURE_SNIPPET_RESERVE_BYTES}, so 24k of margin covers both; the earlier 900k
  * left 124k of the cap unused, which is 12% of the budget spent on nothing.
  */
 export const STEP_SUMMARY_BUDGET_BYTES = 1000 * 1024;
+
+/**
+ * Held back from the per-run blocks for the failure snippet (see
+ * {@link appendFailureSnippetToGhaSummary}). Without a reserve the snippet is written
+ * last and gets only what the JUnit ladder left over, which is backwards: when a run
+ * fails, the tail of the failing step is the single most useful thing in the summary.
+ * Costs 0.8% of the budget on runs that never fail.
+ */
+export const FAILURE_SNIPPET_RESERVE_BYTES = 8 * 1024;
+
+/**
+ * Printed by the run loop once every instance/cluster is done. Everything after it is
+ * teardown, the artifact table and upload chatter — noise for a failure snippet, and
+ * the reason the tail has to be cut here rather than simply taken from the end.
+ */
+export const RUN_FINISHED_MARKER = "── Run finished — no more iterations, clusters or instances to run. ──";
+
+/** Lines of terminal output shown in the failure snippet's code block. */
+const FAILURE_TAIL_LINES = 25;
+
+/**
+ * Long lines are truncated to this. cbdinocluster failures carry a zap `errorVerbose`
+ * field holding a whole multi-KiB Go stack on one line, which would otherwise be the
+ * entire snippet.
+ */
+const FAILURE_TAIL_MAX_LINE_CHARS = 240;
+
+/** `[05:30:15·aws1] ` / `[05:30:15] ` — the prefix fit-cli stamps on each terminal line. */
+const LOG_LINE_PREFIX = /^\[\d{2}:\d{2}:\d{2}(?:·[^\]]*)?\]\s?/;
+
+/**
+ * Lines that are true of every failure and so say nothing about this one. Skipped when
+ * hunting for the likely cause — `failed to run commands: exit status 1` is the last
+ * line of both a bad flag and a 20-minute cluster timeout, and the `FitCliError` lines
+ * are already rendered as the snippet's heading.
+ */
+const CAUSE_NOISE = [
+  /failed to run commands: exit status/i,
+  /exited with status Failed/i,
+  /^FitCliError/,
+];
+
+/**
+ * Ordered by how specific they are, not by likelihood: the first match scanning upwards
+ * from the end of the tail wins, so a precise `unknown flag:` beats a vague `failed to`
+ * further up.
+ */
+const CAUSE_SIGNALS = [
+  /unknown flag:/i,
+  /\bFATAL\b/,
+  /\bpanic:/i,
+  /\bError:/,
+  /\berror\b.*\bnot found\b/i,
+  /\bpermission denied\b/i,
+  /\bfailed to\b/i,
+];
+
+/**
+ * The last few lines of terminal output before the run wound down, cleaned up for a
+ * markdown code block. Pure: hand it the log text, get the lines back.
+ *
+ * Cuts at {@link RUN_FINISHED_MARKER} rather than taking the raw end of the log, since
+ * by the time anything renders a summary the tail is teardown and artifact-table noise.
+ */
+export function extractFailureTail(logText: string, maxLines: number = FAILURE_TAIL_LINES): string[] {
+  const withoutAnsi = stripAnsi(logText);
+  const markerAt = withoutAnsi.indexOf(RUN_FINISHED_MARKER);
+  const upToEnd = markerAt >= 0 ? withoutAnsi.slice(0, markerAt) : withoutAnsi;
+
+  const lines = upToEnd
+    .split("\n")
+    .map((line) => line.replace(LOG_LINE_PREFIX, "").trimEnd())
+    .map((line) => (line.length > FAILURE_TAIL_MAX_LINE_CHARS ? `${line.slice(0, FAILURE_TAIL_MAX_LINE_CHARS)}…` : line));
+
+  // Trailing blank lines would otherwise eat into the line budget and render as an
+  // empty gap at the bottom of the code block.
+  while (lines.length > 0 && lines[lines.length - 1].trim() === "") lines.pop();
+
+  return lines.slice(-maxLines);
+}
+
+/**
+ * The one line from `tail` most likely to say why the run failed, or undefined when
+ * nothing stands out.
+ *
+ * This exists because neither obvious source works on its own. The thrown error is
+ * usually generic (`sh on i-07e4a… exited with status Failed (code 1)`), and the raw
+ * tail can be dozens of lines of a tool's `--help` output with the real message buried
+ * at the bottom. Scanning upwards past the boilerplate finds it in both shapes.
+ */
+export function likelyCauseLine(tail: readonly string[]): string | undefined {
+  for (let i = tail.length - 1; i >= 0; i--) {
+    const line = tail[i].trim();
+    if (!line) continue;
+    if (CAUSE_NOISE.some((pattern) => pattern.test(line))) continue;
+    if (CAUSE_SIGNALS.some((pattern) => pattern.test(line))) return line;
+  }
+  return undefined;
+}
 
 /**
  * Each block is appended wrapped in newlines, so it costs this much more than its own
@@ -160,7 +261,10 @@ export function appendRunSummaryToGhaSummary(result: RunSummary, budgetBytes: nu
   // can spend more than its share when later runs turn out to be cheap. Runs stream in
   // and the total isn't known here, so this trades fairness across runs for using the
   // budget well; the ladder below still guarantees later runs get at least their tables.
-  const remainingForThisRun = Math.max(0, budgetBytes - (sizeBefore < 0 ? 0 : sizeBefore) - SUMMARY_APPEND_OVERHEAD_BYTES);
+  const remainingForThisRun = Math.max(
+    0,
+    budgetBytes - (sizeBefore < 0 ? 0 : sizeBefore) - SUMMARY_APPEND_OVERHEAD_BYTES - FAILURE_SNIPPET_RESERVE_BYTES,
+  );
 
   let situationalMarkdown: string | undefined;
   if (situationalResultsCsv) {
@@ -204,8 +308,9 @@ export function appendRunSummaryToGhaSummary(result: RunSummary, budgetBytes: nu
 
   const used = sizeBefore < 0 ? 0 : sizeBefore;
   // Leave room for the newlines the append wraps the block in, so the file cannot end up
-  // past the budget by a block that measured as fitting.
-  const remaining = budgetBytes - used - SUMMARY_APPEND_OVERHEAD_BYTES;
+  // past the budget by a block that measured as fitting, and for the failure snippet
+  // prepended at the end of a failing run.
+  const remaining = budgetBytes - used - SUMMARY_APPEND_OVERHEAD_BYTES - FAILURE_SNIPPET_RESERVE_BYTES;
   const chosen = chooseBlockWithinBudget(candidates, remaining);
   if (!chosen) {
     console.warn(
@@ -226,6 +331,70 @@ export function appendRunSummaryToGhaSummary(result: RunSummary, budgetBytes: nu
     console.log(`[gha-summary] wrote per-run block for "${pathLabel}" to ${summaryPath} (file ${sizeBefore} → ${summaryFileSize()} bytes)`);
   } catch (err) {
     console.warn(`Warning: failed to append per-run GHA step summary block for "${pathLabel}": ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/**
+ * How the failure is described at the top of the block. `label` is the standardised
+ * position (`aws1 / 8.0.2-5503`) when the run got far enough to know it.
+ */
+export interface FailureHeading {
+  classification?: string;
+  message: string;
+  label?: string;
+}
+
+/**
+ * Render the failure block: a heading, the classification message, the hoisted likely
+ * cause, then the tail in a code block. Deliberately *not* wrapped in `<details>` —
+ * everything else in the summary is collapsed, and the one thing that says why CI is
+ * red should be readable without a click. Pure; the caller owns reading the log.
+ */
+export function renderFailureSnippetBlock(heading: FailureHeading, tail: readonly string[]): string {
+  const title = [heading.classification ?? "Run failed", heading.label].filter(Boolean).join(" — ");
+  const cause = likelyCauseLine(tail);
+
+  const lines = [`### ❌ ${title}`, ""];
+  if (heading.message && heading.message !== cause) {
+    lines.push(heading.message, "");
+  }
+  if (cause) {
+    lines.push(`**Likely cause:** \`${cause.replace(/`/g, "'")}\``, "");
+  }
+  if (tail.length > 0) {
+    lines.push("Last output before the run stopped:", "", "```text", ...tail, "```", "");
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Prepend the failure block to $GITHUB_STEP_SUMMARY. No-ops outside GHA, and on a run
+ * that had nothing to say.
+ *
+ * `sessionTail` must be *captured* before the artifact table is printed and the
+ * artifacts uploaded — a moment later it is zip and upload chatter rather than the
+ * failure. Writing, by contrast, happens last of all the prepending writers, so this
+ * block ends up above the "Run artifacts" one and is the first thing on the page.
+ */
+export function appendFailureSnippetToGhaSummary(heading: FailureHeading, sessionTail: string): void {
+  const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+  if (!summaryPath) return;
+
+  const tail = extractFailureTail(sessionTail);
+  const candidates = [
+    renderFailureSnippetBlock(heading, tail),
+    renderFailureSnippetBlock(heading, tail.slice(-5)),
+    renderFailureSnippetBlock(heading, []),
+  ].filter((block, i, all) => all.indexOf(block) === i);
+
+  const chosen = chooseBlockWithinBudget(candidates, FAILURE_SNIPPET_RESERVE_BYTES);
+  if (!chosen) return;
+
+  try {
+    const existing = existsSync(summaryPath) ? readFileSync(summaryPath, "utf8") : "";
+    writeFileSync(summaryPath, chosen.block + "\n" + existing);
+  } catch (err) {
+    console.warn(`Warning: failed to write the GHA failure snippet: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -292,6 +461,11 @@ Subcommands:
                                         showing which form the budget picked for each and how
                                         the file grows. Use this to check a run would fit
                                         under GitHub's ${STEP_SUMMARY_HARD_LIMIT_BYTES / 1024}k cap without pushing to CI.
+                                        With --dir, also replays the failure snippet from the
+                                        bundle's ${SESSION_LOG_NAME}, so what a failing run
+                                        would have shown can be checked the same way. A bundle
+                                        with no test results but a session log is fine — that
+                                        is exactly the case the snippet exists for.
 
 Options:
   --dir <artifact-dir>   An unpacked run artifact directory (e.g. the contents of a
@@ -408,8 +582,10 @@ function main(): void {
       process.exit(2);
     }
     dirs = findSurefireDirs(artifactDir);
-    if (dirs.length === 0) {
-      console.error(`No surefire-reports directories found under ${artifactDir}.`);
+    // A run that died before any test ran has no surefire dirs at all — which is exactly
+    // the case the failure snippet exists for, so it is not an error here.
+    if (dirs.length === 0 && !existsSync(join(artifactDir, SESSION_LOG_NAME))) {
+      console.error(`No surefire-reports directories and no ${SESSION_LOG_NAME} found under ${artifactDir}.`);
       process.exit(1);
     }
   } else {
@@ -455,6 +631,16 @@ function main(): void {
           : undefined,
         surefireDir: dir,
       }, budget);
+    }
+
+    // Replay the failure block from the bundle's own terminal log, so the snippet a real
+    // failing run would have produced can be checked without pushing to CI.
+    const sessionLogPath = artifactDir ? join(artifactDir, SESSION_LOG_NAME) : undefined;
+    if (sessionLogPath && existsSync(sessionLogPath)) {
+      const tail = extractFailureTail(readFileSync(sessionLogPath, "utf8"));
+      const cause = likelyCauseLine(tail);
+      console.log(cause ? `Likely cause found: ${cause}\n` : `No likely cause found in ${SESSION_LOG_NAME}.\n`);
+      appendFailureSnippetToGhaSummary({ message: "", label: basename(artifactDir!) }, readFileSync(sessionLogPath, "utf8"));
     }
   } finally {
     if (previous === undefined) delete process.env.GITHUB_STEP_SUMMARY;

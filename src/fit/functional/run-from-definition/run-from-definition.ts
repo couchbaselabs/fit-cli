@@ -187,7 +187,7 @@ import {
   type ResumeTargetState,
   type RunState,
 } from "./resume-state.js";
-import { appendRunSummaryToGhaSummary } from "../../util/gha.js";
+import { appendRunSummaryToGhaSummary, RUN_FINISHED_MARKER } from "../../util/gha.js";
 import { junitToPlainTextFromDir } from "../../shared/run-test-driver/junit-to-markdown.js";
 import { readSituationalResultsCsv, renderSituationalResultsPlainText } from "../../shared/run-test-driver/situational-results.js";
 
@@ -1658,7 +1658,7 @@ async function teardownRun(inputs: TeardownInputs): Promise<{ leftUp: boolean }>
   // that explicit — the leave-up prompt that follows used to appear right after a
   // "moving to next iteration" line, which read as if more was still to come — then
   // show how each run did so the leave-up choice is informed.
-  console.log("\n── Run finished — no more iterations, clusters or instances to run. ──");
+  console.log(`\n${RUN_FINISHED_MARKER}`);
   // Only reprint in interactive mode: in non-interactive mode the leave-up prompt
   // answers itself with the default anyway, and the results were already printed by
   // recordResult as each run completed, so reprinting here is just noise.

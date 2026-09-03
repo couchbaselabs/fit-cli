@@ -8,7 +8,8 @@ import { createRunFilePath } from "./replay.js";
 // that the terminal path embeds. Without this, colour leaks into session.info.log
 // / session.debug.log whenever colour is enabled (a real TTY, or GHA/FORCE_COLOR).
 const ANSI_SGR = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
-const stripAnsi = (s: string): string => s.replace(ANSI_SGR, "");
+/** Exported so anything rendering captured output as plain text uses the same rule. */
+export const stripAnsi = (s: string): string => s.replace(ANSI_SGR, "");
 
 /**
  * Where a process's *log output* goes, for the models that run a subprocess as a
@@ -425,6 +426,19 @@ export function startSessionLog(logFile: string): SessionLog {
   log.write(`# ${new Date().toISOString()} fit-cli session\n`);
   log.write(`# $ ${formatCommandLine(process.argv[0], process.argv.slice(1))}\n`);
 
+  // A rolling copy of the most recent lines, kept in memory. The end-of-run GHA
+  // summary needs the tail of a failing run, and it cannot get it from the file:
+  // the stream is buffered, so the last lines — exactly the ones that say what
+  // broke — may not have reached disk yet, and flush() closes the stream for good.
+  const tail: string[] = [];
+  let tailPending = "";
+  const recordTail = (clean: string): void => {
+    const parts = (tailPending + clean).split("\n");
+    tailPending = parts.pop() ?? "";
+    tail.push(...parts);
+    if (tail.length > SESSION_TAIL_MAX_LINES) tail.splice(0, tail.length - SESSION_TAIL_MAX_LINES);
+  };
+
   const logLineStarts = new Map<NodeJS.WriteStream, boolean>();
   for (const stream of [process.stdout, process.stderr]) {
     logLineStarts.set(stream, true);
@@ -438,6 +452,7 @@ export function startSessionLog(logFile: string): SessionLog {
       logLineStarts.set(stream, formatted.atLineStart);
       const clean = stripAnsi(formatted.text);
       log.write(clean);
+      recordTail(clean);
       currentDebugLog?.write(clean);
       return original(...args);
     } as StreamWrite;
@@ -451,15 +466,33 @@ export function startSessionLog(logFile: string): SessionLog {
       log.end(() => resolve());
     });
 
-  return { path: logFile, flush };
+  return { path: logFile, flush, tail: () => [...tail, tailPending].join("\n") };
 }
 
-/** A started session log: where it lives, and how to flush it before exiting. */
-export interface SessionLog {
+/**
+ * How many lines of terminal output {@link startSessionLog} keeps in memory for
+ * {@link SessionLog.tail}. Generous relative to what the GHA summary shows (a few
+ * dozen lines), because the caller trims from the end and a failing step can be
+ * followed by teardown chatter it has to skip past.
+ */
+export const SESSION_TAIL_MAX_LINES = 400;
+
+/** A started log file: where it lives, and how to flush it before exiting. */
+export interface LogFile {
   /** Path to the log file. */
   path: string;
   /** Flush and close the log stream; resolves once writes have hit disk. */
   flush: () => Promise<void>;
+}
+
+/** The session log, which additionally keeps its recent output available in memory. */
+export interface SessionLog extends LogFile {
+  /**
+   * The most recent {@link SESSION_TAIL_MAX_LINES} lines written to the terminal,
+   * ANSI already stripped. In memory rather than read back from the file, which
+   * is buffered and may not yet hold the newest lines.
+   */
+  tail: () => string;
 }
 
 /**
@@ -478,7 +511,7 @@ export interface SessionLog {
  * inlined here — the debug log instead carries the L3 intro line, which points
  * at that file (see announceArtifactStream).
  */
-export function startDebugLog(logFile: string): SessionLog {
+export function startDebugLog(logFile: string): LogFile {
   mkdirSync(dirname(logFile), { recursive: true, mode: 0o700 });
   const log = createWriteStream(logFile, { flags: "a", mode: 0o600 });
   log.write(`# ${new Date().toISOString()} fit-cli debug log\n`);

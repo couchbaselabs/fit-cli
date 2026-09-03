@@ -159,6 +159,27 @@ export function reconcileArtifactsWithDir(artifactDir: string, explicit: readonl
   return [...combined, ...extras];
 }
 
+/** The terminal-output log every run writes, at the root of its run dir. */
+export const SESSION_LOG_NAME = "session.info.log";
+
+/**
+ * Files every `fit` invocation produces whether or not it did anything. A run whose
+ * artifacts are only these kept no record worth shipping.
+ */
+const BOILERPLATE_ARTIFACTS = new Set([SESSION_LOG_NAME, "session.debug.log", "prompts.json"]);
+
+/**
+ * True when the run produced nothing beyond {@link BOILERPLATE_ARTIFACTS}.
+ *
+ * Bookkeeping commands (`slack write-placeholder`, `preset generate`, `caps table`) go
+ * through the same runCli plumbing as a real run, so on GHA each one zipped its run dir
+ * to S3 and prepended its own "Run artifacts" block — which is why a job that ran one
+ * real test run showed two of them.
+ */
+export function producedOnlyBoilerplate(artifacts: readonly Artifact[]): boolean {
+  return artifacts.every((artifact) => BOILERPLATE_ARTIFACTS.has(artifact.filename));
+}
+
 /** Merge detail lists while preserving first-seen order. */
 export function combineDetails(...groups: ReadonlyArray<readonly Detail[] | undefined>): Detail[] {
   const combined: Detail[] = [];
