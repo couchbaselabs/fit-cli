@@ -26,10 +26,83 @@ export interface CapellaEnvironment {
   /**
    * AWS Secrets Manager id/ARN holding { password, apiKey, apiSecret,
    * internalSupportToken?, overrideToken? } for this Capella environment. The two
-   * tokens are optional — only "dev" currently has them, which is what makes
-   * cbcollect's dev-only support available.
+   * tokens are optional — only "dev" and the "sandbox" env currently have them (stage/prod leave
+   * them undefined), which is what gates cbcollect support there. A sandbox's secret holds only
+   * those two tokens.
    */
   secretId?: string | null;
+  /**
+   * A pre-deployed sandbox: endpoint/v4Endpoint/oid are null here and supplied per run via
+   * {@link applyCapellaEnvironmentOverrides}; credentials come from the CAPELLA_* env vars.
+   */
+  sandbox?: boolean;
+}
+
+/** A sandbox's per-run coordinates, carried in the definition file since they change on redeploy. */
+export interface CapellaEnvironmentOverride {
+  endpoint: string;
+  v4Endpoint: string;
+  oid: string;
+}
+
+// Scheme + host only: these get concatenated with API paths, so a path would corrupt them, and `@`
+// is excluded so `https://user:pass@host` can't smuggle a credential into the shareable definition.
+const CAPELLA_ENDPOINT_ORIGIN = /^https?:\/\/[^\s/?#@]+$/i;
+/** Canonical 8-4-4-4-12 hex form; shape only, so an org id issued any way passes. */
+const CAPELLA_ORGANIZATION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Endpoints derived from a sandbox URL; `recognised` is false when the host wasn't a ui./api./cloudapi.
+ * one. These live beside {@link CapellaEnvironmentOverride} so the wizard (which asks for the values)
+ * and the parser (which accepts them) share one rule set without importing each other.
+ */
+export interface CapellaSandboxEndpoints {
+  endpoint: string;
+  v4Endpoint: string;
+  recognised: boolean;
+}
+
+/** Whether `value` is a usable control-plane endpoint (scheme + host, no path) for a definition file. */
+export function isCapellaEndpointOrigin(value: string): boolean {
+  return CAPELLA_ENDPOINT_ORIGIN.test(value.trim());
+}
+
+/** Whether `value` is a bare Capella org id — rejects the `oid=<uuid>` a UI URL paste carries. */
+export function isCapellaOrganizationId(value: string): boolean {
+  return CAPELLA_ORGANIZATION_ID.test(value.trim());
+}
+
+/** `url` reduced to its origin, dropping any path/query/fragment. Returned trimmed if it has no host. */
+export function capellaEndpointOrigin(url: string): string {
+  const match = /^(https?:\/\/[^\s/?#@]+)/i.exec(url.trim());
+  return match ? match[1].toLowerCase() : url.trim().replace(/\/+$/, "");
+}
+
+/**
+ * A `scheme://<ui|api|cloudapi>.host` origin split into its scheme and bare host, or null when the
+ * host carries no such label. The single source of truth for the sandbox host layout — a sandbox
+ * serves `ui.` (UI), `api.` (v2) and `cloudapi.` (v4) on one domain — so every caller that swaps one
+ * label for another agrees on what a labelled host is. The `(?=[/?#]|$)` lookahead makes a userinfo
+ * URL (https://ui.u:p@host) fail outright rather than truncate at the "@".
+ */
+export function capellaLabelledOrigin(origin: string): { scheme: string; host: string } | null {
+  const match = /^(https?:\/\/)(?:ui|api|cloudapi)\.([^\s/?#@]+)(?=[/?#]|$)/i.exec(origin.trim().replace(/\/+$/, ""));
+  return match ? { scheme: match[1].toLowerCase(), host: match[2].toLowerCase() } : null;
+}
+
+/**
+ * Both control-plane endpoints for a sandbox URL, whichever of its `ui.`/`api.`/`cloudapi.` hosts the
+ * user pasted. An unlabelled host can't be rewritten, so it's returned as-is with `recognised: false`.
+ */
+export function deriveCapellaSandboxEndpoints(url: string): CapellaSandboxEndpoints {
+  const trimmed = url.trim().replace(/\/+$/, "");
+  const parts = capellaLabelledOrigin(trimmed);
+  if (!parts) return { endpoint: trimmed, v4Endpoint: trimmed, recognised: false };
+  return {
+    endpoint: `${parts.scheme}api.${parts.host}`,
+    v4Endpoint: `${parts.scheme}cloudapi.${parts.host}`,
+    recognised: true,
+  };
 }
 
 export interface ResultsEnvironment {
@@ -201,6 +274,44 @@ export function loadEnvironments(path: string = DEFAULT_ENVIRONMENTS_PATH): Envi
 /** The configured Capella environment names (e.g. ["dev", "stage"]). */
 export function capellaEnvironmentNames(environments: EnvironmentsFile = loadEnvironments()): string[] {
   return Object.keys(environments.capella);
+}
+
+/** Whether `name` is a sandbox Capella environment (see {@link CapellaEnvironment.sandbox}). */
+export function isSandboxCapellaEnvironment(
+  name: string,
+  environments: EnvironmentsFile = loadEnvironments(),
+): boolean {
+  return environments.capella[name]?.sandbox === true;
+}
+
+/**
+ * Patch sandbox coordinates from a definition's `setup.capellaEnvironments` into the (process-cached)
+ * registry, so every consumer reads them like a normal environment. Rewrites every sandbox each call,
+ * so a later definition supplying none can't inherit an earlier one's. Throws for an unknown/non-sandbox
+ * name (validated before anything is mutated).
+ */
+export function applyCapellaEnvironmentOverrides(
+  overrides: Record<string, CapellaEnvironmentOverride>,
+  environments: EnvironmentsFile = loadEnvironments(),
+): void {
+  for (const name of Object.keys(overrides)) {
+    const entry = environments.capella[name];
+    if (!entry) {
+      throw new Error(`Unknown Capella environment "${name}" — not defined in environments.json5.`);
+    }
+    if (entry.sandbox !== true) {
+      throw new Error(
+        `Capella environment "${name}" is not a sandbox, so its endpoint and org id can't be set from a definition file.`,
+      );
+    }
+  }
+  for (const [name, entry] of Object.entries(environments.capella)) {
+    if (entry.sandbox !== true) continue;
+    const override = overrides[name];
+    entry.endpoint = override?.endpoint ?? null;
+    entry.v4Endpoint = override?.v4Endpoint ?? null;
+    entry.oid = override?.oid ?? null;
+  }
 }
 
 /** The configured results environment names (e.g. ["dev", "prod"]). */

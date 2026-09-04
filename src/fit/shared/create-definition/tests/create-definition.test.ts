@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { functionalInstanceConnectivity } from "../create-definition.js";
+import { definitionRunGuidance } from "../../definition/run-guidance.js";
 import type { InstanceLifetime } from "../../definition/types.js";
+
+test("definitionRunGuidance names the sandbox env vars only when the definition targets a sandbox", () => {
+  const plain = definitionRunGuidance("fit.json5");
+  assert.ok(!plain.includes("CAPELLA_API_SECRET"), "non-sandbox guidance should not mention sandbox creds");
+  const sandbox = definitionRunGuidance("fit.json5", true);
+  assert.match(sandbox, /Capella sandbox/);
+  assert.match(sandbox, /CAPELLA_USER.*CAPELLA_API_SECRET/s);
+});
 
 const NODES = [{ count: 1, version: "8.1.0-2188", services: ["kv"] }];
 

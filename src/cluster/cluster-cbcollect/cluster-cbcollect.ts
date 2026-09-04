@@ -103,7 +103,7 @@ export async function collectClusterLogsIfSupported(
     if (!(await checkAvailable(capellaEnvironment))) {
       console.log(
         `\nSkipping cluster diagnostics for ${clusterId}: Capella environment "${capellaEnvironment}" has no ` +
-          `internal support token configured (only "dev" does) — cbdinocluster can't collect logs from a ` +
+          `internal support token configured (only "dev" and "sandbox" does) — cbdinocluster can't collect logs from a ` +
           `Capella cluster without one.`,
       );
       return false;
