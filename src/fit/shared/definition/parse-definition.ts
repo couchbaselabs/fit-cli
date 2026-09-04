@@ -9,6 +9,7 @@ import JSON5 from "json5";
 import YAML from "yaml";
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { runScriptPrefix } from "../../../util/non-fit/fit-cli-log.js";
+import { isCapellaEndpointOrigin, isCapellaOrganizationId } from "../../util/environments.js";
 import { PORT_IN_USE_POLICIES, type PortInUsePolicy } from "../../performers/util/performer-port.js";
 import {
   CLUSTER_EXISTS_POLICIES,
@@ -273,6 +274,35 @@ function validateOptionalString(record: Record<string, unknown>, key: string, pa
   return record[key] === undefined ? undefined : requireString(record, key, path);
 }
 
+function requireNonEmptyString(record: Record<string, unknown>, key: string, path: string): string {
+  const value = requireString(record, key, path).trim();
+  if (!value) {
+    throw new InvalidDefinitionError(`"${path}" must not be empty.`);
+  }
+  return value;
+}
+
+function requireOrganizationId(record: Record<string, unknown>, key: string, path: string): string {
+  const value = requireNonEmptyString(record, key, path);
+  if (!isCapellaOrganizationId(value)) {
+    throw new InvalidDefinitionError(
+      `"${path}" must be a Capella organization id like 4c1d8e6a-0b2f-4a1e-9f3c-5d6e7a8b9c01 ` +
+        `(no "oid=" prefix); got ${JSON.stringify(value)}`,
+    );
+  }
+  return value;
+}
+
+function requireEndpoint(record: Record<string, unknown>, key: string, path: string): string {
+  const value = requireNonEmptyString(record, key, path).replace(/\/+$/, "");
+  if (!isCapellaEndpointOrigin(value)) {
+    throw new InvalidDefinitionError(
+      `"${path}" must be an https origin with no path (e.g. https://api.sbx.example.com); got ${JSON.stringify(value)}`,
+    );
+  }
+  return value;
+}
+
 function validatePrivateEndpointSetup(value: unknown, path: string): PrivateEndpointSetup {
   const record = requireRecord(value, path);
   if (Object.keys(record).length > 0) {
@@ -339,9 +369,25 @@ function validateRepos(value: unknown): SharedSetup["repos"] {
   return repos;
 }
 
+function validateCapellaEnvironments(value: unknown): NonNullable<SharedSetup["capellaEnvironments"]> {
+  const record = requireRecord(value, "setup.capellaEnvironments");
+  const environments: NonNullable<SharedSetup["capellaEnvironments"]> = {};
+  for (const name of Object.keys(record)) {
+    const path = `setup.capellaEnvironments.${name}`;
+    const entry = requireRecord(record[name], path);
+    rejectUnknown(entry, ["endpoint", "v4Endpoint", "oid"], path);
+    environments[name] = {
+      endpoint: requireEndpoint(entry, "endpoint", `${path}.endpoint`),
+      v4Endpoint: requireEndpoint(entry, "v4Endpoint", `${path}.v4Endpoint`),
+      oid: requireOrganizationId(entry, "oid", `${path}.oid`),
+    };
+  }
+  return environments;
+}
+
 function validateSharedSetup(value: unknown): SharedSetup {
   const record = requireRecord(value, "setup");
-  rejectUnknown(record, ["repos", "cluster", "cbdinocluster"], "setup");
+  rejectUnknown(record, ["repos", "cluster", "cbdinocluster", "capellaEnvironments"], "setup");
   const setup: SharedSetup = {};
   if (record.cluster !== undefined) {
     throw new InvalidDefinitionError(`"setup.cluster" is no longer supported.`);
@@ -357,6 +403,9 @@ function validateSharedSetup(value: unknown): SharedSetup {
         ? { source: validateCbdinoclusterSource(cbdinocluster.source, "setup.cbdinocluster.source") }
         : {}),
     };
+  }
+  if (record.capellaEnvironments !== undefined) {
+    setup.capellaEnvironments = validateCapellaEnvironments(record.capellaEnvironments);
   }
   return setup;
 }
