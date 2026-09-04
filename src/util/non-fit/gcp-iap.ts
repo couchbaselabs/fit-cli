@@ -54,6 +54,12 @@ function connectionFlags(host: IapHost): string[] {
     host.zone,
     ...(host.project ? ["--project", host.project] : []),
     "--tunnel-through-iap",
+    // Never prompt. On a host with no ~/.ssh/google_compute_engine — every fresh
+    // CI runner — gcloud generates one, and ssh-keygen then asks for a passphrase
+    // on stdin. That prompt hung a GCP release run for 5h in total silence.
+    // proc.ts's capture() now gives stdin EOF rather than an open pipe, which is
+    // the actual fix; this is the second lock on the same door.
+    "--quiet",
     // Silences most of gcloud's routine noise without hiding real errors
     // (logged above this level). The OS Login notice below is printed via
     // gcloud's "status" stream, which bypasses --verbosity entirely, so it
@@ -232,9 +238,13 @@ export async function iapScpDown(host: IapHost, remotePath: string, localPath: s
  * silently consumed its full 6h GHA budget having logged nothing.
  *
  * Kept well under the overall deadline so a slow-booting box still gets several
- * probes rather than one long one.
+ * probes rather than one long one. Deliberately generous: because the old code
+ * hung rather than failing, we have never measured how long a genuinely cold
+ * runner legitimately takes (first-time OS Login key generation and
+ * propagation), and the point of this bound is to prevent a 5h hang, not to
+ * lose a run to a 3-minute deadline. Loosen further rather than tighten.
  */
-const IAP_PROBE_TIMEOUT_MS = 45_000;
+const IAP_PROBE_TIMEOUT_MS = 90_000;
 
 /**
  * Poll until `host` accepts an IAP-tunneled SSH connection (by running `true`
@@ -245,7 +255,7 @@ const IAP_PROBE_TIMEOUT_MS = 45_000;
  */
 export async function waitForIapSsh(
   host: IapHost,
-  { timeoutMs = 180_000, intervalMs = 5_000 }: { timeoutMs?: number; intervalMs?: number } = {},
+  { timeoutMs = 300_000, intervalMs = 5_000 }: { timeoutMs?: number; intervalMs?: number } = {},
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {

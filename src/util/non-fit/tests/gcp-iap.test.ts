@@ -45,3 +45,11 @@ test("buildIapScpArgs down puts the remote source first and local path second", 
   const args = buildIapScpArgs(HOST, "/local/file", "/remote/file", "down");
   assert.deepEqual(args.slice(-2), ["ubuntu@fit-cli-gcp-spike:/remote/file", "/local/file"]);
 });
+
+test("buildIapSshArgs passes --quiet so a key-generation prompt can never block CI", () => {
+  assert.ok(buildIapSshArgs(HOST, "true").includes("--quiet"));
+});
+
+test("buildIapScpArgs passes --quiet too", () => {
+  assert.ok(buildIapScpArgs(HOST, "/local/file", "/remote/file", "up").includes("--quiet"));
+});

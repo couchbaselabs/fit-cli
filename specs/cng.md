@@ -22,7 +22,7 @@ https://github.com/orgs/cb-rhcc/packages/container/package/cloud-native-gateway
 You can install the OpenShift CLI (`oc`) and then interact with the shared ROSA OpenShift cluster for debugging:
 
 ```
-# Login - request password on #protostellar
+# Login - request password on #protostellar, or use `aws secretsmanager get-secret-value --secret-id fit-cli/rosa/openshift` if you have permissions
 oc login https://api.sdkqe-rosa.rmuu.p3.openshiftapps.com:443 -u cluster-admin
 
 # Couchbase clusters

@@ -336,7 +336,12 @@ export function capture(command: string, args: string[], cwd: string = process.c
   announce(command, args, opts);
   const okCodes = opts?.allowExitCodes ?? [0];
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, ...detachedForTimeout(opts) });
+    // stdin is "ignore", not the default pipe, so anything that tries to read it
+    // gets EOF instead of blocking on a pipe nothing ever writes to or closes.
+    // `gcloud compute ssh` generates an SSH key on a host that has none, and
+    // ssh-keygen's passphrase prompt then hung a CI run for 5h in total silence
+    // (the prompt is captured, never displayed). Matches run()'s stdio above.
+    const child = spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"], ...detachedForTimeout(opts) });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk) => (stdout += chunk));

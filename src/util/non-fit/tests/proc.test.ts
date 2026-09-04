@@ -175,3 +175,13 @@ test("capture with a timeoutMs still returns normally when the command finishes 
   });
   assert.equal(out, "quick");
 });
+
+test("capture gives the child EOF on stdin rather than an open pipe", () => {
+  // The 5h GCP hang: `gcloud compute ssh` generates an SSH key on a host with
+  // none, and ssh-keygen's passphrase prompt blocked forever on a stdin pipe
+  // that nothing ever wrote to or closed. Reading stdin must see EOF at once.
+  const reader = "const fs=require('node:fs');let d='';try{d=fs.readFileSync(0,'utf8')}catch(e){d='ERR'};process.stdout.write('stdin=['+d+']')";
+  return capture(process.execPath, ["-e", reader], undefined, { quiet: true, timeoutMs: 10_000 }).then((out) => {
+    assert.equal(out, "stdin=[]");
+  });
+});
