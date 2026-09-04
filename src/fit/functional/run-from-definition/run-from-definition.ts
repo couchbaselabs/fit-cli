@@ -142,11 +142,6 @@ import {
   type FitTestSelection,
 } from "../../shared/select-fit-tests/select-fit-tests.js";
 import {
-  resolveResultsDatabase,
-  resultsHostFromJdbc,
-  situationalResultsUrl,
-} from "../../situational/choose-results-database/choose-results-database.js";
-import {
   checkObservabilityCollectorConnectivity,
   OBSERVABILITY_COLLECTOR_HOST,
   OBSERVABILITY_COLLECTOR_PORT,
@@ -524,9 +519,6 @@ function announce(
   }
   console.log(`  SDK:     ${run.sdk.name}`);
   console.log(`  Tests:   ${testsLabel}`);
-  if (run.type === "situational") {
-    console.log(`  Results database: ${run.databaseMode}`);
-  }
   console.log(`  Performer port: ${run.performerPort}`);
   if (run.performerVersion) {
     console.log(`  Performer version: ${run.performerVersion}`);
@@ -1014,18 +1006,8 @@ export async function runSituationalTests(
       "(usually `dinonet`) so it can reach the cluster cbdino creates.",
   );
 
-  // Files mode has no results database - the driver writes result files and we
-  // upload them after the run. `database` stays undefined in that case.
-  const database = run.databaseMode === "files"
-    ? undefined
-    : await resolveResultsDatabase(run.databaseMode, run.resultsEnvironment);
-  if (database && !database.ready) {
-    return { artifacts: database.artifacts, details: database.details };
-  }
-  const filesMode = database === undefined;
-
-  const artifacts: Artifact[] = [...(database?.artifacts ?? [])];
-  const details: Detail[] = [...(database?.details ?? [])];
+  const artifacts: Artifact[] = [];
+  const details: Detail[] = [];
 
   // Resolve cbdinocluster to its absolute path on the execution host so the FIT
   // test driver can invoke it even when its environment doesn't inherit the same PATH.
@@ -1034,7 +1016,6 @@ export async function runSituationalTests(
   const resolvedVersion = run.version !== undefined && isAlias(run.version) ? await resolveAlias(run.version) : run.version;
 
   const fitConfig = generateSituationalConfiguration(
-    database?.database ?? "files",
     situationalCbdinoSettings(run.cng, run.privateEndpoint !== undefined, resolvedVersion, instanceKind),
     execution.fitPerformerDir,
     run.path,
@@ -1049,7 +1030,7 @@ export async function runSituationalTests(
   // is empty (unconfigured localhost): the path would be relative, so rm -rf would
   // delete test-driver/results under the cwd. runTestDriver rejects those runs.
   const driverResultsDir = join(execution.fitPerformerDir, DEFAULT_TEST_DRIVER_MODULE, SITUATIONAL_RESULTS_DIR_NAME);
-  if (filesMode && execution.fitPerformerDir) {
+  if (execution.fitPerformerDir) {
     await execution.removeTree(driverResultsDir);
   }
 
@@ -1062,9 +1043,6 @@ export async function runSituationalTests(
     run.extraMavenArgs,
     DEFAULT_TEST_DRIVER_MODULE,
     true,
-    // The results-DB password goes to the driver via the environment, not the
-    // config file, so it can't leak into the collected FITConfiguration.json.
-    database ? { FIT_RESULTS_DB_PASSWORD: database.database.password } : undefined,
   );
   artifacts.push(...testRun.artifacts);
   const pathLabel = formatRunLabel(
@@ -1078,27 +1056,19 @@ export async function runSituationalTests(
     ...testRun.details,
   );
 
-  if (database) {
-    // Derive the UI URL from the chosen database's host so it matches where data
-    // actually lands (dev vs prod), rather than a fixed constant.
-    const resultsUrl = situationalResultsUrl(resultsHostFromJdbc(database.database.jdbc));
-    console.log(`\nWhen this run produces data, view it at:\n  ${resultsUrl}`);
-    details.push({ label: "Results UI", value: resultsUrl, callToAction: true });
-  } else {
-    // Groups the results this invocation uploads under one id.
-    const situationalRunId = randomUUID();
-    try {
-      const uploadOutput = await uploadCollectedResults(execution, driverResultsDir, runRunDir(run.path), situationalRunId);
-      details.push(...uploadOutput.details);
-      artifacts.push(...uploadOutput.artifacts);
-    } catch (err) {
-      // Don't fail the run if the upload fails - the tests already ran.
-      fitCliError(
-        `\nCollecting/uploading the run's result files failed: ${(err as Error).message}\n` +
-          `  Files: ${join(runRunDir(run.path), SITUATIONAL_RESULTS_DIR_NAME)} (or results.tar there, if extraction failed), or on the box under ${driverResultsDir}.\n` +
-          `  Upload by hand before re-running (the next run purges the results dir): bun src/fit/situational/upload-results/upload-results.ts <resultsDir> --situational-run-id ${situationalRunId}`,
-      );
-    }
+  // Groups the results this invocation uploads under one id.
+  const situationalRunId = randomUUID();
+  try {
+    const uploadOutput = await uploadCollectedResults(execution, driverResultsDir, runRunDir(run.path), situationalRunId);
+    details.push(...uploadOutput.details);
+    artifacts.push(...uploadOutput.artifacts);
+  } catch (err) {
+    // Don't fail the run if the upload fails - the tests already ran.
+    fitCliError(
+      `\nCollecting/uploading the run's result files failed: ${(err as Error).message}\n` +
+        `  Files: ${join(runRunDir(run.path), SITUATIONAL_RESULTS_DIR_NAME)} (or results.tar there, if extraction failed), or on the box under ${driverResultsDir}.\n` +
+        `  Upload by hand before re-running (the next run purges the results dir): bun src/fit/situational/upload-results/upload-results.ts <resultsDir> --situational-run-id ${situationalRunId}`,
+    );
   }
   dependencies.recordResult?.({
     path: run.path,
@@ -1152,7 +1122,8 @@ export async function uploadCollectedResults(
 
   // A local run has the files on this machine already, so upload them directly.
   if (execution.kind === "local") {
-    // Publish from CI only, so a local run needs no AWS. upload-results.ts uploads by hand.
+    // Publish results automatically from CI only. Non-CI runs keep the files locally;
+    // upload-results.ts can publish them explicitly.
     if (!artifactUploadEnabled(env)) {
       // removeTree wipes driverResultsDir at the start of the next situational
       // run, so copy the results into this run's artifact dir now, or a second

@@ -203,11 +203,6 @@ export function capellaEnvironmentNames(environments: EnvironmentsFile = loadEnv
   return Object.keys(environments.capella);
 }
 
-/** The configured results environment names (e.g. ["dev", "prod"]). */
-export function resultsEnvironmentNames(environments: EnvironmentsFile = loadEnvironments()): string[] {
-  return Object.keys(environments.results);
-}
-
 /** The tenant alias (e.g. "cb-sdk") for an AWS account id, or undefined if it's not a known tenant. */
 export function awsTenantAliasForAccount(
   accountId: string,
