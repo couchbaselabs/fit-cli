@@ -37,9 +37,12 @@
         },
       ],
     },
-    // Next block tests both GCP and capellaPreviousClusterVersion
+    // Next block tests capellaPreviousClusterVersion.
+    // Temporary: it also used to be the one block on GCP (PSC rather than PrivateLink), but
+    // GCP has proved too unstable to run release sign-off on. Restore `gcp: {` once it is
+    // reliable.
     {
-      gcp: {
+      aws: {
         privateEndpoint: {},
       },
       clusters: [],

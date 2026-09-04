@@ -38,7 +38,7 @@
           nodes: [
             {
               count: 3,
-              version: '{{environments.defaults.clusterVersion}}',
+              version: '{{environments.defaults.nextClusterVersion}}',
               services: ['kv', 'n1ql', 'index', 'fts'],
             },
           ],
