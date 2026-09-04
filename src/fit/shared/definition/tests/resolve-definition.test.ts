@@ -412,7 +412,7 @@ test("a gcp instance's situational privateEndpoint carries through to the resolv
     clusterlessSessions: [
       {
         performer: { image: "java-fit-performer:main" },
-        runs: [{ type: "situational", tests: { presets: ["all"] }, situational: { database: { mode: "local" }, privateEndpoint: {} } }],
+        runs: [{ type: "situational", tests: { presets: ["all"] }, situational: { database: { mode: "files" }, privateEndpoint: {} } }],
       },
     ],
   };
@@ -486,7 +486,7 @@ test("versions expands a situational run into one copy per version with distinct
       {
         type: "situational",
         tests: { classes: ["com.example.MyTest"] },
-        situational: { database: { mode: "local" } },
+        situational: { database: { mode: "files" } },
         versions: ["8.0-stable", "7.6"],
       },
     ],
@@ -508,7 +508,7 @@ test("versions appends :v{version} to the run dir segment to avoid collisions", 
       {
         type: "situational",
         tests: { classes: ["com.example.MyTest"] },
-        situational: { database: { mode: "local" } },
+        situational: { database: { mode: "files" } },
         versions: ["8.0-stable", "7.6"],
       },
     ],

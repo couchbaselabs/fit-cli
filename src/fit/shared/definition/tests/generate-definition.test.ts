@@ -76,7 +76,6 @@ test("buildFitSituationalDefinitionFrom emits clusterless sessions", () => {
   const definition = buildFitSituationalDefinitionFrom({
     sdk,
     onPortInUse: "reuse",
-    databaseMode: "hosted",
     selection: buildDefaultFitTestSelection(),
   });
   assert.equal(definition.instances[0]?.clusterlessSessions?.[0]?.performer.onPortInUse, "reuse");
@@ -87,7 +86,6 @@ test("buildFitSituationalDefinitionFrom emits situational.privateEndpoint when r
   const definition = buildFitSituationalDefinitionFrom({
     sdk,
     instance: { aws: { privateEndpoint: {} } },
-    databaseMode: "hosted",
     selection: buildDefaultFitTestSelection(),
     privateEndpoint: true,
   });
@@ -99,7 +97,6 @@ test("buildFitSituationalDefinitionFrom emits situational.privateEndpoint when r
 test("buildFitSituationalDefinitionFrom omits situational.privateEndpoint by default", () => {
   const definition = buildFitSituationalDefinitionFrom({
     sdk,
-    databaseMode: "hosted",
     selection: buildDefaultFitTestSelection(),
   });
   const run = definition.instances[0]?.clusterlessSessions?.[0]?.runs[0];
@@ -117,7 +114,6 @@ test("buildFitDefinition remains round-trippable through the parser (JSON5)", ()
   const situationalInstance = buildFitSituationalDefinitionFrom({
     sdk,
     version: "1.2.3",
-    databaseMode: "local",
     selection: buildFitTestSelectionFromClassNames([
       "com.couchbase.situational.tests.VolumeTest#steadyStateKvGets",
     ]),
@@ -157,7 +153,6 @@ test("formatFitDefinition never leaks comment markers into the output", () => {
   });
   const situational = buildFitSituationalDefinitionFrom({
     sdk,
-    databaseMode: "hosted",
     selection: buildDefaultFitTestSelection(),
   });
   for (const definition of [functional, situational]) {
@@ -170,7 +165,7 @@ test("formatFitDefinition never leaks comment markers into the output", () => {
 
 test("formatFitSituationalDefinition comments the clusterless sessions", () => {
   const rendered = formatFitDefinition(
-    buildFitSituationalDefinitionFrom({ sdk, databaseMode: "hosted", selection: buildDefaultFitTestSelection() }),
+    buildFitSituationalDefinitionFrom({ sdk, selection: buildDefaultFitTestSelection() }),
     "json5",
   );
   assert.match(rendered, /\/\/ Sessions not tied to any particular cluster/);
