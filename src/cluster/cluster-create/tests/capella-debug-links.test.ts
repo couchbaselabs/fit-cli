@@ -30,9 +30,14 @@ const environments: EnvironmentsFile = {
     FUNCTIONAL_SET_RELEASE: "all",
   },
   capella: {
-    prod: { endpoint: "https://api.cloud.couchbase.com", oid: "62488bdd-d416-467e-84f7-fc7c1583a083" },
+    prod: { endpoint: "https://api.cloud.couchbase.com", v4Endpoint: "https://cloudapi.cloud.couchbase.com", oid: "62488bdd-d416-467e-84f7-fc7c1583a083" },
     dev: { endpoint: "https://api.dev.nonprod-project-avengers.com", oid: "6af08c0a-8cab-4c1c-b257-b521575c16d0" },
     noOid: { endpoint: "https://api.no-oid.example.com" },
+    sandbox: {
+      sandbox: true,
+      endpoint: "https://api.sbx-25.sandbox.nonprod-project-avengers.com",
+      oid: "4c1d8e6a-0b2f-4a1e-9f3c-5d6e7a8b9c01",
+    },
   },
   results: {},
   awsTenants: {},
@@ -69,7 +74,7 @@ test("capellaDebugLinks returns undefined for an unconfigured environment", () =
   assert.equal(capellaDebugLinks("staging", uuid, environments), undefined);
 });
 
-test("printCapellaPreflightInfo logs environment, org id, endpoint and the org UI link", () => {
+test("printCapellaPreflightInfo logs environment, org id, both endpoints and the org UI link", () => {
   const lines: string[] = [];
   const original = console.log;
   console.log = (line: string) => lines.push(line);
@@ -82,6 +87,7 @@ test("printCapellaPreflightInfo logs environment, org id, endpoint and the org U
     "  Capella environment: prod",
     "  Capella org id: 62488bdd-d416-467e-84f7-fc7c1583a083",
     "  Capella endpoint: https://api.cloud.couchbase.com",
+    "  Capella v4 endpoint: https://cloudapi.cloud.couchbase.com",
     "  Capella UI (prod): https://cloud.couchbase.com/databases?oid=62488bdd-d416-467e-84f7-fc7c1583a083",
   ]);
 });
@@ -96,4 +102,29 @@ test("printCapellaPreflightInfo is a no-op for an unconfigured environment", () 
     console.log = original;
   }
   assert.deepEqual(lines, []);
+});
+
+test("capellaDebugLinks points a sandbox at its ui. host rather than the bare domain", () => {
+  const links = capellaDebugLinks("sandbox", uuid, environments);
+  assert.equal(
+    links?.capellaUiUrl,
+    "https://ui.sbx-25.sandbox.nonprod-project-avengers.com/databases?oid=4c1d8e6a-0b2f-4a1e-9f3c-5d6e7a8b9c01",
+  );
+});
+
+test("capellaUiUrl gives no sandbox link when the endpoint has no ui./api./cloudapi. label to swap", () => {
+  const noLabel: EnvironmentsFile = {
+    ...environments,
+    capella: { ...environments.capella, sandbox: { sandbox: true, endpoint: "https://sbx-25.example.com", oid: "4c1d8e6a-0b2f-4a1e-9f3c-5d6e7a8b9c01" } },
+  };
+  // Better no link than one pointing at the control-plane API host.
+  assert.equal(capellaDebugLinks("sandbox", uuid, noLabel)?.capellaUiUrl, undefined);
+});
+
+test("capellaUiUrl matches the sandbox label case-insensitively, canonicalising to lower case", () => {
+  const upper: EnvironmentsFile = {
+    ...environments,
+    capella: { ...environments.capella, sandbox: { sandbox: true, endpoint: "HTTPS://API.sbx-25.example.com", oid: "abc" } },
+  };
+  assert.equal(capellaDebugLinks("sandbox", uuid, upper)?.capellaUiUrl, "https://ui.sbx-25.example.com/databases?oid=abc");
 });

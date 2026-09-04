@@ -7,7 +7,8 @@
  *
  * The Capella UI host is derived by stripping the "api." prefix off the
  * control-plane endpoint (verified against both prod ->
- * https://cloud.couchbase.com and dev -> https://dev.nonprod-project-avengers.com);
+ * https://cloud.couchbase.com and dev -> https://dev.nonprod-project-avengers.com),
+ * or by swapping it for "ui." on a sandbox environment, which serves its UI there;
  * the org id reuses environments.capella[env].oid, the same org the shared
  * sdk_qe@couchbase.com account uses for API calls.
  *
@@ -22,7 +23,7 @@
  *   bun src/cluster/cluster-create/capella-debug-links.ts dev b0652a58-45d4-4cf7-afff-343ca735c6c6
  */
 import { isMain, runCli } from "../../util/non-fit/cli.js";
-import { loadEnvironments, type EnvironmentsFile } from "../../fit/util/environments.js";
+import { capellaLabelledOrigin, loadEnvironments, type EnvironmentsFile } from "../../fit/util/environments.js";
 
 export interface CapellaDebugLinks {
   /** The org's databases list in the Capella UI — absent if the environment has no oid configured. */
@@ -38,6 +39,8 @@ export interface CapellaDebugLinks {
  * the environment isn't configured or has no oid. Doesn't need a cluster UUID —
  * usable even when allocation failed before cbdinocluster logged one, so the
  * user can browse to the cluster manually (the way this feature was motivated).
+ *
+ * A sandbox serves its UI on an explicit `ui.` host (not the bare domain), so its endpoint is rewritten there.
  */
 export function capellaUiUrl(
   environment: string,
@@ -46,6 +49,14 @@ export function capellaUiUrl(
   const capellaEnv = environments.capella[environment];
   if (!capellaEnv?.endpoint || !capellaEnv.oid) {
     return undefined;
+  }
+  if (capellaEnv.sandbox === true) {
+    // A sandbox serves its UI on a ui. host. Its endpoint need not carry a ui./api./cloudapi.
+    // label at all (the wizard accepts any origin), and with none there is no way to know the
+    // UI host — better no link than one pointing at the API, which is where this gets printed
+    // when the user is hunting for a cluster by hand.
+    const parts = capellaLabelledOrigin(capellaEnv.endpoint);
+    return parts ? `${parts.scheme}ui.${parts.host}/databases?oid=${capellaEnv.oid}` : undefined;
   }
   const uiHost = capellaEnv.endpoint.replace(/^https:\/\/api\./, "https://");
   return `${uiHost}/databases?oid=${capellaEnv.oid}`;
@@ -91,11 +102,11 @@ export function printCapellaDebugLinks(environment: string, couchbaseClusterUuid
 }
 
 /**
- * Print what's already known about the Capella environment before calling
- * `allocate` — environment name, org id, endpoint, and the org UI link. There's
- * no cluster UUID yet at this point (the cluster doesn't exist), but the org
- * UI link alone is enough to find it later if allocation fails outright before
- * cbdinocluster logs anything cluster-specific (e.g. a project-quota error).
+ * Print what's already known about the Capella environment up front — environment name, org id, both
+ * endpoints, and the org UI link — before its cluster is allocated. Called on the functional allocate
+ * path and, earlier, by the sandbox precondition check. No cluster UUID yet (the cluster doesn't exist),
+ * but the org UI link alone is enough to find it later if allocation fails before cbdinocluster logs
+ * anything cluster-specific (e.g. a project-quota error).
  */
 export function printCapellaPreflightInfo(
   environment: string,
@@ -111,6 +122,9 @@ export function printCapellaPreflightInfo(
   }
   if (capellaEnv.endpoint) {
     console.log(`  Capella endpoint: ${capellaEnv.endpoint}`);
+  }
+  if (capellaEnv.v4Endpoint) {
+    console.log(`  Capella v4 endpoint: ${capellaEnv.v4Endpoint}`);
   }
   const uiUrl = capellaUiUrl(environment, environments);
   if (uiUrl) {

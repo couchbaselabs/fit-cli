@@ -5,6 +5,7 @@ import type { PortInUsePolicy } from "../../performers/util/performer-port.js";
 import type { CapellaCloudProvider, CbdinoclusterDef } from "../../../cluster/cluster-create/build-cluster-def.js";
 import type { ClusterExistsPolicy } from "../../../cluster/cluster-create/cluster-exists-policy.js";
 import type { PieceData } from "../../../util/non-fit/config-pieces.js";
+import type { CapellaEnvironmentOverride } from "../../util/environments.js";
 
 export const FIT_DEFINITION_TYPE = "fit";
 export const CURRENT_FIT_DEFINITION_VERSION = 1;
@@ -166,6 +167,12 @@ export interface SharedSetup {
     /** Where to get the binary, applied to every instance in this run. Omit to use the latest published release. */
     source?: CbdinoclusterSource;
   };
+  /**
+   * Control-plane coordinates for the sandbox Capella environments this file selects, keyed by
+   * the name used in `capellaEnvironment`. Credentials are deliberately not here — they come
+   * from the CAPELLA_* env vars, so this file stays safe to share.
+   */
+  capellaEnvironments?: Record<string, CapellaEnvironmentOverride>;
 }
 
 export interface PerformerSetup {

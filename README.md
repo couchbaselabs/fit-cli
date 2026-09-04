@@ -146,6 +146,20 @@ When running locally, we use Capella creds from your fit-cli config.  Generally 
 When running on CI, the user chooses what Capella environment to use (stage, dev, etc.) and we use previously-setup accounts for those. 
 cbdinocluster's cloud deployer authenticates with a Capella v4 organization API key.  By default the shared per-environment key is read from AWS Secrets Manager; override it with CAPELLA_API_KEY / CAPELLA_API_SECRET (or `config edit`).  The v2 username/password are still used for custom image deploys, server version changes, and columnar operations.
 
+### Pre-deployed sandboxes
+`sandbox` is a pre-deployed Capella environment: a control plane spun up on demand.  It works like `dev` (v2 and v4 both) with one difference — nothing about it is fixed, so nothing about it is pinned in `environments.json5`.
+
+* Its URL and org id are asked for by the wizard and written into the definition file (`setup.capellaEnvironments.sandbox`), so that file still reproduces the run.  Paste whichever URL you have — the `ui.` one from your browser is fine; the `api.` (v2) and `cloudapi.` (v4) endpoints are derived from it, and shown so you can check them.
+* Its accounts are recreated with the sandbox, so they are not in AWS Secrets Manager.  Pass them in when you run:
+
+```sh
+export CAPELLA_USER=... CAPELLA_PASS=...            # v2 control plane
+export CAPELLA_API_KEY=... CAPELLA_API_SECRET=...   # v4 organization API key
+fit run definition <file>
+```
+
+The wizard says this when it asks for the URL and org id and again in the run instructions it prints, and the runner fails fast — naming the missing vars — if any are unset before the run starts.  The internal support and override tokens do outlive a redeploy, so those alone stay in the `fit-cli/capella/sandbox` secret.
+
 ## Capabilities
 Each performer declares what it supports — a set of "caps" — over the `performerCapsFetch` gRPC call.
 There are three independent cap enums: SDK, transactions, and the performer harness itself.

@@ -245,6 +245,22 @@ const TEST_ENVIRONMENTS = {
 };
 const noFetch = (): Promise<Record<string, string>> => Promise.reject(new Error("should not fetch the AWS secret"));
 
+/** A sandbox environment as it looks once a definition file has supplied its control plane. */
+const SANDBOX_ENVIRONMENTS = {
+  ...TEST_ENVIRONMENTS,
+  capella: {
+    ...TEST_ENVIRONMENTS.capella,
+    sandbox: {
+      sandbox: true,
+      endpoint: "https://api.sbx-1234.example",
+      v4Endpoint: "https://cloudapi.sbx-1234.example",
+      oid: "oid-sandbox",
+      username: null,
+      secretId: "cap/sandbox",
+    },
+  },
+};
+
 test("ignores results-database credentials in config (now resolved from AWS Secrets Manager)", () => {
   assert.deepEqual(parseFitCliConfig(`{ version: 1, output: { resultsDb: { password: 's' } } }`), {
     version: FIT_CLI_CONFIG_VERSION,
@@ -642,4 +658,147 @@ test("ensureFitCliConfigEnv returns without creating when the user declines", as
 
   assert.equal(result.loaded, false);
   assert.equal(result.created, false);
+});
+
+test("resolveCapellaConfig takes a sandbox environment's credentials from env vars, not the secret", async () => {
+  const resolved = await resolveCapellaConfig({
+    block: "sandbox",
+    environments: SANDBOX_ENVIRONMENTS,
+    config: { version: FIT_CLI_CONFIG_VERSION },
+    env: { CAPELLA_USER: "sandbox@cb.com", CAPELLA_PASS: "sandbox-pw", CAPELLA_API_KEY: "sandbox-key", CAPELLA_API_SECRET: "sandbox-sec" },
+    // The secret is still read, but only for the two tokens that survive a redeploy.
+    fetchSecret: () => Promise.resolve({ password: "stale-pw", internalSupportToken: "support-tok", overrideToken: "override-tok" }),
+  });
+  assert.deepEqual(resolved, {
+    username: "sandbox@cb.com",
+    password: "sandbox-pw",
+    endpoint: "https://api.sbx-1234.example",
+    v4Endpoint: "https://cloudapi.sbx-1234.example",
+    organizationId: "oid-sandbox",
+    apiKey: "sandbox-key",
+    apiSecret: "sandbox-sec",
+    internalSupportToken: "support-tok",
+    overrideToken: "override-tok",
+  });
+});
+
+test("resolveCapellaConfig still resolves a sandbox when its secret can't be read", async () => {
+  const resolved = await resolveCapellaConfig({
+    block: "sandbox",
+    environments: SANDBOX_ENVIRONMENTS,
+    config: { version: FIT_CLI_CONFIG_VERSION },
+    env: { CAPELLA_USER: "sandbox@cb.com", CAPELLA_PASS: "sandbox-pw", CAPELLA_API_KEY: "sandbox-key", CAPELLA_API_SECRET: "sandbox-sec" },
+    fetchSecret: () => Promise.reject(new Error("access denied")),
+  });
+  assert.equal(resolved.password, "sandbox-pw");
+  assert.equal(resolved.internalSupportToken, undefined);
+  assert.equal(resolved.overrideToken, undefined);
+});
+
+test("resolveCapellaConfig names the env vars when a sandbox's credentials are missing", async () => {
+  await assert.rejects(
+    resolveCapellaConfig({
+      block: "sandbox",
+      environments: SANDBOX_ENVIRONMENTS,
+      config: { version: FIT_CLI_CONFIG_VERSION },
+      env: {},
+      fetchSecret: () => Promise.resolve({ password: "stale-pw", apiKey: "stale-key", apiSecret: "stale-sec" }),
+    }),
+    /CAPELLA_USER.*CAPELLA_API_SECRET/s,
+  );
+});
+
+test("resolveCapellaConfig points at the definition file when a sandbox has no control plane yet", async () => {
+  await assert.rejects(
+    resolveCapellaConfig({
+      block: "sandbox",
+      environments: {
+        ...SANDBOX_ENVIRONMENTS,
+        capella: { ...SANDBOX_ENVIRONMENTS.capella, sandbox: { sandbox: true, endpoint: null, v4Endpoint: null, oid: null, secretId: "cap/sandbox" } },
+      },
+      config: { version: FIT_CLI_CONFIG_VERSION },
+      env: {},
+      fetchSecret: noFetch,
+    }),
+    /setup\.capellaEnvironments\.sandbox/,
+  );
+});
+
+test("resolveCapellaConfig: a sandbox's env vars beat a personal config account on another environment", async () => {
+  const resolved = await resolveCapellaConfig({
+    block: "sandbox",
+    environments: SANDBOX_ENVIRONMENTS,
+    config: {
+      version: FIT_CLI_CONFIG_VERSION,
+      capella: { username: "me@cb.com", password: "my-prod-pw", apiKey: "my-key", apiSecret: "my-sec" },
+    },
+    env: { CAPELLA_USER: "sandbox@cb.com", CAPELLA_PASS: "sandbox-pw", CAPELLA_API_KEY: "sandbox-key", CAPELLA_API_SECRET: "sandbox-sec" },
+    fetchSecret: () => Promise.resolve({}),
+  });
+  assert.equal(resolved.username, "sandbox@cb.com");
+  assert.equal(resolved.password, "sandbox-pw");
+  assert.equal(resolved.apiKey, "sandbox-key");
+  assert.equal(resolved.apiSecret, "sandbox-sec");
+});
+
+test("resolveCapellaConfig: a sandbox ignores personal config credentials entirely (env-only)", async () => {
+  await assert.rejects(
+    resolveCapellaConfig({
+      block: "sandbox",
+      environments: SANDBOX_ENVIRONMENTS,
+      config: {
+        version: FIT_CLI_CONFIG_VERSION,
+        capella: { username: "me@cb.com", password: "my-prod-pw", apiKey: "my-key", apiSecret: "my-sec" },
+      },
+      env: {},
+      fetchSecret: () => Promise.resolve({}),
+    }),
+    /for the sandbox environment "sandbox"/,
+  );
+});
+
+test("resolveCapellaConfig: a personal config account still wins for a non-sandbox environment", async () => {
+  const resolved = await resolveCapellaConfig({
+    block: "dev",
+    environments: SANDBOX_ENVIRONMENTS,
+    config: {
+      version: FIT_CLI_CONFIG_VERSION,
+      capella: { username: "me@cb.com", password: "my-pw", apiKey: "my-key", apiSecret: "my-sec" },
+    },
+    env: { CAPELLA_USER: "env@cb.com", CAPELLA_PASS: "env-pw", CAPELLA_API_KEY: "env-key", CAPELLA_API_SECRET: "env-sec" },
+    fetchSecret: noFetch,
+  });
+  assert.equal(resolved.username, "me@cb.com");
+  assert.equal(resolved.password, "my-pw");
+});
+
+test("resolveCapellaConfig: a sandbox ignores the registry username too, not just config", async () => {
+  await assert.rejects(
+    resolveCapellaConfig({
+      block: "sandbox",
+      environments: {
+        ...SANDBOX_ENVIRONMENTS,
+        capella: { ...SANDBOX_ENVIRONMENTS.capella, sandbox: { ...SANDBOX_ENVIRONMENTS.capella.sandbox, username: "sdk_qe@couchbase.com" } },
+      },
+      config: { version: FIT_CLI_CONFIG_VERSION },
+      env: { CAPELLA_PASS: "p", CAPELLA_API_KEY: "k", CAPELLA_API_SECRET: "s" },
+      fetchSecret: () => Promise.resolve({}),
+    }),
+    /Could not resolve Capella username/,
+  );
+});
+
+test("resolveCapellaConfig: a sandbox skips AWS entirely when both support tokens are in the env", async () => {
+  const resolved = await resolveCapellaConfig({
+    block: "sandbox",
+    environments: SANDBOX_ENVIRONMENTS,
+    config: { version: FIT_CLI_CONFIG_VERSION },
+    env: {
+      CAPELLA_USER: "u", CAPELLA_PASS: "p", CAPELLA_API_KEY: "k", CAPELLA_API_SECRET: "s",
+      CAPELLA_INTERNAL_SUPPORT_TOKEN: "support", CAPELLA_OVERRIDE_TOKEN: "override",
+    },
+    fetchSecret: noFetch,
+  });
+  assert.equal(resolved.internalSupportToken, "support");
+  assert.equal(resolved.overrideToken, "override");
 });

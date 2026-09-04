@@ -20,8 +20,16 @@ import { askPortInUsePolicy } from "../../performers/util/ask-port-in-use-policy
 import { printDefinitionRunGuidance } from "../definition/run-guidance.js";
 import { extractPushGistVisibility, pushGist, type GistVisibility } from "../definition/push-gist.js";
 import { chooseResultsTarget } from "../../situational/choose-results-database/choose-results-database.js";
-import { loadEnvironments } from "../../util/environments.js";
-import { DEFAULT_CAPELLA_ENV } from "../../util/config.js";
+import {
+  capellaEndpointOrigin,
+  deriveCapellaSandboxEndpoints,
+  isCapellaEndpointOrigin,
+  isCapellaOrganizationId,
+  isSandboxCapellaEnvironment,
+  loadEnvironments,
+  type CapellaEnvironmentOverride,
+} from "../../util/environments.js";
+import { CAPELLA_SANDBOX_ENV_VAR_GUIDANCE, DEFAULT_CAPELLA_ENV } from "../../util/config.js";
 import {
   buildFitDefinition,
   buildFitFunctionalDefinitionFrom,
@@ -87,6 +95,8 @@ interface DefinitionBuilderState {
   instances: InstanceLifetime[];
   clusterConfigs: ClusterConfigRef[];
   fitConfigs: FitConfigRef[];
+  /** Sandbox Capella environments selected so far, and the coordinates asked for once each. */
+  capellaEnvironments: Record<string, CapellaEnvironmentOverride>;
 }
 
 async function chooseDefinitionBuilderAction(index: number): Promise<DefinitionBuilderAction> {
@@ -363,10 +373,13 @@ async function addFunctionalRun(
     let capellaPrivateEndpoint = false;
     if (connectivity === "capella") {
       capellaCloudProvider = await chooseCapellaCloudProvider(promptIdPrefix);
-      capellaEnvironment = await chooseCapellaEnvironment(promptIdPrefix);
+      capellaEnvironment = await chooseCapellaEnvironment(state, promptIdPrefix);
       if (capellaCloudProvider === "aws" || capellaCloudProvider === "gcp") {
         capellaPrivateEndpoint = await askCapellaPrivateEndpoint(promptIdPrefix, capellaCloudProvider);
       }
+    } else if (connectivity === "capella-analytics") {
+      // Capella Analytics also picks a Capella environment (incl. a sandbox); recorded at instance level.
+      capellaEnvironment = await chooseCapellaEnvironment(state, promptIdPrefix);
     }
 
     console.log(
@@ -458,18 +471,98 @@ function functionalDefinitionCluster(instance: InstanceLifetime, clusterConfigs:
   };
 }
 
-/** Prompt for which Capella environment to deploy clusters in, sourced from environments.json5. */
-async function chooseCapellaEnvironment(promptIdPrefix: string): Promise<string> {
+/** Prompt for one sandbox endpoint, accepting a scheme+host origin only (what the definition file needs). */
+async function askCapellaEndpointOrigin(
+  promptId: string,
+  message: string,
+  fallback: string,
+  example: string,
+): Promise<string> {
+  return (await input({
+    promptId,
+    message,
+    default: fallback,
+    validate: (value) => isCapellaEndpointOrigin(value) ? true : `Enter a scheme and host only, like ${example}`,
+  })).trim();
+}
+
+/**
+ * Collect a sandbox's control plane for the definition file. Its credentials deliberately
+ * don't go there, so this is also where the user is told which env vars to set.
+ */
+async function askCapellaSandboxEnvironment(
+  environment: string,
+  promptIdPrefix: string,
+): Promise<CapellaEnvironmentOverride> {
+  console.log(
+    `\n"${environment}" is a pre-deployed sandbox, so fit-cli needs its control plane spelled out.\n` +
+      `  The URL and org id below are written into the definition file, so it stays reproducible.\n` +
+      `  Its accounts are recreated with the sandbox, so those are NOT stored — set them when you run:\n` +
+      `    ${CAPELLA_SANDBOX_ENV_VAR_GUIDANCE}`,
+  );
+  const url = (await input({
+    promptId: qualifyPromptId("capella.sandbox.endpoint", promptIdPrefix),
+    message: `Capella URL for "${environment}" — the UI URL from your browser is fine (e.g. https://ui.sbx-25.sandbox.nonprod-project-avengers.com):`,
+    validate: (value) => /^https?:\/\/\S+$/i.test(value.trim()) ? true : "Enter a URL like https://ui.sbx-25.sandbox.nonprod-project-avengers.com",
+  })).trim();
+  const derived = deriveCapellaSandboxEndpoints(url);
+  let { endpoint, v4Endpoint } = derived;
+  if (derived.recognised) {
+    console.log(`  v2 control plane: ${endpoint}\n  v4 Management API: ${v4Endpoint}`);
+  } else {
+    console.log(`  ${url} isn't a ui./api./cloudapi. host, so fit-cli can't work out the two endpoints from it.`);
+    // These two go straight into the definition file, where only an origin parses — so unlike the
+    // URL above (which may carry a browser path) they are validated, and defaulted, as origins.
+    endpoint = await askCapellaEndpointOrigin(
+      qualifyPromptId("capella.sandbox.v2-endpoint", promptIdPrefix),
+      `Capella (v2) control-plane URL for "${environment}" (scheme and host only):`,
+      capellaEndpointOrigin(endpoint),
+      "https://api.sbx-25.sandbox.nonprod-project-avengers.com",
+    );
+    // Default off the endpoint just entered, not the original paste, so a correction there carries.
+    const v4Default = deriveCapellaSandboxEndpoints(endpoint);
+    v4Endpoint = await askCapellaEndpointOrigin(
+      qualifyPromptId("capella.sandbox.v4-endpoint", promptIdPrefix),
+      `Capella Management API v4 URL for "${environment}" (scheme and host only):`,
+      v4Default.recognised ? v4Default.v4Endpoint : capellaEndpointOrigin(endpoint),
+      "https://cloudapi.sbx-25.sandbox.nonprod-project-avengers.com",
+    );
+    if (endpoint === v4Endpoint) {
+      console.log(`  Note: both endpoints are ${endpoint}. If the v4 API is served elsewhere, fix it in the definition file.`);
+    }
+  }
+  const oid = (await input({
+    promptId: qualifyPromptId("capella.sandbox.oid", promptIdPrefix),
+    message: `Capella organization id (oid) for "${environment}":`,
+    validate: (value) => isCapellaOrganizationId(value)
+      ? true
+      : "Enter just the id from the Capella UI URL's oid= parameter, without the \"oid=\" prefix (e.g. 4c1d8e6a-0b2f-4a1e-9f3c-5d6e7a8b9c01).",
+  })).trim();
+  return { endpoint, v4Endpoint, oid };
+}
+
+/**
+ * Prompt for which Capella environment to deploy clusters in, sourced from environments.json5.
+ * A sandbox also has its control plane collected — once, however many runs select it.
+ */
+async function chooseCapellaEnvironment(state: DefinitionBuilderState, promptIdPrefix: string): Promise<string> {
   const capella = loadEnvironments().capella;
   const names = Object.keys(capella);
   if (names.length === 0) return DEFAULT_CAPELLA_ENV;
   // Always prompt (even with a single environment) so the choice is explicit and confirmed.
-  return select<string>({
+  const environment = await select<string>({
     promptId: qualifyPromptId("situational.capella.environment", promptIdPrefix),
     message: "Which Capella environment should clusters be created in?",
     default: names.includes(DEFAULT_CAPELLA_ENV) ? DEFAULT_CAPELLA_ENV : names[0],
-    choices: names.map((name) => ({ name: `${name} — ${capella[name].endpoint ?? "(endpoint not set)"}`, value: name })),
+    choices: names.map((name) => ({
+      name: `${name} — ${capella[name].endpoint ?? (capella[name].sandbox ? "(pre-deployed sandbox; you provide the URL and org id)" : "(endpoint not set)")}`,
+      value: name,
+    })),
   });
+  if (isSandboxCapellaEnvironment(environment) && state.capellaEnvironments[environment] === undefined) {
+    state.capellaEnvironments[environment] = await askCapellaSandboxEnvironment(environment, promptIdPrefix);
+  }
+  return environment;
 }
 
 async function addSituationalRun(
@@ -484,11 +577,17 @@ async function addSituationalRun(
   const onPortInUse = await askPortInUsePolicy(promptIdPrefix);
   // One prompt for where results go (hosted env, with its host, or local); then the Capella env.
   const { mode: databaseMode, resultsEnvironment } = await chooseResultsTarget(promptIdPrefix);
-  const capellaEnvironment = await chooseCapellaEnvironment(promptIdPrefix);
+  const capellaEnvironment = await chooseCapellaEnvironment(state, promptIdPrefix);
   const selection = await selectFitTests(execution, SITUATIONAL_TEST_DOMAIN, promptIdPrefix);
 
+  // A situational instance is one box configured for one Capella env (cbdinocluster init is per-box),
+  // so only reuse it when the chosen env matches; a different env (e.g. a sandbox) needs its own instance
+  // rather than being silently run against the existing one's env.
   const currentInstance = lastSituationalInstance(state);
-  if (currentInstance?.clusterlessSessions) {
+  if (
+    currentInstance?.clusterlessSessions &&
+    (currentInstance.setup?.capellaEnvironment ?? DEFAULT_CAPELLA_ENV) === capellaEnvironment
+  ) {
     // The instance's execution mode (and its aws/gcp.privateEndpoint, if any) was
     // fixed when it was created, so reuse whatever PE-ness that instance already has.
     const privateEndpoint =
@@ -554,7 +653,7 @@ export async function createFitDefinition(options?: { format?: DefinitionFormat;
     "\nThis builds a reusable fit definition file. Nothing is set up — no cluster is allocated, no performer built, no tests run.\n",
   );
 
-  const state: DefinitionBuilderState = { gerritRefAsked: false, instances: [], clusterConfigs: [], fitConfigs: [] };
+  const state: DefinitionBuilderState = { gerritRefAsked: false, instances: [], clusterConfigs: [], fitConfigs: [], capellaEnvironments: {} };
   let actionIndex = 1;
 
   while (true) {
@@ -581,6 +680,7 @@ export async function createFitDefinition(options?: { format?: DefinitionFormat;
 
   const definition: FitDefinition = buildFitDefinition({
     ...(state.gerritRef ? { gerritRef: state.gerritRef } : {}),
+    capellaEnvironments: state.capellaEnvironments,
     instances: state.instances,
     clusterConfigs: state.clusterConfigs,
     fitConfigs: state.fitConfigs,
@@ -605,7 +705,7 @@ export async function createFitDefinition(options?: { format?: DefinitionFormat;
     console.log(`✓ Gist created: ${gist.url}`);
   }
 
-  printDefinitionRunGuidance(result.path);
+  printDefinitionRunGuidance(result.path, Object.keys(state.capellaEnvironments).length > 0);
 
   return { artifacts: [result.artifact], details: [] };
 }

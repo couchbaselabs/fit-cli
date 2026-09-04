@@ -967,3 +967,95 @@ test("localPathForUrl falls back to the last path segment for a gist URL with no
   const path = localPathForUrl("https://gist.github.com/someuser/abc123def456", "/home/test");
   assert.match(path, /\/abc123def456$/);
 });
+
+const SANDBOX_CAPELLA = `
+version: 1
+type: fit
+setup:
+  capellaEnvironments:
+    sandbox:
+      endpoint: https://api.sbx-1234.nonprod-project-avengers.com
+      v4Endpoint: https://cloudapi.sbx-1234.nonprod-project-avengers.com
+      oid: 4c1d8e6a-0b2f-4a1e-9f3c-5d6e7a8b9c01
+instances:
+  - localhost: {}
+    setup:
+      capellaEnvironment: sandbox
+    clusters: []
+    clusterlessSessions:
+      - performer:
+          image: java-fit-performer:main
+        runs:
+          - type: situational
+            tests:
+              presets: [all]
+            situational:
+              database:
+                mode: local
+`;
+
+test("setup.capellaEnvironments carries a sandbox environment's control plane", () => {
+  const definition = parseDefinition(SANDBOX_CAPELLA);
+  assert.deepEqual(definition.setup?.capellaEnvironments, {
+    sandbox: {
+      endpoint: "https://api.sbx-1234.nonprod-project-avengers.com",
+      v4Endpoint: "https://cloudapi.sbx-1234.nonprod-project-avengers.com",
+      oid: "4c1d8e6a-0b2f-4a1e-9f3c-5d6e7a8b9c01",
+    },
+  });
+});
+
+test("setup.capellaEnvironments requires every field, so a half-filled block fails fast", () => {
+  assert.throws(
+    () => parseDefinition(SANDBOX_CAPELLA.replace(/^ {6}oid: .*$/m, "")),
+    (err: Error) => err instanceof InvalidDefinitionError && /setup\.capellaEnvironments\.sandbox\.oid/.test(err.message),
+  );
+});
+
+test("setup.capellaEnvironments rejects credentials, which belong in env vars", () => {
+  assert.throws(
+    () => parseDefinition(SANDBOX_CAPELLA.replace(/^ {6}oid: (.*)$/m, "      oid: $1\n      password: hunter2")),
+    (err: Error) => err instanceof InvalidDefinitionError && /"password"/.test(err.message),
+  );
+});
+
+test("setup.capellaEnvironments strips a trailing slash off a hand-written URL", () => {
+  const definition = parseDefinition(
+    SANDBOX_CAPELLA.replace("https://api.sbx-1234.nonprod-project-avengers.com", "https://api.sbx-1234.nonprod-project-avengers.com/"),
+  );
+  assert.equal(definition.setup?.capellaEnvironments?.sandbox?.endpoint, "https://api.sbx-1234.nonprod-project-avengers.com");
+});
+
+test("setup.capellaEnvironments rejects an endpoint that isn't a URL", () => {
+  assert.throws(
+    () => parseDefinition(SANDBOX_CAPELLA.replace("https://api.sbx-1234.nonprod-project-avengers.com", "api.sbx-1234.example")),
+    (err: Error) => err instanceof InvalidDefinitionError && /must be an http\(s\) origin/.test(err.message),
+  );
+});
+
+test("setup.capellaEnvironments rejects an endpoint that carries a path (origin only)", () => {
+  assert.throws(
+    () =>
+      parseDefinition(
+        SANDBOX_CAPELLA.replace(
+          "https://api.sbx-1234.nonprod-project-avengers.com",
+          "https://api.sbx-1234.nonprod-project-avengers.com/databases",
+        ),
+      ),
+    (err: Error) => err instanceof InvalidDefinitionError && /must be an http\(s\) origin/.test(err.message),
+  );
+});
+
+test("setup.capellaEnvironments rejects an endpoint with whitespace in the host", () => {
+  assert.throws(
+    () => parseDefinition(SANDBOX_CAPELLA.replace("https://api.sbx-1234.nonprod-project-avengers.com", "https://api.sbx-1234 .com")),
+    (err: Error) => err instanceof InvalidDefinitionError && /must be an http\(s\) origin/.test(err.message),
+  );
+});
+
+test("setup.capellaEnvironments rejects an oid that still carries its oid= prefix", () => {
+  assert.throws(
+    () => parseDefinition(SANDBOX_CAPELLA.replace(/oid: (\S+)/, "oid: oid=$1")),
+    (err: Error) => err instanceof InvalidDefinitionError && /must be a Capella organization id/.test(err.message),
+  );
+});

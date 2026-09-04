@@ -24,6 +24,9 @@
   // The username is the shared account below unless overridden. Results creds always from the secret.
   //
   // A null non-secret value means "not yet provided" — selecting that block fails fast.
+  // The exception is a `sandbox: true` Capella block (see `sandbox`), whose endpoints and org
+  // id are supplied per run from the definition file and whose credentials come from
+  // env vars, because a pre-deployed sandbox control plane is recreated too often to pin.
   // bun run secrets set capella/dev password='<password>' apiKey='<key>' apiSecret='<secret>'
   // bun run secrets set results/dev password='<password>'
 
@@ -188,6 +191,23 @@
       oid: "5ae82d34-5da8-4313-af5f-90ea4142a4c6",
       username: "sdk_qe@couchbase.com",
       secretId: "fit-cli/capella/stage",
+    },
+    // A pre-deployed sandbox: a Capella control plane spun up on demand, so its
+    // endpoints, org and accounts are all short-lived and none of them can be pinned
+    // here. The wizard asks for its URL (the ui./api./cloudapi. hosts all resolve to the
+    // same sandbox, so any one of them yields the two endpoints below) and its org id,
+    // and bakes them into the definition file (`setup.capellaEnvironments.sandbox`), so that
+    // file still reproduces the run; the credentials are passed in as env vars at run time —
+    // CAPELLA_USER/CAPELLA_PASS (v2) and CAPELLA_API_KEY/CAPELLA_API_SECRET (v4).
+    // Only the two support tokens are stable enough to keep in the secret:
+    //   bun run secrets set capella/sandbox internalSupportToken='<token>' overrideToken='<token>'
+    sandbox: {
+      sandbox: true,
+      endpoint: null,
+      v4Endpoint: null,
+      oid: null,
+      username: null,
+      secretId: "fit-cli/capella/sandbox",
     },
   },
   results: {

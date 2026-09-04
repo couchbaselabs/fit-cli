@@ -25,9 +25,11 @@ import {
   type InstanceLifetime,
   type InstanceMode,
   type SessionLifetime,
+  type SharedSetup,
   type SituationalDatabaseMode,
   type TestsSection,
 } from "./types.js";
+import type { CapellaEnvironmentOverride } from "../../util/environments.js";
 import { describeDefinition } from "./generate-desc.js";
 
 const CLUSTER_CONFIG_ID = "cluster-0";
@@ -62,9 +64,9 @@ export interface DefinitionInputs {
    */
   analytics?: boolean;
   /**
-   * Capella environment to create this cluster in (a key under `capella` in
-   * environments.json5 — e.g. "dev"). Only meaningful when the cluster is a
-   * Capella cloud cluster (i.e. `cluster.def.capellaCloudProvider` is set).
+   * Capella environment for this cluster (a `capella` key in environments.json5, e.g. "dev" or a sandbox).
+   * Emitted on the cluster's `capella` block for a Capella cloud cluster, or at instance level for
+   * Capella Analytics (which has no `capella` block).
    */
   capellaEnvironment?: string;
   /**
@@ -186,6 +188,8 @@ interface BuiltFunctionalInstance {
 }
 
 function buildFunctionalInstance(inputs: DefinitionInputs): BuiltFunctionalInstance {
+  const capellaAnalytics =
+    (inputs.analytics ?? false) && inputs.cluster.kind === "cbdinocluster" && (inputs.cluster.def.capellaAnalytics ?? false);
   const clusterConfigRef: ClusterConfigRef = inputs.cluster.kind === "connection"
     ? {
         id: CLUSTER_CONFIG_ID,
@@ -217,6 +221,8 @@ function buildFunctionalInstance(inputs: DefinitionInputs): BuiltFunctionalInsta
       })();
   const instance: InstanceLifetime = {
     ...(inputs.instance ?? { localhost: {} }),
+    // Capella Analytics has no cluster-level `capella` block, so its environment goes at instance level.
+    ...(capellaAnalytics && inputs.capellaEnvironment ? { setup: { capellaEnvironment: inputs.capellaEnvironment } } : {}),
     clusters: [
       {
         clusterConfig: CLUSTER_CONFIG_ID,
@@ -241,7 +247,6 @@ function buildFunctionalInstance(inputs: DefinitionInputs): BuiltFunctionalInsta
       },
     ],
   };
-  const capellaAnalytics = (inputs.analytics ?? false) && inputs.cluster.kind === "cbdinocluster" && (inputs.cluster.def.capellaAnalytics ?? false);
   return { instance, clusterConfigRef, ...(inputs.analytics ? { fitConfigRef: analyticsFitConfigRef(inputs.sdk, capellaAnalytics) } : {}) };
 }
 
@@ -280,12 +285,18 @@ function buildSituationalInstance(inputs: SituationalDefinitionInputs): Instance
 
 export function buildFitDefinition(inputs: {
   gerritRef?: string;
+  /** Per-run coordinates of any sandbox environment the instances select; never credentials. */
+  capellaEnvironments?: Record<string, CapellaEnvironmentOverride>;
   instances: InstanceLifetime[];
   clusterConfigs?: ClusterConfigRef[];
   fitConfigs?: FitConfigRef[];
 }): FitDefinition {
-  const setup = inputs.gerritRef
-    ? { repos: { "transactions-fit-performer": { gerritRef: inputs.gerritRef } } }
+  const hasCapellaEnvironments = Object.keys(inputs.capellaEnvironments ?? {}).length > 0;
+  const setup: SharedSetup | undefined = inputs.gerritRef || hasCapellaEnvironments
+    ? {
+        ...(inputs.gerritRef ? { repos: { "transactions-fit-performer": { gerritRef: inputs.gerritRef } } } : {}),
+        ...(hasCapellaEnvironments ? { capellaEnvironments: inputs.capellaEnvironments } : {}),
+      }
     : undefined;
   const base: FitDefinition = {
     version: CURRENT_FIT_DEFINITION_VERSION,
@@ -383,6 +394,11 @@ function commentLinesFor(key: string, value: unknown, parentKey: string | undefi
       ];
     case "setup":
       return [];
+    case "capellaEnvironments":
+      return [
+        "Where the sandbox Capella environment(s) below live, captured when this file was generated.",
+        "Credentials are NOT here: pass CAPELLA_USER/CAPELLA_PASS and CAPELLA_API_KEY/CAPELLA_API_SECRET to run this.",
+      ];
     case "clusters":
       return parentKey === "instances" && Array.isArray(value) && value.length === 0
         ? ["FIT/SIT creates its own clusters, so none are set up here."]
