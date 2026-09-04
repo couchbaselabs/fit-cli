@@ -142,8 +142,8 @@
               type: 'situational',
               situational: {
                 database: {
-                  // Where situational timeseries results land.
-                  mode: 'hosted',
+                  // Situational results are written to files, uploaded to S3, then ingested.
+                  mode: 'files',
                 },
               },
               tests: {
