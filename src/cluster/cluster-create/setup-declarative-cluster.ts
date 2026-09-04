@@ -37,6 +37,7 @@ import { CBDINOCLUSTER_URL, DEFAULT_CAPELLA_ENV } from "../../fit/util/config.js
 import { printCapellaDebugLinks } from "./capella-debug-links.js";
 import { buildCbdinoclusterFromPr, installCbdinoclusterRemote } from "./install-cbdinocluster.js";
 import { installCaoCrdsAndAdmission } from "./install-cao-tools.js";
+import { cngKubernetesBackend, logOpenShiftCapacity } from "./cng-openshift.js";
 import { enableIngresses } from "./cao-ingress.js";
 import { type ClusterExistsPolicy } from "./cluster-exists-policy.js";
 import { loadEnvironments } from "../../fit/util/environments.js";
@@ -1018,6 +1019,9 @@ async function allocate(
     console.log("\n✓ setup-cluster: cbdinocluster allocated the cluster");
   } catch (err) {
     console.error(`\n✗ setup-cluster: cbdinocluster failed to allocate the cluster: ${(err as Error).message}`);
+    if (cng && cngKubernetesBackend() === "openshift") {
+      await logOpenShiftCapacity(execution, "after allocate failed");
+    }
     return FAILED({ cbdinocluster });
   }
 

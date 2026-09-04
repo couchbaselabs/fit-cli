@@ -20,6 +20,8 @@
  *   bun src/cluster/cluster-create/cng-openshift.ts print-oc-install [--version 4.10.67]
  *   # Print the pre-flight cleanup script:
  *   bun src/cluster/cluster-create/cng-openshift.ts print-preflight
+ *   # Print the ROSA capacity/scheduling diagnostic script:
+ *   bun src/cluster/cluster-create/cng-openshift.ts print-capacity
  *   # Print the k8s block fit-cli uploads, for a given home + context:
  *   bun src/cluster/cluster-create/cng-openshift.ts k8s-block /home/ubuntu my-context
  *   # Provision oc + login + pre-flight + cao tools on a saved instance dir
@@ -217,20 +219,62 @@ export async function runOpenShiftPreflight(execution: OpenShiftExecutor): Promi
 }
 
 /**
- * Post-login sanity diagnostics: `oc get nodes` and `oc get couchbaseclusters -A`.
- * Both are NonFatal — failures are logged but don't block the setup.
+ * Shell script capturing whether the shared ROSA cluster can actually fit the
+ * cluster we're about to allocate — or, run after a failure, why it couldn't.
  */
-export async function ocPostLoginDiagnostics(execution: OpenShiftExecutor): Promise<void> {
-  const checks: [string, string[]][] = [
-    ["oc", ["get", "nodes"]],
-    ["oc", ["get", "couchbaseclusters", "-A"]],
-  ];
-  for (const [cmd, args] of checks) {
-    try {
-      await execution.run(cmd, args);
-    } catch {
-      console.warn(`→ setup-cluster: ${cmd} ${args.join(" ")} failed (non-fatal)`);
-    }
+export function openshiftCapacityScript(): string {
+  return [
+    "set -u",
+    // Self-guarding, so this stays harmless on a box that never got as far as
+    // installing oc — otherwise every line below emits its own "not found".
+    // Worded so it can't be mistaken for a clean bill of health: run after a failed
+    // allocate, "oc is missing" is itself a strong lead, and a softer message ("skipped")
+    // would read the same as a healthy cluster.
+    'if ! command -v oc >/dev/null 2>&1; then',
+    '  echo "→ ROSA: CAPACITY UNKNOWN — oc is not on PATH, so nothing below was checked"',
+    "  exit 0",
+    "fi",
+    'echo "→ ROSA: nodes"',
+    "oc get nodes -o custom-columns='NODE:.metadata.name,STATUS:.status.conditions[-1].type," +
+      "TYPE:.metadata.labels.node\\.kubernetes\\.io/instance-type," +
+      "CPU:.status.allocatable.cpu,MEM:.status.allocatable.memory' 2>&1 || true",
+    // Requested-vs-allocatable per node: these percentages are what actually predict
+    // a scheduling failure, and `describe` is the only place oc surfaces them.
+    'echo "→ ROSA: requested vs allocatable"',
+    "for n in $(oc get nodes -o name 2>/dev/null || true); do",
+    '  printf "  %s\\n" "${n#node/}"',
+    '  oc describe "$n" 2>/dev/null | sed -n "/Allocated resources/,/hugepages/p" \\',
+    '    | grep -E "^[[:space:]]+(cpu|memory)[[:space:]]" || true',
+    "done",
+    // The scheduler's own explanation, deduped. This is the line that names the cause
+    // outright, so it earns its place even when everything is healthy.
+    'echo "→ ROSA: FailedScheduling events (deduped)"',
+    "ev=$(oc get events -A --field-selector reason=FailedScheduling" +
+      " -o jsonpath='{range .items[*]}{.message}{\"\\n\"}{end}' 2>/dev/null" +
+      // Drop the preemption tail — boilerplate that would defeat the dedup.
+      " | sed 's/\\. no new claims.*//' | sort | uniq -c | sort -rn | head -5 || true)",
+    'printf "%s\\n" "${ev:-  (none)}"',
+    'echo "→ ROSA: pending pods by namespace"',
+    "pp=$(oc get pods -A --field-selector=status.phase=Pending --no-headers 2>/dev/null" +
+      " | awk '{print $1}' | sort | uniq -c | sort -rn | head -12 || true)",
+    'printf "%s\\n" "${pp:-  (none)}"',
+    // The backlog a previous run left behind: on a starved cluster these never reach
+    // Available, and they starve the next run further.
+    'echo "→ ROSA: couchbase clusters"',
+    // Capped: this is one line per cluster and the whole point is that the backlog
+    // grows without bound when the cluster is wedged. 30 is well past the worst seen
+    // (8) while still being a limit.
+    "oc get couchbaseclusters -A 2>&1 | head -30 || true",
+  ].join("\n");
+}
+
+export async function logOpenShiftCapacity(execution: OpenShiftExecutor, when: string): Promise<void> {
+  try {
+    await execution.run("sh", ["-lc", openshiftCapacityScript()], undefined, {
+      display: `ROSA capacity check (${when})`,
+    });
+  } catch {
+    console.warn(`→ setup-cluster: ROSA capacity check (${when}) failed (non-fatal)`);
   }
 }
 
@@ -310,7 +354,7 @@ export async function provisionRemoteOpenShift(
   console.log(`\n→ setup-cluster: preparing OpenShift (ROSA) on ${execution.description} for CNG…`);
   await installOcRemote(execution, version);
   await ocLogin(execution, creds);
-  await ocPostLoginDiagnostics(execution);
+  await logOpenShiftCapacity(execution, "before allocate");
   const context = await currentOcContext(execution);
   // Pre-flight temporarily disabled — see https://github.com/couchbaselabs/fit-cli/issues/TBD
   // await runOpenShiftPreflight(execution);
@@ -343,6 +387,10 @@ if (isMain(import.meta.url)) {
       console.log(openshiftPreflightScript());
       return;
     }
+    if (action === "print-capacity") {
+      console.log(openshiftCapacityScript());
+      return;
+    }
     if (action === "k8s-block") {
       console.log(YAML.stringify(buildOpenShiftK8sBlock(argv[1] ?? "/home/ubuntu", argv[2] ?? "my-context")));
       return;
@@ -361,6 +409,7 @@ if (isMain(import.meta.url)) {
         "Usage:\n" +
           "  cng-openshift.ts print-oc-install [--version 4.10.67]\n" +
           "  cng-openshift.ts print-preflight\n" +
+          "  cng-openshift.ts print-capacity\n" +
           "  cng-openshift.ts k8s-block <home-dir> <context>\n" +
           "  cng-openshift.ts --dir <instance-dir> [--user ubuntu] [--version 4.10.67]\n" +
           "  cng-openshift.ts --instance <ec2-id> [--user ubuntu] [--version 4.10.67]",
