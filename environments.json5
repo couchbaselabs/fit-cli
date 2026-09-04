@@ -3,9 +3,9 @@
   // plus a POINTER (secretId) to where the secrets live in AWS Secrets Manager —
   // no secret values are committed.
   //
-  // Which environment a run uses is chosen in the definition file:
-  //   capella  → instances[*].setup.capellaEnvironment   (default 'prod')
-  //   results  → runs[*].situational.database.resultsEnvironment   (default 'prod'; used to be 'dev')
+  // Which environment gets used:
+  //   capella  → instances[*].setup.capellaEnvironment in the definition file   (default 'prod')
+  //   results  → fit query-runs --env <name>   (default 'prod'; used to be 'dev')
   //
   // Only the passwords and API keys live in AWS Secrets Manager now (us-west-2); everything else
   // (endpoints, oid, the shared Capella username, results host) is non-secret and lives here.
@@ -74,7 +74,7 @@
     // That will hopefully be better on prod.
     defaultCapellaEnvironment: "prod",
 
-    // Default results environment (a key under `results` below) when the definition file doesn't specify one.
+    // Default results environment (a key under `results` below) when `fit query-runs --env` isn't given one.
     // This is the database and UI for FIT/SIT and FIT/PERF results.
     defaultResultsEnvironment: "prod",
 

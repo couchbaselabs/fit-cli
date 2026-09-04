@@ -703,8 +703,7 @@ export function buildAutoConfig(
     log.push({ field: "cloud.aws.*", source: "--disable-aws", found: false });
   }
 
-  // Output section: default definition format. Results-DB credentials come from
-  // AWS Secrets Manager now (keyed by the definition's resultsEnvironment), not config.
+  // Output section: default definition format.
   const formatValue = resolveField(log, "output.format", args.outputFormat, "--output-format", [
     { name: "FIT_OUTPUT_FORMAT", value: env.FIT_OUTPUT_FORMAT },
   ]);

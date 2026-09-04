@@ -30,8 +30,7 @@
               },
               situational: {
                 database: {
-                  mode: 'hosted',
-                  resultsEnvironment: 'dev',
+                  mode: 'files',
                 },
               },
             },

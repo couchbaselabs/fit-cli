@@ -25,9 +25,7 @@
               },
               situational: {
                 database: {
-                  mode: 'hosted',
-                  // used to go to 'dev'
-                  resultsEnvironment: 'prod',
+                  mode: 'files',
                 },
                 privateEndpoint: {},
               },
