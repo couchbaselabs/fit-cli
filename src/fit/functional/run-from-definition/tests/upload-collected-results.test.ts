@@ -12,8 +12,11 @@ import { join } from "node:path";
 import test from "node:test";
 import { ensureRunDir } from "../../../../util/non-fit/replay.js";
 import { run } from "../../../../util/non-fit/proc.js";
-import { uploadCollectedResults, type ResultsCollector } from "../run-from-definition.js";
+import { needsResultsUpload, uploadCollectedResults, type ResultsCollector } from "../run-from-definition.js";
 import { RESULTS_BUCKET } from "../../../situational/upload-results/upload-results.js";
+
+/** Publishing is gated on CI, so the upload tests opt in explicitly. */
+const CI_ENV = { GITHUB_ACTIONS: "true" } as NodeJS.ProcessEnv;
 
 /** A context whose methods really execute against the local filesystem. */
 function realContext(kind: "local" | "remote"): ResultsCollector {
@@ -76,7 +79,7 @@ test("remote happy path: archives, extracts, uploads the extracted copy, keeps o
   const resultsDir = writeResultsDir(box);
   const receipts: UploadReceipt[] = [];
 
-  const output = await uploadCollectedResults(realContext("remote"), resultsDir, runDir, "11111111-2222-4333-8444-555555555555", capturingUpload(receipts));
+  const output = await uploadCollectedResults(realContext("remote"), resultsDir, runDir, "11111111-2222-4333-8444-555555555555", capturingUpload(receipts), CI_ENV);
 
   assert.equal(receipts.length, 1);
   assert.equal(receipts[0]?.dir, join(runDir, "results"));
@@ -94,7 +97,7 @@ test("local happy path: uploads straight from the checkout, no archive made", as
   const resultsDir = writeResultsDir(box);
   const receipts: UploadReceipt[] = [];
 
-  const output = await uploadCollectedResults(realContext("local"), resultsDir, runDir, "11111111-2222-4333-8444-555555555555", capturingUpload(receipts));
+  const output = await uploadCollectedResults(realContext("local"), resultsDir, runDir, "11111111-2222-4333-8444-555555555555", capturingUpload(receipts), CI_ENV);
 
   assert.equal(receipts[0]?.dir, resultsDir);
   assert.equal(output.artifacts.length, 0);
@@ -105,7 +108,7 @@ test("missing results dir: warns and uploads nothing", async () => {
   const { box, runDir } = tempDirs();
   const receipts: UploadReceipt[] = [];
 
-  const output = await uploadCollectedResults(realContext("remote"), join(box, "results"), runDir, "11111111-2222-4333-8444-555555555555", capturingUpload(receipts));
+  const output = await uploadCollectedResults(realContext("remote"), join(box, "results"), runDir, "11111111-2222-4333-8444-555555555555", capturingUpload(receipts), CI_ENV);
 
   assert.equal(receipts.length, 0);
   assert.deepEqual(output, { artifacts: [], details: [] });
@@ -116,7 +119,7 @@ test("upload failure: the error propagates and the extracted copy stays for reco
   const resultsDir = writeResultsDir(box);
 
   await assert.rejects(
-    uploadCollectedResults(realContext("remote"), resultsDir, runDir, "11111111-2222-4333-8444-555555555555", () => Promise.reject(new Error("S3 says no"))),
+    uploadCollectedResults(realContext("remote"), resultsDir, runDir, "11111111-2222-4333-8444-555555555555", () => Promise.reject(new Error("S3 says no")), CI_ENV),
     /S3 says no/,
   );
 
@@ -137,9 +140,64 @@ test("stale extraction and archives from a previous attempt are cleared, not re-
   writeFileSync(join(runDir, "results.tar.gz"), "stale");
   const receipts: UploadReceipt[] = [];
 
-  await uploadCollectedResults(realContext("remote"), resultsDir, runDir, "11111111-2222-4333-8444-555555555555", capturingUpload(receipts));
+  await uploadCollectedResults(realContext("remote"), resultsDir, runDir, "11111111-2222-4333-8444-555555555555", capturingUpload(receipts), CI_ENV);
 
   // Only the fresh run was uploaded, and the stale archive is gone.
   assert.deepEqual(Object.keys(receipts[0]?.runDirs ?? {}), ["aaaaaaaa"]);
   assert.ok(!existsSync(join(runDir, "results.tar.gz")));
+});
+
+test("local outside CI: preserves the results into the run dir, uploads nothing", async () => {
+  const { box, runDir } = tempDirs();
+  const resultsDir = writeResultsDir(box);
+  const receipts: UploadReceipt[] = [];
+
+  const output = await uploadCollectedResults(realContext("local"), resultsDir, runDir, "11111111-2222-4333-8444-555555555555", capturingUpload(receipts), {});
+
+  assert.equal(receipts.length, 0);
+  assert.deepEqual(output.artifacts, []);
+  // No tar - just a copy, so the summary table points at where it landed.
+  assert.ok(!existsSync(join(runDir, "results.tar")));
+  const preservedDir = join(runDir, "results");
+  assert.deepEqual(output.details, [{ label: "Preserved results", value: preservedDir }]);
+  assert.ok(existsSync(join(preservedDir, "aaaaaaaa", "run.json5")));
+  // The driver's own files are untouched too - no AWS call was needed to get here.
+  assert.ok(existsSync(join(resultsDir, "aaaaaaaa", "run.json5")));
+});
+
+test("remote outside CI: still collects the tar, uploads nothing, keeps the extracted copy", async () => {
+  const { box, runDir } = tempDirs();
+  const resultsDir = writeResultsDir(box);
+  const receipts: UploadReceipt[] = [];
+
+  const output = await uploadCollectedResults(realContext("remote"), resultsDir, runDir, "11111111-2222-4333-8444-555555555555", capturingUpload(receipts), {});
+
+  assert.equal(receipts.length, 0);
+  // The tar is still this run's artifact, and the extracted tree stays since nothing else has the data.
+  assert.deepEqual(output.artifacts.map((a) => a.filename.endsWith("results.tar")), [true]);
+  assert.ok(existsSync(join(runDir, "results", "aaaaaaaa")));
+  assert.ok(!existsSync(`${resultsDir}.tar`));
+});
+
+/**
+ * The AWS preflight exists for the upload, so it has to be gated the same way -
+ * a local run outside CI never uploads and so must not demand credentials.
+ */
+const SITUATIONAL_GROUP = [{ type: "situational" }] as unknown as Parameters<typeof needsResultsUpload>[0];
+const FUNCTIONAL_GROUP = [{ type: "functional" }] as unknown as Parameters<typeof needsResultsUpload>[0];
+
+test("a situational run outside CI needs no AWS credentials, since it won't upload", () => {
+  assert.equal(needsResultsUpload(SITUATIONAL_GROUP, 0, {}), false);
+});
+
+test("a situational run in CI needs AWS credentials for the upload", () => {
+  assert.equal(needsResultsUpload(SITUATIONAL_GROUP, 0, CI_ENV), true);
+});
+
+test("a functional run needs no results upload even in CI", () => {
+  assert.equal(needsResultsUpload(FUNCTIONAL_GROUP, 0, CI_ENV), false);
+});
+
+test("groups before the resume point don't count", () => {
+  assert.equal(needsResultsUpload(SITUATIONAL_GROUP, 1, CI_ENV), false);
 });

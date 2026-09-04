@@ -31,7 +31,7 @@
  * run state so `--resume-at` can pick it back up.
  */
 import { randomUUID } from "node:crypto";
-import { copyFileSync, mkdirSync, rmSync } from "node:fs";
+import { copyFileSync, cpSync, mkdirSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   artifactFromPath,
@@ -100,6 +100,7 @@ import { generateFitConfiguration } from "../../shared/fit-configuration/generat
 import { resourceCreationPiece, type ClusterCreatingConfig } from "../util/build-fit-configuration.js";
 import { generateSituationalConfiguration } from "../../situational/configuration/generate-situational-configuration.js";
 import { RESULTS_BUCKET, uploadSituationalResults } from "../../situational/upload-results/upload-results.js";
+import { artifactUploadEnabled } from "../../util/aws/upload-run-artifacts.js";
 import { DEFAULT_CBDINO_SETTINGS, SITUATIONAL_RESULTS_DIR_NAME, type CbdinoSettings } from "../../situational/configuration/build-situational-configuration.js";
 import { loadEnvironments } from "../../util/environments.js";
 import {
@@ -385,6 +386,19 @@ function isCapellaAnalyticsGroup(group: ResolvedExecutionGroup): boolean {
 
 function isCapellaGroup(group: ResolvedExecutionGroup): boolean {
   return group.type === "functional" && group.cbdinocluster?.capella !== undefined;
+}
+
+/**
+ * Situational runs upload their result files to S3, but only from CI - a local run
+ * leaves them on disk (see uploadCollectedResults). So only ask for AWS credentials
+ * when the upload will actually happen.
+ */
+export function needsResultsUpload(
+  executionGroups: ResolvedExecutionGroup[],
+  startCycleIndex: number,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return artifactUploadEnabled(env) && executionGroups.slice(startCycleIndex).some((group) => group.type === "situational");
 }
 
 /**
@@ -1113,6 +1127,12 @@ export type ResultsCollector = Pick<
  * (test-driver/results, one per run) off the execution host into this run's
  * artifact dir, then upload them to the results S3 bucket, where a downstream
  * job loads them into the results database.
+ *
+ * Collection and publishing are independent:
+ *   - local runs already have their result files;
+ *   - remote runs collect and extract them first;
+ *   - CI publishes the resulting files to S3;
+ *   - non-CI runs preserve them locally.
  */
 export async function uploadCollectedResults(
   execution: ResultsCollector,
@@ -1120,6 +1140,7 @@ export async function uploadCollectedResults(
   localRunDir: string,
   situationalRunId: string,
   upload: typeof uploadSituationalResults = uploadSituationalResults,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<RunOutput> {
   if (!(await execution.pathExists(driverResultsDir))) {
     fitCliWarn(
@@ -1131,6 +1152,17 @@ export async function uploadCollectedResults(
 
   // A local run has the files on this machine already, so upload them directly.
   if (execution.kind === "local") {
+    // Publish from CI only, so a local run needs no AWS. upload-results.ts uploads by hand.
+    if (!artifactUploadEnabled(env)) {
+      // removeTree wipes driverResultsDir at the start of the next situational
+      // run, so copy the results into this run's artifact dir now, or a second
+      // local run in a row loses the first one's results with nothing preserved.
+      const localResultsDir = join(localRunDir, SITUATIONAL_RESULTS_DIR_NAME);
+      rmSync(localResultsDir, { recursive: true, force: true });
+      cpSync(driverResultsDir, localResultsDir, { recursive: true });
+      console.log(`\nResult files preserved to ${localResultsDir}. Not uploaded: results go to S3 from CI only.`);
+      return { artifacts: [], details: [{ label: "Preserved results", value: localResultsDir }] };
+    }
     return upload(driverResultsDir, RESULTS_BUCKET, situationalRunId);
   }
 
@@ -1154,6 +1186,13 @@ export async function uploadCollectedResults(
   } finally {
     // A cleanup failure here must not fail the upload or hide the real error.
     await execution.removeTree(remoteTar).catch(() => {});
+  }
+
+  // The tar is the artifact either way. Outside CI keep the extracted copy too:
+  // an unpacked tree is easier to read than a tar.
+  if (!artifactUploadEnabled(env)) {
+    console.log(`\nCollected result files to ${localResultsDir}. Not uploaded: results go to S3 from CI only.`);
+    return { artifacts, details: [] };
   }
 
   const uploaded = await upload(localResultsDir, RESULTS_BUCKET, situationalRunId);
@@ -1966,13 +2005,9 @@ export async function runFromDefinition(
   // Check this before anything else that might need AWS — including GitHub credentials
   // below, whose own AWS Secrets Manager fallback would otherwise produce a confusing
   // "localhost.github.user not found" error when the real problem is AWS credentials.
-  // Files mode also uploads to S3 from this machine, so it needs AWS credentials
-  // even under forced localhost. Better to fail here than after a multi-hour run.
-  const needsResultsUpload = executionGroups
-    .slice(startCycleIndex)
-    .some((group) => group.type === "situational" && group.runs.some((run) => run.databaseMode === "files"));
+  // Better to fail here than after a multi-hour run.
   let awsCredentials: AwsCredentials | undefined;
-  if (willRunOnAws || needsResultsUpload) {
+  if (willRunOnAws || needsResultsUpload(executionGroups, startCycleIndex)) {
     const result = await checkAwsCredentials();
     if (!result.ok) {
       fitCliError({ classification: "FatalToAll" }, `\n✗ ${result.message}`);
