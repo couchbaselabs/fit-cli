@@ -19,7 +19,6 @@ import { askPerformerTag } from "../../performers/util/ask-performer-image.js";
 import { askPortInUsePolicy } from "../../performers/util/ask-port-in-use-policy.js";
 import { printDefinitionRunGuidance } from "../definition/run-guidance.js";
 import { extractPushGistVisibility, pushGist, type GistVisibility } from "../definition/push-gist.js";
-import { chooseResultsTarget } from "../../situational/choose-results-database/choose-results-database.js";
 import { loadEnvironments } from "../../util/environments.js";
 import { DEFAULT_CAPELLA_ENV } from "../../util/config.js";
 import {
@@ -482,8 +481,6 @@ async function addSituationalRun(
   const sdk = await chooseSdk("Which SDK do you want to test with FIT situational?", promptIdPrefix);
   const version = await askPerformerTag(sdk, promptIdPrefix);
   const onPortInUse = await askPortInUsePolicy(promptIdPrefix);
-  // One prompt for where results go (hosted env, with its host, or local); then the Capella env.
-  const { mode: databaseMode, resultsEnvironment } = await chooseResultsTarget(promptIdPrefix);
   const capellaEnvironment = await chooseCapellaEnvironment(promptIdPrefix);
   const selection = await selectFitTests(execution, SITUATIONAL_TEST_DOMAIN, promptIdPrefix);
 
@@ -498,8 +495,6 @@ async function addSituationalRun(
       sdk,
       ...(version ? { version } : {}),
       onPortInUse,
-      databaseMode,
-      ...(resultsEnvironment ? { resultsEnvironment } : {}),
       capellaEnvironment,
       selection,
       ...(privateEndpoint ? { privateEndpoint } : {}),
@@ -536,8 +531,6 @@ async function addSituationalRun(
     instance,
     ...(version ? { version } : {}),
     onPortInUse,
-    databaseMode,
-    ...(resultsEnvironment ? { resultsEnvironment } : {}),
     capellaEnvironment,
     selection,
     ...(privateEndpoint ? { privateEndpoint } : {}),
