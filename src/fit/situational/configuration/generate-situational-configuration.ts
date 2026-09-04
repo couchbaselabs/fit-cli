@@ -1,11 +1,11 @@
 /**
- * Step: turn a results database + cbdino settings into a situational
- * FITConfiguration.json — build the config and write it to a fresh per-iteration
- * file for passing to test-driver via `-Dfit.config`.
+ * Step: turn cbdino settings into a situational FITConfiguration.json, build
+ * the config and write it to a fresh per-iteration file for passing to
+ * test-driver via `-Dfit.config`.
  *
  * The situational counterpart to generate-fit-configuration.ts. The config
  * itself is built by build-situational-configuration.ts (pure); this step does
- * the IO and masks the secret results-DB password in the echoed output.
+ * the IO.
  *
  * Run on its own (prints where a config would be written):
  *   bun src/fit/situational/configuration/generate-situational-configuration.ts

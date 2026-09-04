@@ -142,7 +142,8 @@
               type: 'situational',
               situational: {
                 database: {
-                  // Situational results are written to files, uploaded to S3, then ingested.
+                  // Situational results are written to files. This example runs on localhost, so
+                  // they stay local. Results go to S3 from CI only.
                   mode: 'files',
                 },
               },

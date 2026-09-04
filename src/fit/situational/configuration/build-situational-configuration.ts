@@ -5,7 +5,7 @@
  * manage its own clusters, so the clusterAccess block is just a placeholder (the
  * FIT docs say it's ignored for situational-only runs). What matters is the
  * `situational.cbdino` block (which cluster version cbdino should build) and the
- * `situational.database` block (where the timeseries results land).
+ * `situational.files` block (where the driver writes result files).
  *
  * The config is assembled from config-pieces, so a shared base piece is layered
  * with the situational-specific piece — the artifact-pieces idea from the README.
