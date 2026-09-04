@@ -223,7 +223,7 @@ export interface TestsSection {
   maven?: MavenOptions;
 }
 
-export const SITUATIONAL_DATABASE_MODES = ["hosted", "local", "files"] as const;
+export const SITUATIONAL_DATABASE_MODES = ["files"] as const;
 export type SituationalDatabaseMode = (typeof SITUATIONAL_DATABASE_MODES)[number];
 
 export interface SituationalDatabaseSetup {
