@@ -1,0 +1,301 @@
+#!/usr/bin/env node
+/**
+ * fit ingest loads run results uploaded to S3 into the Postgres results database.
+ *
+ *   fit ingest situational
+ *
+ * situational: drains s3://<bucket>/incoming/ into the results database, moves each run
+ *              directory to processed/ or failed/, and records one ingester_runs report row.
+ *              A directory is only taken once the uploader's marker object is there, so a
+ *              run in the middle of uploading is left for the next tick.
+ *
+ * Made to be run from a cron on the instance that hosts the results database. The
+ * password comes from AWS Secrets Manager, never from a file (see ./credentials.ts).
+ */
+import { S3Client } from "@aws-sdk/client-s3";
+import postgres from "postgres";
+import { AWS_REGION } from "../../cloud/util/aws/aws-target.js";
+import { DONE_MARKER, RESULTS_BUCKET } from "../situational/upload-results/upload-results.js";
+import { isMain, runCli } from "../../util/non-fit/cli.js";
+import { runScriptPrefix } from "../../util/non-fit/fit-cli-log.js";
+import { resolvedGitSha } from "../version/version.js";
+import {
+  INGEST_DB_USERNAME,
+  INGEST_PASSWORD_ENV_VAR,
+  INGEST_SECRET_ID,
+  IngestCredentialsError,
+  ingestDbFailureLine,
+  resolveIngestPassword,
+} from "./credentials.js";
+import { Db, type ReportStatus, type RunData } from "./db.js";
+import {
+  isUuid,
+  parseBucketsCsv,
+  parseEventsCsv,
+  parseMetricsCsv,
+  parseRunJson5,
+  parseScoresJson5,
+} from "./parse.js";
+import {
+  FAILED_PREFIX,
+  hasDoneMarker,
+  type IncomingRun,
+  PROCESSED_PREFIX,
+  runDataFilesByName,
+  S3Queue,
+} from "./s3-queue.js";
+
+// The ingest always runs on the instance that hosts the results database.
+const RESULTS_DB_HOST = "localhost";
+const RESULTS_DB_PORT = 5432;
+const RESULTS_DB_NAME = "perf";
+
+interface RunOutcome {
+  sit: string;
+  run: string;
+  kind?: string;
+  outcome: "ingested" | "failed" | "deferred";
+  movedTo?: string;
+  error?: string;
+  rows?: { buckets: number; metrics: number; events: number };
+}
+
+/** Only a real failure makes a run partial. Deferrals are normal, an unmarked directory is still uploading. */
+export function overallStatus(outcomes: RunOutcome[]): "success" | "partial" | "nothing_to_do" {
+  if (outcomes.length === 0) return "nothing_to_do";
+  return outcomes.some((o) => o.outcome === "failed") ? "partial" : "success";
+}
+
+/** Throwing here is a permanent failure, so the run moves to failed/. */
+async function loadRun(queue: S3Queue, incoming: IncomingRun): Promise<RunData> {
+  const sitUuid = incoming.sitSegment.toLowerCase();
+  if (!isUuid(sitUuid)) throw new Error(`Situational run path segment is not a UUID: ${incoming.sitSegment}`);
+  if (!isUuid(incoming.runSegment.toLowerCase())) {
+    throw new Error(`Run path segment is not a UUID: ${incoming.runSegment}`);
+  }
+
+  const fileByName = runDataFilesByName(incoming);
+  const runJson5 = fileByName.get("run.json5");
+  // The uploader never uploads a directory without a valid run.json5, and it
+  // writes the marker last. A marked directory without one is broken for good.
+  if (runJson5 === undefined) throw new Error("no run.json5");
+
+  const run = parseRunJson5(await queue.getText(runJson5.key));
+  if (run.runUuid !== incoming.runSegment.toLowerCase()) {
+    throw new Error(`run.json5 is for run ${run.runUuid}, not this directory`);
+  }
+
+  const optionalText = async (name: string): Promise<string | undefined> => {
+    const file = fileByName.get(name);
+    return file === undefined ? undefined : await queue.getText(file.key);
+  };
+
+  const bucketsText = await optionalText("buckets.csv");
+  const metricsText = await optionalText("metrics.csv");
+  const eventsText = await optionalText("events.csv");
+
+  return {
+    sitUuid,
+    run,
+    datetime: runJson5.lastModified,
+    scores: parseScoresJson5(await optionalText("scores.json5")),
+    buckets: bucketsText === undefined ? [] : parseBucketsCsv(bucketsText),
+    metrics: metricsText === undefined ? [] : parseMetricsCsv(metricsText),
+    events: eventsText === undefined ? [] : parseEventsCsv(eventsText),
+  };
+}
+
+async function processRun(queue: S3Queue, db: Db, incoming: IncomingRun): Promise<RunOutcome> {
+  const outcome: RunOutcome = { sit: incoming.sitSegment, run: incoming.runSegment, outcome: "deferred" };
+
+  // The marker is the uploader's last write, so anything else is a partial
+  // upload. A directory that stays unmarked shows up in every report.
+  if (!hasDoneMarker(incoming)) {
+    outcome.error = `no ${DONE_MARKER} marker, the upload is still in flight`;
+    return outcome;
+  }
+
+  let data: RunData;
+  try {
+    data = await loadRun(queue, incoming);
+  } catch (err) {
+    outcome.outcome = "failed";
+    outcome.error = (err as Error).message;
+    outcome.movedTo = await queue.moveRun(incoming, FAILED_PREFIX, new Date());
+    return outcome;
+  }
+
+  outcome.kind = data.run.kind;
+  outcome.rows = { buckets: data.buckets.length, metrics: data.metrics.length, events: data.events.length };
+  await db.ingestRun(data);
+
+  outcome.movedTo = await queue.moveRun(incoming, PROCESSED_PREFIX, new Date());
+  outcome.outcome = "ingested";
+  return outcome;
+}
+
+function countsOf(outcomes: RunOutcome[], failedBacklog: number | null) {
+  return {
+    ingested: outcomes.filter((o) => o.outcome === "ingested").length,
+    failed: outcomes.filter((o) => o.outcome === "failed").length,
+    deferred: outcomes.filter((o) => o.outcome === "deferred").length,
+    failedBacklog,
+  };
+}
+
+/** Print one line and stop. Used for failures where a stack trace tells the operator nothing. */
+function failFast(line: string): never {
+  console.error(line);
+  process.exit(1);
+}
+
+async function drainIncoming(
+  sql: postgres.Sql,
+  db: Db,
+  queue: S3Queue,
+  reportId: string,
+): Promise<{ status: ReportStatus; outcomes: RunOutcome[] }> {
+  const outcomes: RunOutcome[] = [];
+  let status: ReportStatus;
+  try {
+    const listing = await queue.listIncoming();
+    const strayKeys = listing.strayKeys;
+
+    for (const incoming of listing.runs) {
+      let outcome: RunOutcome;
+      try {
+        outcome = await processRun(queue, db, incoming);
+      } catch (err) {
+        // Treat DB and S3 errors as transient and leave the run in incoming/ for the next tick.
+        outcome = {
+          sit: incoming.sitSegment,
+          run: incoming.runSegment,
+          outcome: "deferred",
+          error: (err as Error).message,
+        };
+      }
+      console.log(`${outcome.outcome}: ${outcome.sit}/${outcome.run}${outcome.error ? ` (${outcome.error})` : ""}`);
+      outcomes.push(outcome);
+    }
+
+    const failedBacklog = await queue.countFailedBacklog().catch(() => null);
+    status = overallStatus(outcomes);
+    await db.finishReport(reportId, status, countsOf(outcomes, failedBacklog), {
+      version: resolvedGitSha(),
+      bucket: RESULTS_BUCKET,
+      runs: outcomes,
+      ...(strayKeys.length > 0 ? { strayKeys } : {}),
+    });
+  } catch (err) {
+    await db
+      .finishReport(reportId, "failed", countsOf(outcomes, null), {
+        version: resolvedGitSha(),
+        bucket: RESULTS_BUCKET,
+        runs: outcomes,
+        error: (err as Error).message,
+      })
+      .catch(() => {});
+    throw err;
+  } finally {
+    await sql.end();
+  }
+  console.log(`Ingester run ${reportId} finished: ${status}`);
+  return { status, outcomes };
+}
+
+async function cmdSituational(argv: string[]): Promise<{ status: ReportStatus; outcomes: RunOutcome[] }> {
+  if (argv.length > 0) {
+    console.error(`Usage: ${runScriptPrefix("ingest")} situational`);
+    process.exit(2);
+  }
+
+  let password: string;
+  try {
+    ({ password } = await resolveIngestPassword());
+  } catch (err) {
+    if (err instanceof IngestCredentialsError) failFast(err.message);
+    throw err;
+  }
+
+  const sql = postgres({
+    host: RESULTS_DB_HOST,
+    port: RESULTS_DB_PORT,
+    database: RESULTS_DB_NAME,
+    username: INGEST_DB_USERNAME,
+    password,
+    max: 1,
+  });
+  const db = new Db(sql);
+  // Ambient credentials, not the shared fit-cli-role client. On the server the
+  // instance role holds the results-queue permissions, and fit-cli-role does not.
+  const queue = new S3Queue(new S3Client({ region: AWS_REGION }), RESULTS_BUCKET);
+
+  // The first statement is where a dead database or a wrong password shows up. Later
+  // failures are transient and already land in the run report as deferrals.
+  let reportId: string;
+  try {
+    reportId = await db.startReport();
+  } catch (err) {
+    const line = ingestDbFailureLine(err, { host: RESULTS_DB_HOST, port: RESULTS_DB_PORT });
+    if (line) failFast(line);
+    throw err;
+  }
+  console.log(`Ingester run ${reportId} started (bucket ${RESULTS_BUCKET})`);
+
+  return await drainIncoming(sql, db, queue, reportId);
+}
+
+function helpText(): string {
+  const p = runScriptPrefix("ingest");
+  return `Ingest S3 run results into the results database.
+
+Usage:
+  ${p} situational
+  ${p} --help
+
+Subcommands:
+  situational  Drain s3://${RESULTS_BUCKET}/incoming/ into the results database. Each run
+               directory then moves to processed/ or failed/, and one ingester_runs row
+               records what happened. Only a directory holding the uploader's ${DONE_MARKER}
+               marker is read, so a run still uploading waits for the next tick.
+  performance  Not implemented yet.
+
+The database is always ${RESULTS_DB_NAME} on ${RESULTS_DB_HOST}:${RESULTS_DB_PORT} and the user is always
+${INGEST_DB_USERNAME}. The password is read from the AWS Secrets Manager secret
+${INGEST_SECRET_ID}, using the host's own IAM role. Nothing is read from a file.
+
+For local development, set ${INGEST_PASSWORD_ENV_VAR} to skip Secrets Manager.`;
+}
+
+export function runIngestMain(): void {
+  const [subcommand, ...rest] = process.argv.slice(2);
+
+  runCli(async () => {
+    if (!subcommand || subcommand === "--help" || subcommand === "-h") {
+      console.log(helpText());
+      if (!subcommand) process.exit(2);
+      return;
+    }
+
+    if (subcommand === "situational") {
+      const { status, outcomes } = await cmdSituational(rest);
+      return {
+        artifacts: [],
+        details: [
+          { label: "Status", value: status },
+          { label: "Ingested", value: String(outcomes.filter((o) => o.outcome === "ingested").length) },
+          { label: "Failed", value: String(outcomes.filter((o) => o.outcome === "failed").length) },
+          { label: "Deferred", value: String(outcomes.filter((o) => o.outcome === "deferred").length) },
+        ],
+      };
+    }
+
+    console.error(`Unknown subcommand: ${subcommand}\n`);
+    console.error(helpText());
+    process.exit(2);
+  });
+}
+
+if (isMain(import.meta.url)) {
+  runIngestMain();
+}
