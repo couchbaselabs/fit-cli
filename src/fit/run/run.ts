@@ -46,6 +46,8 @@ import { runScriptPrefix } from "../../util/non-fit/fit-cli-log.js";
 import { FIT_PERFORMER } from "../util/repos.js";
 import { postSlackRunResults } from "../slack/post-run-summary.js";
 import type { SlackRunResult } from "../slack/util/slack-results.js";
+import { extractFailureTail, likelyCauseLine } from "../util/gha.js";
+import { getCurrentSessionTail } from "../../util/non-fit/proc.js";
 
 /** Maps a `--repo-dir` key (a {@link Repo.name}) to the env var {@link resolveFitPerformerDir} reads it from. */
 const REPO_DIR_ENV_VARS: Record<string, string> = {
@@ -485,6 +487,14 @@ export async function runDispatch(argv: string[]): Promise<RunOutput | void> {
       // live after the group loop (slackThread) or to write to a file for a later job
       // to combine (slackResultFile).
       const wantsSlackOutput = Boolean(runOpts.slackThread || slackResultFile);
+      // The session log's in-memory tail is a rolling buffer of the whole process's
+      // terminal output; called right after a preset crashes, it holds that preset's
+      // own crash output (nothing else has logged since), so this doubles as a
+      // per-preset failure snippet without needing to split the log by preset.
+      const noResultsRow = (): SlackRunResult => {
+        const failureSnippet = likelyCauseLine(extractFailureTail(getCurrentSessionTail() ?? ""));
+        return { label: type, sdk: type, ok: false, ...(failureSnippet ? { failureSnippet } : {}) };
+      };
       if (types.length > 1) {
         // A crash mid-preset (e.g. an unmodeled AWS SDK error) must not take the rest of
         // the group down with it — one bad preset shouldn't cost the results of every
@@ -503,12 +513,12 @@ export async function runDispatch(argv: string[]): Promise<RunOutput | void> {
           // pushed — without this, such a preset would silently vanish from the
           // combined message instead of showing up as a failure.
           if (wantsSlackOutput && output?.worstFailure && groupSlackResults.length === slackResultsBefore) {
-            groupSlackResults.push({ label: type, sdk: type, ok: false });
+            groupSlackResults.push(noResultsRow());
           }
         } catch (err) {
           console.error(`\nPreset ${type} crashed and did not produce a result; continuing with the remaining presets.\n${formatUncaughtError(err)}`);
           if (wantsSlackOutput) {
-            groupSlackResults.push({ label: type, sdk: type, ok: false });
+            groupSlackResults.push(noResultsRow());
           }
           outputs.push({
             artifacts: [],
@@ -529,7 +539,7 @@ export async function runDispatch(argv: string[]): Promise<RunOutput | void> {
         const output = await runFromDefinition(definitionPath, { ...runOpts, deferSlackTo: groupSlackResults });
         if (output) outputs.push(output);
         if (output?.worstFailure && groupSlackResults.length === slackResultsBefore) {
-          groupSlackResults.push({ label: type, sdk: type, ok: false });
+          groupSlackResults.push(noResultsRow());
         }
       } else {
         const output = await runFromDefinition(definitionPath, runOpts);

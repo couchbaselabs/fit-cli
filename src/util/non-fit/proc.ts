@@ -471,7 +471,21 @@ export function startSessionLog(logFile: string): SessionLog {
       log.end(() => resolve());
     });
 
-  return { path: logFile, flush, tail: () => [...tail, tailPending].join("\n") };
+  const tailFn = (): string => [...tail, tailPending].join("\n");
+  activeSessionTail = tailFn;
+  return { path: logFile, flush, tail: tailFn };
+}
+
+// One session log exists per process (one `runCli()` call per invocation, including the
+// CI preset-group case, which deliberately shares one process across presets) — so a
+// singleton is safe. Lets code that has no direct handle to the SessionLog (e.g. run.ts's
+// group loop, which reacts to a preset crash without ever seeing runCli's local variable)
+// still get at the tail of terminal output right as the crash happened.
+let activeSessionTail: (() => string) | undefined;
+
+/** The current session's terminal-output tail, if a session log is active. See {@link startSessionLog}. */
+export function getCurrentSessionTail(): string | undefined {
+  return activeSessionTail?.();
 }
 
 /**

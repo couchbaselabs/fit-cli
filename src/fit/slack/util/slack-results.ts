@@ -22,6 +22,12 @@ export interface SlackRunResult {
   durationMs?: number;
   /** Failing test cases, most useful first; rendered as an aligned code block. */
   failingTests?: { name: string; detail?: string }[];
+  /**
+   * One-line "why", hunted out of the failing terminal output's tail (see
+   * `extractFailureTail`/`likelyCauseLine` in `../../util/gha.ts`) for a preset that
+   * crashed before producing any test counts. Shown in place of the bare "see logs".
+   */
+  failureSnippet?: string;
 }
 
 export interface SlackRunSummaryInput {
@@ -57,7 +63,9 @@ function countsLine(result: SlackRunResult): string {
   // producing a RunResultSummary) has no counts at all — "0 failed" next to a ❌ would
   // misleadingly read as "ran clean".
   if (!result.ok && result.testsRun === undefined && result.failures === undefined && result.errors === undefined) {
-    return "no results — see logs";
+    return result.failureSnippet
+      ? `no results — likely cause: \`${result.failureSnippet.replace(/`/g, "'")}\``
+      : "no results — see logs";
   }
   const parts: string[] = [];
   if (result.testsRun !== undefined) parts.push(`${result.testsRun} run`);

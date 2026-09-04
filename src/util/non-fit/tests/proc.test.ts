@@ -100,6 +100,23 @@ test("run tees child output into the session log by default", async () => {
   assert.match(sessionOutput, /child stderr/);
 });
 
+test("getCurrentSessionTail exposes the active session log's tail as a module-level singleton", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "fit-cli-proc-"));
+  const logFile = join(dir, "session.info.log");
+  const procModule = new URL("../proc.ts", import.meta.url).href;
+
+  const driver = [
+    `import { run, startSessionLog, getCurrentSessionTail } from ${JSON.stringify(procModule)};`,
+    `const sessionLog = startSessionLog(${JSON.stringify(logFile)});`,
+    `await run(${JSON.stringify(process.execPath)}, ["-e", "console.log('boom: something broke')"]);`,
+    "console.log(`TAIL:${getCurrentSessionTail()}`);",
+    "await sessionLog.flush();",
+  ].join("\n");
+
+  const terminal = await capture(process.execPath, ["--import", "tsx", "--input-type=module", "-e", driver]);
+  assert.match(terminal, /TAIL:.*boom: something broke/s);
+});
+
 /**
  * Resolves once `pid` no longer exists. Signal 0 only checks for the process's
  * existence, so this is a poll for "has the kill landed yet" rather than a fixed

@@ -173,3 +173,27 @@ test("renderSlackRunSummary flags a crashed/no-result row without a misleading '
   assert.doesNotMatch(serialized, /0 failed/);
   assert.match(serialized, /no results/);
 });
+
+test("renderSlackRunSummary shows the likely cause on a crashed row when one was found", () => {
+  const { blocks } = renderSlackRunSummary({
+    title: "op-multi-lite",
+    passed: false,
+    results: [
+      { label: "op-crashed-preset", sdk: "op-crashed-preset", ok: false, failureSnippet: "unknown flag: --capella-create-pool" },
+    ],
+  });
+  const serialized = JSON.stringify(blocks);
+  assert.match(serialized, /likely cause/);
+  assert.match(serialized, /unknown flag: --capella-create-pool/);
+});
+
+test("renderSlackRunSummary falls back to 'see logs' when no cause was found, without a stray 'undefined'", () => {
+  const { blocks } = renderSlackRunSummary({
+    title: "op-multi-lite",
+    passed: false,
+    results: [{ label: "op-crashed-preset", sdk: "op-crashed-preset", ok: false }],
+  });
+  const serialized = JSON.stringify(blocks);
+  assert.match(serialized, /see logs/);
+  assert.doesNotMatch(serialized, /undefined/);
+});
