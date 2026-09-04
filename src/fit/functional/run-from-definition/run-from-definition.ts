@@ -57,7 +57,7 @@ import {
 } from "../../../util/non-fit/replay.js";
 import { clusterLabel as clusterSegmentLabel, formatRunLabel, instanceLabel, performerLabel, runLabel, type RunLabelParts } from "../../shared/util/run-labels.js";
 import { confirm, select } from "../../../util/non-fit/prompts.js";
-import { DEFAULT_CAPELLA_ENV, resolveCapellaConfig, resolveFitPerformerDir, resolveGithubCredentials, resolveResultsDbCredentials, resolveRosaCredentials } from "../../util/config.js";
+import { DEFAULT_CAPELLA_ENV, resolveCapellaConfig, resolveFitPerformerDir, resolveGithubCredentials, resolveRosaCredentials } from "../../util/config.js";
 import { ssmStartSessionCommand, terminateInstanceCommand } from "../../util/aws/lifecycle-warning.js";
 import { gcpDebugAccessCommand, gcpTerminateInstanceCommand } from "../../util/gcp/lifecycle-warning.js";
 import { buildSlackRunResults, postSlackRunResults } from "../../slack/post-run-summary.js";
@@ -141,7 +141,6 @@ import {
   type FitTestSelection,
 } from "../../shared/select-fit-tests/select-fit-tests.js";
 import {
-  checkResultsDatabaseConnectivity,
   resolveResultsDatabase,
   resultsHostFromJdbc,
   situationalResultsUrl,
@@ -2020,40 +2019,6 @@ export async function runFromDefinition(
     githubCredentials = result;
   }
 
-  // Check hosted results-database credentials upfront — fail before provisioning
-  // an instance when credentials can't be resolved from AWS Secrets Manager.
-  const needsHostedDatabase = executionGroups
-    .slice(startCycleIndex)
-    .some(
-      (group) =>
-        group.type === "situational" &&
-        group.runs.some((run) => run.databaseMode === "hosted"),
-    );
-  // block -> host, populated during credential resolution; used later for connectivity checks.
-  const resultsEnvHosts = new Map<string, string>();
-  if (needsHostedDatabase) {
-    // Each hosted situational run names a results environment; validate every distinct
-    // one upfront (credentials resolvable from AWS) before provisioning.
-    const resultsEnvs = new Set<string>();
-    for (const group of executionGroups.slice(startCycleIndex)) {
-      if (group.type !== "situational") continue;
-      for (const run of group.runs) {
-        if (run.databaseMode === "hosted") resultsEnvs.add(run.resultsEnvironment);
-      }
-    }
-    for (const block of resultsEnvs) {
-      let host: string;
-      try {
-        ({ host } = await resolveResultsDbCredentials({ block }));
-      } catch (err) {
-        fitCliError({ classification: "FatalToAll" }, `\n✗ ${(err as Error).message}`);
-        tracker.record("FatalToAll", `Cannot resolve results database credentials for "${block}"`, preconditionCtx);
-        return finalizeRunFromDefinition([], [], undefined, tracker.worst, tracker.failureCount);
-      }
-      resultsEnvHosts.set(block, host);
-    }
-  }
-
   const artifacts: Artifact[] = [];
   const details: Detail[] = [];
   // Instance-specific details (SSH command, workspace path, etc.) — only included
@@ -2106,24 +2071,6 @@ export async function runFromDefinition(
     );
     tracker.record("FatalToAll", "No local transactions-fit-performer checkout configured", preconditionCtx);
     return finalizeRunFromDefinition([], [], undefined, tracker.worst, tracker.failureCount);
-  }
-
-  // Local connectivity check — skip when running remotely, since EC2 instances are
-  // in the same VPC as faas.couchbase.com and can reach it without VPN.
-  if (needsHostedDatabase && forceLocalhost) {
-    for (const [block, host] of resultsEnvHosts) {
-      console.log(`\nChecking connectivity to the "${block}" results database at ${host}...`);
-      if (!(await checkResultsDatabaseConnectivity(undefined, host))) {
-        fitCliError(
-          { classification: "FatalToAll" },
-          `\n✗ Cannot reach the results database at ${host}:5432.\n` +
-            `  Make sure you are connected to the vpn-public VPN.`,
-        );
-        tracker.record("FatalToAll", `Cannot reach results database at ${host}:5432`, preconditionCtx);
-        return finalizeRunFromDefinition([], [], undefined, tracker.worst, tracker.failureCount);
-      }
-      console.log(`  ✓ Reached ${host}.`);
-    }
   }
 
   // The "active" set tracks the cycle currently up so the outer finally tears down
@@ -2243,11 +2190,6 @@ export async function runFromDefinition(
         }
       }
 
-      // This cycle's situational iterations may stream to the hosted DB; if it runs
-      // on a remote box, confirm the box can reach the DB before doing real work.
-      const cycleNeedsHostedDatabase =
-        group.type === "situational" && group.runs.some((run) => run.databaseMode === "hosted");
-
       let activeCycle = group;
       let clusterState: ResumeClusterState | undefined;
       // Situational only. Functional runs carry the same fact on clusterState.
@@ -2256,25 +2198,6 @@ export async function runFromDefinition(
       const cyclePerformerStates: ResumePerformerState[] = [];
 
       try {
-        if (cycleNeedsHostedDatabase && execution.kind === "remote") {
-          const blocks = new Set(
-            group.type === "situational"
-              ? group.runs.filter((run) => run.databaseMode === "hosted").map((run) => run.resultsEnvironment)
-              : [],
-          );
-          for (const block of blocks) {
-            const { host } = await resolveResultsDbCredentials({ block });
-            console.log(`\nChecking "${block}" results database connectivity from the remote instance...`);
-            if (!(await checkResultsDatabaseConnectivity((cmd, args) => execution.capture(cmd, args), host))) {
-              throwFatalToCluster(
-                `The remote instance cannot reach the results database at ${host}:5432. ` +
-                  `Make sure the instance has network access to reach the database (VPN / security-group rules).`,
-              );
-            }
-            console.log(`  ✓ Reached ${host} from the remote instance.`);
-          }
-        }
-
         // Functional observability tests (ClusterLabelsTest, GetOrNullObservabilityTest,
         // etc.) send traces/metrics to a shared collector and then poll it back; if it's
         // unreachable from wherever the tests actually run, every one of those tests only
