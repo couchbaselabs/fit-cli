@@ -13,11 +13,11 @@ import { AWS_REGION } from "../../cloud/util/aws/aws-target.js";
 import { isMain, runCli } from "../../util/non-fit/cli.js";
 
 /** The only role the ingester writes as. */
-export const INGEST_DB_USERNAME = "results_writer";
+export const INGEST_DB_USERNAME = "results_ingester";
 /** Set this to skip Secrets Manager. For local development. */
 export const INGEST_PASSWORD_ENV_VAR = "FIT_INGESTER_PG_PASSWORD";
 /** Holds {"password": "..."} for {@link INGEST_DB_USERNAME}. */
-export const INGEST_SECRET_ID = "fit-cli/results/prod";
+export const INGEST_SECRET_ID = "performance-sdk/results-ingester";
 
 /** Thrown when the password cannot be resolved. The message is the one line to print. */
 export class IngestCredentialsError extends Error {}
@@ -54,7 +54,7 @@ async function fetchSecretString(secretId: string): Promise<string> {
 }
 
 /**
- * Resolve the results_writer password. FIT_INGESTER_PG_PASSWORD wins so a developer
+ * Resolve the results_ingester password. FIT_INGESTER_PG_PASSWORD wins so a developer
  * can run against a local database without AWS. Otherwise the password comes from
  * Secrets Manager. Throws {@link IngestCredentialsError} with a single actionable
  * line when the secret cannot be read.

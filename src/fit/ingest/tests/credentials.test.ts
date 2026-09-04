@@ -8,6 +8,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  INGEST_DB_USERNAME,
   INGEST_PASSWORD_ENV_VAR,
   INGEST_SECRET_ID,
   IngestCredentialsError,
@@ -76,7 +77,7 @@ test("a rejected password points at the secret, not at the password", () => {
     const line = ingestDbFailureLine(Object.assign(new Error("x"), { code }), { host: "localhost", port: 5432 });
     assert.equal(
       line,
-      `Postgres rejected the results_writer password. The ${INGEST_SECRET_ID} secret does not match the database role.`,
+      `Postgres rejected the ${INGEST_DB_USERNAME} password. The ${INGEST_SECRET_ID} secret does not match the database role.`,
     );
   }
 });
