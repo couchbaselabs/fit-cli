@@ -15,8 +15,9 @@ fit run preset op-capella-sit-lite --env-override defaults.cbdinoclusterVersion=
 ```
 
 # Server version
+(Nb the lite presets may be using clusterVersion or nextClusterVersion depending on where we are in server release cycle)
 ```
-fit run preset op-onprem-func-lite --performer java-fit-performer:main --env-override defaults.clusterVersion=7.6-stable
+fit run preset op-onprem-func-lite --performer java-fit-performer:main --env-override defaults.clusterVersion=7.6-stable --env-override defaults.nextClusterVersion=7.6-stable
 ```
 
 # transactions-fit-performer

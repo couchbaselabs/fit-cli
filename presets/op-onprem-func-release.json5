@@ -32,8 +32,9 @@
       ],
     },
     {
-      // This block is primarily to test previous release line, but we mix up the CSPs too.
-      gcp: {},
+      // Temporary: this was the one block on GCP (to mix up the CSPs), but GCP has proved
+      // too unstable to run release sign-off on. Restore `gcp: {}` once it is reliable.
+      aws: {},
       clusters: [
         {
           // Functional on-prem testing, previous release line.

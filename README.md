@@ -119,28 +119,6 @@ For development (from source with Bun):
 - `bun run build` — compile TypeScript to `dist/`.
 - `bun run test` — run the unit tests.  Note - these always need to be kept instant - business logic only.  If it's slow, just don't test it.
 
-## Overriding preset versions (`--env-override`)
-Presets don't hardcode versions - they template them in from `environments.json5`, e.g. `{{environments.defaults.clusterVersion}}`.
-That file stays the source of truth, but a single run can override any of those values from the CLI:
-
-```sh
-# Run an on-prem preset against the previous server line instead of the default.
-fit run preset op-onprem-func-lite --performer java-fit-performer:main --env-override defaults.clusterVersion=7.6-stable
-
-# Capella situational presets key off capellaClusterVersion (composes with their `versions:` list).
-fit run preset op-capella-sit-lite --performer java-fit-performer:main --env-override defaults.capellaClusterVersion=7.2
-
-# Also works on generate-only: fit preset generate ... --env-override ...
-```
-
-The flag is repeatable and keyed by the placeholder's path. The override is baked into the generated
-definition file, so that file alone still reproduces the run.
-
-Two things fail fast rather than silently doing nothing: a path that isn't in `environments.json5` (a typo),
-and one the chosen preset doesn't template in (e.g. `defaults.clusterVersion` on a Capella preset, which uses
-`defaults.capellaClusterVersion`; or a CNG situational preset, whose server version is chosen at run time rather
-than templated). When running a preset group, an override only has to apply to at least one preset in it.
-
 ## Capella
 When running locally, we use Capella creds from your fit-cli config.  Generally you just need to provide your email address.  We default to using Capella's production environment.
 When running on CI, the user chooses what Capella environment to use (stage, dev, etc.) and we use previously-setup accounts for those. 

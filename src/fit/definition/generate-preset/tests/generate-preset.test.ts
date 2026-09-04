@@ -373,14 +373,14 @@ test("assertEnvOverridesUsed accepts an override the preset does template in", (
     assertEnvOverridesUsed(["op-capella-sit-lite"], { "defaults.capellaClusterVersion": "7.2" }),
   );
   assert.doesNotThrow(() =>
-    assertEnvOverridesUsed(["op-onprem-func-lite"], { "defaults.clusterVersion": "7.6-stable" }),
+    assertEnvOverridesUsed(["op-onprem-func-lite"], { "defaults.nextClusterVersion": "7.6-stable" }),
   );
 });
 
 test("assertEnvOverridesUsed accepts an override that applies to only some presets in a group", () => {
   assert.doesNotThrow(() =>
     assertEnvOverridesUsed(["op-onprem-func-lite", "op-capella-sit-lite"], {
-      "defaults.clusterVersion": "7.6-stable",
+      "defaults.nextClusterVersion": "7.6-stable",
     }),
   );
 });
