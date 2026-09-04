@@ -604,7 +604,7 @@ export async function generatePreset(args: GeneratePresetArgs): Promise<{ path: 
   }
 
   if (!skipGuidance) {
-    printDefinitionRunGuidance(result.path);
+    printDefinitionRunGuidance(result.path, Object.keys(definition.setup?.capellaEnvironments ?? {}).length > 0);
   }
 
   return { path: result.path };

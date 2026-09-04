@@ -245,6 +245,24 @@ test("an analytics-functional definition relocates the fitConfig to top-level fi
   assert.deepEqual(parseDefinition(formatFitDefinition(definition, "json5")), definition);
 });
 
+test("a Capella Analytics run records its Capella environment at instance level (no cluster capella block)", () => {
+  const analyticsSdk = sdkByValue("columnar-java");
+  if (!analyticsSdk) throw new Error("Expected the columnar-java SDK to exist.");
+  const definition = buildFitFunctionalDefinitionFrom({
+    cluster: {
+      kind: "cbdinocluster",
+      def: { nodeCount: 3, version: "", services: [], cng: false, capellaAnalytics: true, cloudProvider: "aws" },
+    },
+    sdk: analyticsSdk,
+    selection: buildDefaultFitTestSelection(),
+    analytics: true,
+    capellaEnvironment: "sandbox",
+  });
+  assert.equal(definition.instances[0]?.setup?.capellaEnvironment, "sandbox");
+  assert.equal(definition.clusterConfigs?.[0]?.cbdinocluster?.capella, undefined);
+  assert.deepEqual(parseDefinition(formatFitDefinition(definition, "json5")), definition);
+});
+
 test("an Enterprise Analytics SDK performer connects over http(s), not couchbases", () => {
   const eaSdk = sdkByValue("analytics-java");
   if (!eaSdk) throw new Error("Expected the analytics-java SDK to exist.");
@@ -262,4 +280,51 @@ test("an Enterprise Analytics SDK performer connects over http(s), not couchbase
     ?.performer as Record<string, unknown> | undefined;
   // The EA SDK rejects couchbases:// ("Expected URL scheme 'http' or 'https'") — use http://...:8095.
   assert.deepEqual(performer, { connectionString: "http://${defaultHostname}:8095", tls: null });
+});
+
+const SANDBOX_CONTROL_PLANE = {
+  sandbox: {
+    endpoint: "https://api.sbx-1234.nonprod-project-avengers.com",
+    v4Endpoint: "https://cloudapi.sbx-1234.nonprod-project-avengers.com",
+    oid: "4c1d8e6a-0b2f-4a1e-9f3c-5d6e7a8b9c01",
+  },
+};
+
+test("buildFitDefinition records a sandbox's control plane in setup, alongside any gerritRef", () => {
+  const definition = buildFitDefinition({
+    gerritRef: "refs/changes/29/246329/1",
+    capellaEnvironments: SANDBOX_CONTROL_PLANE,
+    instances: buildFitSituationalDefinitionFrom({
+      sdk,
+      selection: buildDefaultFitTestSelection(),
+      databaseMode: "local",
+      capellaEnvironment: "sandbox",
+    }).instances,
+  });
+  assert.deepEqual(definition.setup?.capellaEnvironments, SANDBOX_CONTROL_PLANE);
+  assert.equal(definition.setup?.repos?.["transactions-fit-performer"]?.gerritRef, "refs/changes/29/246329/1");
+  // Round-trips: the generated file parses back to the same control plane.
+  assert.deepEqual(parseDefinition(formatFitDefinition(definition)).setup?.capellaEnvironments, SANDBOX_CONTROL_PLANE);
+});
+
+test("buildFitDefinition omits setup entirely when there is no sandbox and no gerritRef", () => {
+  const definition = buildFitDefinition({
+    capellaEnvironments: {},
+    instances: buildFitSituationalDefinitionFrom({ sdk, selection: buildDefaultFitTestSelection(), databaseMode: "local" }).instances,
+  });
+  assert.equal(definition.setup, undefined);
+});
+
+test("a generated sandbox definition tells the reader the credentials come from env vars", () => {
+  const definition = buildFitDefinition({
+    capellaEnvironments: SANDBOX_CONTROL_PLANE,
+    instances: buildFitSituationalDefinitionFrom({
+      sdk,
+      selection: buildDefaultFitTestSelection(),
+      databaseMode: "local",
+      capellaEnvironment: "sandbox",
+    }).instances,
+  });
+  assert.match(formatFitDefinition(definition), /CAPELLA_USER\/CAPELLA_PASS/);
+  assert.match(formatFitDefinition(definition, "yaml"), /CAPELLA_API_KEY\/CAPELLA_API_SECRET/);
 });

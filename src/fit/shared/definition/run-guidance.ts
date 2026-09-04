@@ -3,9 +3,14 @@
  * user how to run it locally and how to push it to CI.
  */
 import { runDefinitionPrefix } from "../../../util/non-fit/fit-cli-log.js";
+import { CAPELLA_SANDBOX_ENV_VAR_GUIDANCE } from "../../util/config.js";
 
-export function definitionRunGuidance(definitionPath: string): string {
+export function definitionRunGuidance(definitionPath: string, targetsSandbox = false): string {
   const prefix = runDefinitionPrefix();
+  const sandboxNote = targetsSandbox
+    ? `\nThis definition targets a Capella sandbox — set its credentials in your environment before running:\n` +
+      `    ${CAPELLA_SANDBOX_ENV_VAR_GUIDANCE}\n`
+    : "";
   const ciInstructions =
     `\nTo run on CI via https://github.com/couchbaselabs/fit-cli, either:\n` +
     `\n` +
@@ -19,6 +24,7 @@ export function definitionRunGuidance(definitionPath: string): string {
     `      --field definitionBase64="$(base64 -w 0 ${definitionPath})"`;
 
   return (
+    sandboxNote +
     `\nRun it later with:\n` +
     `  ${prefix} --interactive ${definitionPath}\n` +
     `\nOr non-interactively (e.g. on CI), taking the default answer to every prompt:\n` +
@@ -27,6 +33,6 @@ export function definitionRunGuidance(definitionPath: string): string {
   );
 }
 
-export function printDefinitionRunGuidance(definitionPath: string): void {
-  console.log(definitionRunGuidance(definitionPath));
+export function printDefinitionRunGuidance(definitionPath: string, targetsSandbox = false): void {
+  console.log(definitionRunGuidance(definitionPath, targetsSandbox));
 }

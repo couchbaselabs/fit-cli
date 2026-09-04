@@ -16,6 +16,9 @@ import { fileURLToPath } from "node:url";
 import JSON5 from "json5";
 import type { CbdinoclusterSourceGit } from "../shared/definition/types.js";
 
+// A canonical dashed UUID (8-4-4-4-12 hex), as used for a Capella org id.
+const CAPELLA_ORGANIZATION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export interface CapellaEnvironment {
   endpoint?: string | null;
   /** Capella Management API v4 endpoint for this environment. */
@@ -23,13 +26,58 @@ export interface CapellaEnvironment {
   oid?: string | null;
   /** The (shared, non-secret) Capella account username for this environment. */
   username?: string | null;
-  /**
-   * AWS Secrets Manager id/ARN holding { password, apiKey, apiSecret,
-   * internalSupportToken?, overrideToken? } for this Capella environment. The two
-   * tokens are optional — only "dev" currently has them, which is what makes
-   * cbcollect's dev-only support available.
-   */
   secretId?: string | null;
+  sandbox?: boolean;
+}
+
+export interface CapellaEnvironmentOverride {
+  endpoint: string;
+  v4Endpoint: string;
+  oid: string;
+}
+
+// Origin host chars: no whitespace, `/?#` or backslash (a path would corrupt concatenated API paths,
+// and WHATWG URL parsing treats `\` as `/`, so a backslash smuggles one past an origin-only check) and
+// no `@` (blocks `user:pass@host` credential-smuggling into the shareable definition). All https-only.
+const ORIGIN_HOST = String.raw`[^\s/?#@\\]+`;
+const CAPELLA_ENDPOINT_ORIGIN = new RegExp(String.raw`^https://${ORIGIN_HOST}$`, "i");
+const CAPELLA_ORIGIN_PREFIX = new RegExp(String.raw`^(https://${ORIGIN_HOST})`, "i");
+const CAPELLA_LABELLED_ORIGIN = new RegExp(String.raw`^(https://)(?:ui|api|cloudapi)\.(${ORIGIN_HOST})(?=[/?#]|$)`, "i");
+// Base domain with an optional ui./api./cloudapi. label stripped, so both a labelled host
+// (ui.sbx-25.x) and a bare one (cloud.couchbase.com) yield the api./cloudapi. endpoints.
+const CAPELLA_ORIGIN_BASE = new RegExp(String.raw`^(https://)(?:(?:ui|api|cloudapi)\.)?(${ORIGIN_HOST})(?=[/?#]|$)`, "i");
+
+export interface CapellaSandboxEndpoints {
+  endpoint: string;
+  v4Endpoint: string;
+  recognised: boolean;
+}
+
+export function isCapellaEndpointOrigin(value: string): boolean {
+  return CAPELLA_ENDPOINT_ORIGIN.test(value.trim());
+}
+
+export function isCapellaOrganizationId(value: string): boolean {
+  return CAPELLA_ORGANIZATION_ID.test(value.trim());
+}
+
+export function capellaEndpointOrigin(url: string): string {
+  const match = CAPELLA_ORIGIN_PREFIX.exec(url.trim());
+  return match ? match[1].toLowerCase() : url.trim().replace(/\/+$/, "");
+}
+
+export function capellaLabelledOrigin(origin: string): { scheme: string; host: string } | null {
+  const match = CAPELLA_LABELLED_ORIGIN.exec(origin.trim().replace(/\/+$/, ""));
+  return match ? { scheme: match[1].toLowerCase(), host: match[2].toLowerCase() } : null;
+}
+
+export function deriveCapellaSandboxEndpoints(url: string): CapellaSandboxEndpoints {
+  const trimmed = url.trim().replace(/\/+$/, "");
+  const match = CAPELLA_ORIGIN_BASE.exec(trimmed);
+  if (!match) return { endpoint: trimmed, v4Endpoint: trimmed, recognised: false };
+  const scheme = match[1].toLowerCase();
+  const base = match[2].toLowerCase();
+  return { endpoint: `${scheme}api.${base}`, v4Endpoint: `${scheme}cloudapi.${base}`, recognised: true };
 }
 
 export interface ResultsEnvironment {
@@ -201,6 +249,38 @@ export function loadEnvironments(path: string = DEFAULT_ENVIRONMENTS_PATH): Envi
 /** The configured Capella environment names (e.g. ["dev", "stage"]). */
 export function capellaEnvironmentNames(environments: EnvironmentsFile = loadEnvironments()): string[] {
   return Object.keys(environments.capella);
+}
+
+export function isSandboxCapellaEnvironment(
+  name: string,
+  environments: EnvironmentsFile = loadEnvironments(),
+): boolean {
+  return environments.capella[name]?.sandbox === true;
+}
+
+// Rewrites every sandbox each call, so a later definition supplying none can't inherit an earlier one's.
+export function applyCapellaEnvironmentOverrides(
+  overrides: Record<string, CapellaEnvironmentOverride>,
+  environments: EnvironmentsFile = loadEnvironments(),
+): void {
+  for (const name of Object.keys(overrides)) {
+    const entry = environments.capella[name];
+    if (!entry) {
+      throw new Error(`Unknown Capella environment "${name}" — not defined in environments.json5.`);
+    }
+    if (entry.sandbox !== true) {
+      throw new Error(
+        `Capella environment "${name}" is not a sandbox, so its endpoint and org id can't be set from a definition file.`,
+      );
+    }
+  }
+  for (const [name, entry] of Object.entries(environments.capella)) {
+    if (entry.sandbox !== true) continue;
+    const override = overrides[name];
+    entry.endpoint = override?.endpoint ?? null;
+    entry.v4Endpoint = override?.v4Endpoint ?? null;
+    entry.oid = override?.oid ?? null;
+  }
 }
 
 /** The configured results environment names (e.g. ["dev", "prod"]). */
