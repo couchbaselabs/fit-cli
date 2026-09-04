@@ -20,27 +20,23 @@ import {
   buildSituationalConfiguration,
   DEFAULT_CBDINO_SETTINGS,
   type CbdinoSettings,
-  type ResultsTarget,
 } from "./build-situational-configuration.js";
 import { fitConfigDocPath, writeFitConfiguration } from "../../shared/fit-configuration/write-fit-configuration.js";
 
 /** Build and write a situational FITConfiguration.json to the run directory. */
 export function generateSituationalConfiguration(
-  target: ResultsTarget,
   cbdino: CbdinoSettings = DEFAULT_CBDINO_SETTINGS,
   fitPerformerDir: string,
   path: DefinitionRunPath,
   performerPort: number = DEFAULT_PERFORMER_PORT,
   fitConfigPiece?: PieceData,
 ): RunOutput & { path: string } {
-  const config = buildSituationalConfiguration(target, cbdino, performerPort, fitConfigPiece);
+  const config = buildSituationalConfiguration(cbdino, performerPort, fitConfigPiece);
 
   console.log(
     `\nGenerating a situational FITConfiguration.json for you. You can also produce this by hand by ` +
       `following ${fitConfigDocPath(fitPerformerDir)} and the situational notes in SITUATIONAL_TESTING.md.`,
   );
-  // The config no longer contains the results-DB password (fit-cli passes it to
-  // the driver via the FIT_RESULTS_DB_PASSWORD env var), so it's safe to echo verbatim.
   const result = writeFitConfiguration(config, path);
   console.log(`\nWriting ${result.path}:\n`);
   printFileContent(JSON.stringify(config, null, 2));
@@ -51,11 +47,7 @@ export function generateSituationalConfiguration(
 
 if (isMain(import.meta.url)) {
   runCli(() => {
-    const sample = buildSituationalConfiguration({
-      jdbc: "jdbc:postgresql://performance-sdk.couchbase.com:5432/perf",
-      username: "results_writer",
-      password: "***",
-    });
+    const sample = buildSituationalConfiguration();
     console.log(JSON.stringify(sample, null, 2));
     return Promise.resolve();
   });

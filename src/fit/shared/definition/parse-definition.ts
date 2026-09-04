@@ -496,9 +496,9 @@ function isSituationalDatabaseMode(value: unknown): value is SituationalDatabase
 }
 
 /**
- * Validate an optional environment-name selector (capellaEnvironment / resultsEnvironment).
- * Only checks it's a string here; whether the named environment actually exists is checked
- * at run time against environments.json5 (resolveCapellaConfig / resolveResultsDbCredentials).
+ * Validate an optional environment-name selector (capellaEnvironment). Only checks
+ * it's a string here; whether the named environment actually exists is checked at
+ * run time against environments.json5 (resolveCapellaConfig).
  */
 function optionalEnvironmentName(record: Record<string, unknown>, key: string, path: string): string | undefined {
   const value = record[key];

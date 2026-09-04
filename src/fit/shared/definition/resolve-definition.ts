@@ -35,7 +35,7 @@ import {
   DEFAULT_CLUSTER_EXISTS_POLICY,
   type ClusterExistsPolicy,
 } from "../../../cluster/cluster-create/cluster-exists-policy.js";
-import { DEFAULT_CAPELLA_ENV, DEFAULT_RESULTS_ENV } from "../../util/config.js";
+import { DEFAULT_CAPELLA_ENV } from "../../util/config.js";
 import type { CbdinoclusterDef } from "../../../cluster/cluster-create/build-cluster-def.js";
 import type { CapellaClusterSetup } from "./types.js";
 import { loadDefinition } from "./parse-definition.js";
@@ -50,7 +50,6 @@ import type {
   PrivateEndpointSetup,
   ResolvedFitConfig,
   SessionLifetime,
-  SituationalDatabaseMode,
   SituationalRun,
   TestsSection,
 } from "./types.js";
@@ -102,9 +101,6 @@ export interface ResolvedFunctionalRun extends ResolvedRunCommon {
 
 export interface ResolvedSituationalRun extends ResolvedRunCommon {
   type: "situational";
-  databaseMode: SituationalDatabaseMode;
-  /** Results environment (key under `results` in environments.json5); default "dev". */
-  resultsEnvironment: string;
   cng: boolean;
   /** Present when this run should connect to cbdino's Capella cluster over AWS PrivateLink. */
   privateEndpoint?: PrivateEndpointSetup;
@@ -172,8 +168,6 @@ export interface ResolvedFunctionalExecutionRun extends ResolvedExecutionRunComm
 
 export interface ResolvedSituationalExecutionRun extends ResolvedExecutionRunCommon {
   type: "situational";
-  databaseMode: SituationalDatabaseMode;
-  resultsEnvironment: string;
   cng: boolean;
   /** Present when this run should connect to cbdino's Capella cluster over AWS PrivateLink. */
   privateEndpoint?: PrivateEndpointSetup;
@@ -476,8 +470,6 @@ function resolveRun(run: FitRun, stripClusterAccess: boolean): ResolvedRunWithou
       ...(fitConfig !== undefined ? { fitConfig } : {}),
       testSelection: resolveTestsSelection(run.tests),
       extraMavenArgs: resolveSituationalMavenArgs(run.tests, run.situational.cng !== undefined),
-      databaseMode: run.situational.database.mode,
-      resultsEnvironment: run.situational.database.resultsEnvironment ?? DEFAULT_RESULTS_ENV,
       cng: run.situational.cng !== undefined,
       ...(run.situational.privateEndpoint !== undefined ? { privateEndpoint: run.situational.privateEndpoint } : {}),
       ...(run.situational.version !== undefined ? { version: run.situational.version } : {}),
@@ -732,8 +724,6 @@ export function buildExecutionGroups(instances: ResolvedInstancePlan[]): Resolve
                   ...(run.fitConfig !== undefined ? { fitConfig: run.fitConfig } : {}),
                   testSelection: run.testSelection,
                   extraMavenArgs: run.extraMavenArgs,
-                  databaseMode: run.databaseMode,
-                  resultsEnvironment: run.resultsEnvironment,
                   cng: run.cng,
                   ...(run.privateEndpoint !== undefined ? { privateEndpoint: run.privateEndpoint } : {}),
                   ...(run.version !== undefined ? { version: run.version } : {}),

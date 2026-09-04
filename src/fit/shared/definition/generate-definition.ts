@@ -81,7 +81,6 @@ export interface SituationalDefinitionInputs {
   gerritRef?: string;
   onPortInUse?: PortInUsePolicy;
   selection: FitTestSelection;
-  /** Results environment for the hosted DB (key under `results` in environments.json5). Omitted ⇒ "dev". */
   /** Capella environment to create clusters in (key under `capella` in environments.json5). Omitted ⇒ "dev". */
   capellaEnvironment?: string;
   instance?: InstanceMode;
@@ -92,8 +91,6 @@ export interface SituationalDefinitionInputs {
    */
   privateEndpoint?: boolean;
 }
-
-
 
 function buildTests(selection: FitTestSelection): TestsSection {
   if (selection.presets?.length) {
