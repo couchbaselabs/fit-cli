@@ -12,10 +12,24 @@
 const TIMED_OUT = Symbol("with-call-timeout: timed out");
 
 export async function withCallTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | typeof TIMED_OUT> {
-  return Promise.race([
-    promise,
-    new Promise<typeof TIMED_OUT>((resolve) => setTimeout(() => resolve(TIMED_OUT), timeoutMs)),
-  ]);
+  // The timer must be cleared on every exit path, including a rejection. A
+  // pending timer keeps the event loop alive on its own, so leaving it armed
+  // after the call has already answered means fit-cli sits there doing nothing
+  // for up to `timeoutMs` before the process can exit — observed as a ~2 minute
+  // pause after "✓ Terminated" at the end of a GCP run.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<typeof TIMED_OUT>((resolve) => {
+        timer = setTimeout(() => resolve(TIMED_OUT), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
 }
 
 export { TIMED_OUT };
