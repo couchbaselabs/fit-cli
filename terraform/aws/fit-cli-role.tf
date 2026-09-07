@@ -26,9 +26,12 @@ resource "aws_iam_role" "fit_cli_role" {
             "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
           }
           StringLike = {
-            "token.actions.githubusercontent.com:sub" = [
-              for r in module.trusted_repos.repos : "repo:${r}:*"
-            ]
+            # Both subject forms - see ../shared/trusted-repos for why newer repos send
+            # the immutable one carrying the numeric owner and repo IDs.
+            "token.actions.githubusercontent.com:sub" = concat(
+              [for r in module.trusted_repos.repos : "repo:${r}:*"],
+              [for r in module.trusted_repos.immutable_repos : "repo:${r}:*"],
+            )
           }
         }
       },
