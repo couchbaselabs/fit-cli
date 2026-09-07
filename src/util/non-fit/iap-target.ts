@@ -17,6 +17,8 @@ import type { ExecutionTarget } from "./target.js";
 
 export class IapTarget implements ExecutionTarget {
   readonly kind = "remote" as const;
+  // gcloud compute ssh is a real pipe, so output arrives as the command produces it.
+  readonly streamsOutputLive = true;
   readonly description: string;
   private loginUser?: Promise<string>;
 

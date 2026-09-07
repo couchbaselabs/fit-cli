@@ -126,6 +126,7 @@ function fitExecutionContext(): FitExecutionContext {
     description: "test execution",
     target: {
       kind: "local",
+      streamsOutputLive: true,
       description: "this machine",
       run: () => Promise.resolve(),
       capture: () => Promise.resolve(""),

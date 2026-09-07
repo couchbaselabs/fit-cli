@@ -36,14 +36,13 @@ Nb we intentionally avoid using AWS Session Manager, which would work better for
 
 Because of that 30s/200kb flush, CloudWatch is only consulted when it can actually add something: when GetCommandInvocation's inline copy is under the caps above it already *is* the whole output, so we use it directly.  Waiting on CloudWatch regardless used to add ~20s to every command that printed anything.
 
-Nb the instance's CloudWatch publishing is not dependable for long-running commands — it has been seen to stop publishing an hour in and silently lose every line after that, which looks exactly like a hang.  So a streamed command that goes quiet for 5 minutes says so rather than sitting silent, and where the caller knows which file the command is writing (LogType3) we read that file directly, with a separate short command, to get real proof-of-life.
-
 So under AWS SSM:
 LogType1: Uses the CloudWatch approach above.
 LogType2: CloudWatch is used.  Read at end of process.
-LogType3: File continues to be sent to separate artifact.  The 30s proof-of-life lines go to Cloudwatch.
+LogType3: File continues to be sent to separate artifact.  Every 30s we tail the file.
 LogType4: Similar to LogType3.
 
+Nb we are running up against AWS API throttling, and partly as a result (and partly as the approach is possibly flaky) CloudWatch is being removed for LogType3.
 
 ## Failures
 Failing processes are defined as returning non-zero, and are classified as FatalToAll, FatalToInstance, FatalToCluster, FatalToSession or NonFatal.  The names mirror the definition-file hierarchy: an instance holds clusters, a cluster holds sessions.

@@ -302,15 +302,35 @@ export function redirectToFileCommand(command: string, args: readonly string[], 
 }
 
 /**
- * Remote equivalent of {@link streamToFile}'s proof-of-life heartbeat. The full
- * output of a long-running remote command (e.g. the FIT test-driver) goes only
- * to `path`; over the SSH stdout we emit just the last log line every
- * `intervalSecs` so the terminal isn't silent for hours yet isn't flooded.
+ * Send an already-built compound command's stdout+stderr to `path`, for the L3
+ * model where the full output of a long-running remote command (e.g. the FIT
+ * test-driver) belongs in a log file rather than the terminal.
  *
- * The command runs backgrounded in a subshell (so a compound `a; b` redirects
- * as a whole) with stdout+stderr to the file; we poll for liveness and tail the
- * file. The final `wait` is the last statement, so the script's exit code is the
- * command's — preserving the non-zero-means-failure contract.
+ * The subshell is what makes a compound (`. env && export PATH=…; cmd`) redirect
+ * as a whole, and leaves the exit code as its last command's — preserving the
+ * non-zero-means-failure contract. Proof-of-life is not this command's job: the
+ * caller passes `livenessPath` and the target tails that file on our own clock.
+ */
+export function redirectCompoundToFileCommand(command: string, path: string): string {
+  return `( ${command} ) > ${posixQuote(path)} 2>&1`;
+}
+
+/**
+ * The same redirect, plus an in-band proof-of-life: every `intervalSecs` the last line of
+ * the log file is printed on stdout, so the terminal isn't silent for hours yet isn't
+ * flooded either.
+ *
+ * Only for targets whose output reaches us live (see `ExecutionTarget.streamsOutputLive`) —
+ * over an ssh pipe this is free, needing no second connection. Not viable on SSM, and not
+ * because of the IAM denial that once stopped its publishing entirely: the agent only
+ * flushes to CloudWatch every 30s or 200kb, so even when publishing works these lines
+ * arrive in late batches, which is no use for a 30s promise. There the command stays silent
+ * and the target tails the file out-of-band on our own clock instead.
+ *
+ * The command runs backgrounded in a subshell (so a compound `a; b` redirects as a whole)
+ * with stdout+stderr to the file; we poll for liveness and tail the file. The final `wait`
+ * is the last statement, so the script's exit code is the command's — preserving the
+ * non-zero-means-failure contract.
  */
 export function heartbeatShellCommand(
   command: string,

@@ -21,6 +21,7 @@ import {
   ensureRemoteRepos,
   heartbeatShellCommand,
   pathPrefixedCommand,
+  redirectCompoundToFileCommand,
   remoteArtifactsDir,
   remoteDockerWrapperPath,
   remoteDockerWrapperScript,
@@ -244,13 +245,19 @@ export async function createRemoteFitExecutionContext(
       // command line — only the file path appears in the invocation.
       const envSourcePrefix = env ? `. ${posixQuote(await stageRemoteEnvFile(env))} && ` : "";
       const innerCommand = envSourcePrefix + pathPrefixedCommand(binDir, command, args);
-      return target.run("bash", ["-lc", heartbeatShellCommand(innerCommand, targetPath)], cwd, {
+      // Where the target's output reaches us live, the command tailing its own log file is
+      // the cheapest heartbeat there is. Where it doesn't, those lines would be buffered or
+      // lost, so the command prints nothing and the target tails `livenessPath` itself.
+      const script = target.streamsOutputLive
+        ? heartbeatShellCommand(innerCommand, targetPath)
+        : redirectCompoundToFileCommand(innerCommand, targetPath);
+      return target.run("bash", ["-lc", script], cwd, {
         display: commandOn(formatCommandLine(command, args), target.description),
         greyTextOutput: true,
-        // The heartbeat's proof-of-life only reaches us if the target's output stream keeps
-        // working for the whole (potentially many-hour) command. This is the same file it
-        // tails, so the target can read it directly if that stream goes quiet.
-        livenessPath: targetPath,
+        // Only for the target that acts on it: setting this is what tells a target to tail
+        // the file instead of watching its own output stream, so a target already getting
+        // an in-band heartbeat must not ask for it too.
+        ...(target.streamsOutputLive ? {} : { livenessPath: targetPath }),
       });
     },
     streamToArtifactFileInBackground: async (command, args, targetPath, cwd): Promise<BackgroundStream> => {
