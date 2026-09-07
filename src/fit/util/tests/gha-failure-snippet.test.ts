@@ -88,6 +88,20 @@ test("likelyCauseLine: undefined when nothing in the tail looks like an error", 
   assert.equal(likelyCauseLine(["all fine", "still fine"]), undefined);
 });
 
+test("likelyCauseLine: catches git's lowercase 'fatal:', not just Go's uppercase FATAL", () => {
+  // Real case: install-cbdinocluster.ts's remoteBuildFromPrScript cloning a branch
+  // (defaults.cbdinoclusterVersion) that had since been deleted upstream.
+  const tail = extractFailureTail(
+    [
+      "[05:41:12·aws1] → Fetching branch SDKQE-3993 (SDKQE-3993) ...",
+      "[05:41:13·aws1] fatal: couldn't find remote ref SDKQE-3993",
+      "[05:41:13·aws1] failed to run commands: exit status 1",
+    ].join("\n"),
+  );
+  const cause = likelyCauseLine(tail);
+  assert.ok(cause?.includes("couldn't find remote ref SDKQE-3993"), `got ${cause}`);
+});
+
 test("renderFailureSnippetBlock: not collapsed — the reason CI is red needs no click", () => {
   const block = renderFailureSnippetBlock({ classification: "FatalToCluster", message: "no cluster" }, ["boom"]);
   assert.ok(!block.includes("<details>"), "failure block must not be collapsed");

@@ -81,7 +81,7 @@ const CAUSE_NOISE = [
  */
 const CAUSE_SIGNALS = [
   /unknown flag:/i,
-  /\bFATAL\b/,
+  /\bfatal\b/i,
   /\bpanic:/i,
   /\bError:/,
   /\berror\b.*\bnot found\b/i,
