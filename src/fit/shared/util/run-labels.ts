@@ -14,7 +14,11 @@ export interface RunLabelParts {
   instanceKind?: "aws" | "gcp" | "localhost";
   /** Cluster provenance — `cbdino1` (allocated) vs `existing1` (connection/useExisting). */
   clusterMode?: "connection" | "useExisting" | "cbdinocluster";
-  /** Couchbase Server version of an allocated cbdino cluster, e.g. `8.1.0`. When known, replaces the `cbdino1` index form with the version itself. */
+  /**
+   * Couchbase Server version of the cluster the run uses, e.g. `8.1.0`. When known it replaces the
+   * `cbdino1` index form with the version itself, and it names the otherwise-unnamed cluster that a
+   * situational run's test-driver creates. As configured, so an alias like `8.0-stable` stays as-is.
+   */
   clusterVersion?: string;
   /** Lowercase SDK value, e.g. `java`. */
   sdkValue?: string;
@@ -50,9 +54,15 @@ export function instanceLabel(path: DefinitionRunPath, kind?: RunLabelParts["ins
 }
 
 /**
- * `cbdino1` / `existing1`, or undefined for a clusterless (situational) session.
+ * `cbdino1` / `existing1`, or the cluster's version when we know it.
+ *
  * For an allocated cbdino cluster whose version we know, prefer the more useful
  * version itself (e.g. `8.1.0`) over the bare `cbdino1` index.
+ *
+ * A clusterless (situational) session has no cluster in the definition — the
+ * test-driver's own cbdino creates one per run — so there is no index to name and
+ * the version is the only cluster identity available: `Capella:8.0` when we know
+ * it, and no cluster segment at all when we don't.
  */
 export function clusterLabel(
   path: DefinitionRunPath,
@@ -62,21 +72,23 @@ export function clusterLabel(
   capella = false,
   capellaAnalytics = false,
 ): string | undefined {
+  // A self-managed Enterprise Analytics cbdino cluster reads as e.g. `EA:2.2.0-1166`.
+  // A real Capella cloud cluster reads as e.g. `Capella:cbdino1`.
+  // A Capella Analytics cloud cluster reads as e.g. `CA:cbdino1`.
+  const flavoured = (base: string): string => {
+    if (enterpriseAnalytics) return `EA:${base}`;
+    if (capella) return `Capella:${base}`;
+    if (capellaAnalytics) return `CA:${base}`;
+    return base;
+  };
   if (path.clusterlessSession) {
-    return undefined;
+    return version ? flavoured(version) : undefined;
   }
   const n = (path.clusterIndex ?? 0) + 1;
   if (mode === "connection" || mode === "useExisting") {
     return `existing${n}`;
   }
-  const base = version ? version : `cbdino${n}`;
-  // A self-managed Enterprise Analytics cbdino cluster reads as e.g. `EA:2.2.0-1166`.
-  // A real Capella cloud cluster reads as e.g. `Capella:cbdino1`.
-  // A Capella Analytics cloud cluster reads as e.g. `CA:cbdino1`.
-  if (enterpriseAnalytics) return `EA:${base}`;
-  if (capella) return `Capella:${base}`;
-  if (capellaAnalytics) return `CA:${base}`;
-  return base;
+  return flavoured(version ? version : `cbdino${n}`);
 }
 
 /** The session, named by its performer: `java:main` (or just `java`), falling back to `s1`. */

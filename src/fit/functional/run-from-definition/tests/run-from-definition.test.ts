@@ -6,17 +6,19 @@ import { test } from "node:test";
 import { sdkByValue } from "../../../../util/sdk/sdks.js";
 import type { ClusterCommandExecutor } from "../../../../cluster/cluster-create/allocate-cluster.js";
 import type { SelectedCluster } from "../../../../cluster/cluster-select/cluster-select.js";
-import type { ResolvedFunctionalExecutionGroup } from "../../../shared/definition/resolve-definition.js";
+import type { ResolvedFunctionalExecutionGroup, ResolvedSituationalExecutionRun } from "../../../shared/definition/resolve-definition.js";
 import type { FitExecutionContext } from "../../../shared/util/remote-fit-run.js";
 import {
   cbdinoclusterSetupFailed,
   finalizeRunFromDefinition,
+  runLabelParts,
   runTests,
   scopedPromptId,
   setupCluster,
   situationalCbdinoSettings,
   testFailureFacts,
 } from "../run-from-definition.js";
+import { formatRunLabel } from "../../../shared/util/run-labels.js";
 import { loadEnvironments } from "../../../util/environments.js";
 
 function functionalCycle(): ResolvedFunctionalExecutionGroup {
@@ -389,4 +391,50 @@ test("testFailureFacts: an all-green surefire report explains nothing — the co
 test("testFailureFacts: no surefire report at all leaves the table with nothing to show", () => {
   const facts = testFailureFacts(failedTestRun());
   assert.equal(facts.explainedByTestResults, false);
+});
+
+function situationalRun(overrides: Partial<ResolvedSituationalExecutionRun> = {}): ResolvedSituationalExecutionRun {
+  const sdk = sdkByValue("java");
+  assert.ok(sdk);
+  return {
+    type: "situational",
+    path: { instanceIndex: 0, sessionIndex: 0, runIndex: 0, clusterlessSession: true },
+    sdk,
+    performerPort: 8060,
+    performerVersion: "main",
+    onPortInUse: "restart",
+    testSelection: { allTests: [], selectedTests: [], presets: ["standard-qe"] },
+    extraMavenArgs: [],
+    databaseMode: "hosted",
+    resultsEnvironment: "prod",
+    cng: false,
+    ...overrides,
+  };
+}
+
+test("a situational run's label names the cluster its test-driver will create, by version", () => {
+  // A situational run has no cluster in the definition, so without the version the two runs of a
+  // release preset — same preset, one server version each — end up labelled identically.
+  const label = (version: string) =>
+    formatRunLabel(situationalRun().path, runLabelParts("aws", undefined, situationalRun({ version })));
+  assert.equal(label("8.0"), "aws1 / Capella:8.0 / java:main / situational:standard-qe");
+  assert.equal(label("7.6"), "aws1 / Capella:7.6 / java:main / situational:standard-qe");
+});
+
+test("a situational run that names no version is labelled with the environments default", () => {
+  const parts = runLabelParts("aws", undefined, situationalRun());
+  assert.equal(parts.clusterVersion, loadEnvironments().defaults.capellaClusterVersion);
+});
+
+test("a CNG situational run is labelled with CNG's pinned version, and isn't a Capella cluster", () => {
+  const cngVersion = loadEnvironments().defaults.cngClusterVersion;
+  const parts = runLabelParts("aws", undefined, situationalRun({ cng: true }), undefined, true);
+  assert.equal(parts.clusterVersion, cngVersion);
+  assert.equal(parts.capella, undefined);
+  assert.equal(formatRunLabel(situationalRun().path, parts), `aws1 / ${cngVersion} / java:main / situational:cng:standard-qe`);
+});
+
+test("a fitConfig override of situational.cbdino.version is what the label reports", () => {
+  const run = situationalRun({ version: "8.0", fitConfig: { config: { situational: { cbdino: { version: "8.0.2-5503" } } } } });
+  assert.equal(runLabelParts("aws", undefined, run).clusterVersion, "8.0.2-5503");
 });

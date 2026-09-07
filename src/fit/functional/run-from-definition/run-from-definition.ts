@@ -332,7 +332,7 @@ function resolveTestSelectionMode(selection: FitTestSelection, execution: FitExe
  * and the run's own SDK/version/type/presets. Shared by the announce header, the
  * per-run detail table and the recorded result so every label reads identically.
  */
-function runLabelParts(
+export function runLabelParts(
   instanceKind: "aws" | "gcp" | "localhost",
   clusterMode: RunLabelParts["clusterMode"],
   run: ResolvedExecutionRun,
@@ -345,12 +345,19 @@ function runLabelParts(
   const analyticsOnCbdino = clusterMode === "cbdinocluster" && run.type === "functional" && run.analytics === true;
   const isCapellaAnalytics = analyticsOnCbdino && (capellaAnalytics ?? false);
   const enterpriseAnalytics = analyticsOnCbdino && !isCapellaAnalytics;
+  // A situational run's cluster isn't in the definition at all — the test-driver's cbdino
+  // creates one per run — so the version is derived from the run itself rather than passed
+  // in by the caller, and a non-CNG one is a real Capella cloud cluster. Deriving it here
+  // (not at each call site) keeps the announce header, the log prefix, the failure label and
+  // the recorded result from disagreeing.
+  const version = run.type === "situational" ? situationalClusterVersionLabel(run) : clusterVersion;
+  const situationalCapella = run.type === "situational" && !run.cng;
   return {
     instanceKind,
     ...(clusterMode ? { clusterMode } : {}),
-    ...(clusterVersion ? { clusterVersion } : {}),
+    ...(version ? { clusterVersion: version } : {}),
     ...(enterpriseAnalytics ? { enterpriseAnalytics: true } : {}),
-    ...(capella ? { capella: true } : {}),
+    ...(capella || situationalCapella ? { capella: true } : {}),
     ...(isCapellaAnalytics ? { capellaAnalytics: true } : {}),
     sdkValue: run.sdk.value,
     ...(run.performerVersion ? { performerVersion: run.performerVersion } : {}),
@@ -360,6 +367,35 @@ function runLabelParts(
     ...(run.type === "situational" && run.privateEndpoint !== undefined ? { privateEndpoint: true } : {}),
     ...(run.type === "functional" && run.cluster?.privateEndpoint ? { privateEndpoint: true } : {}),
   };
+}
+
+/**
+ * The Couchbase Server version a situational run's cluster gets built at, as
+ * configured: the run's own `versions` entry, a definition `fitConfig` override of
+ * `situational.cbdino.version`, or else the environments default the run will fall
+ * back to (`capellaClusterVersion`, or `cngClusterVersion` for CNG).
+ *
+ * An alias such as `8.0-stable` is deliberately left unresolved: resolving it is
+ * async and only happens once the run starts, and functional labels show the
+ * configured version too, so this keeps every label for the run saying the same thing.
+ */
+function situationalClusterVersionLabel(run: ResolvedSituationalExecutionRun): string {
+  return (
+    fitConfigSituationalVersion(run.fitConfig) ??
+    situationalCbdinoSettings(run.cng, run.privateEndpoint !== undefined, run.version).version
+  );
+}
+
+/** A definition's `fitConfig` override of `situational.cbdino.version`, if it set one (`patch` wins, as it's merged last). */
+function fitConfigSituationalVersion(fitConfig: ResolvedFitConfig | undefined): string | undefined {
+  for (const piece of [fitConfig?.patch, fitConfig?.config]) {
+    const situational = (piece?.situational ?? {}) as Record<string, unknown>;
+    const cbdino = (situational.cbdino ?? {}) as Record<string, unknown>;
+    if (typeof cbdino.version === "string") {
+      return cbdino.version;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -447,8 +483,22 @@ function announce(
   totalGlobalIterations: number,
 ): void {
   const cng = group.cng;
+  const parts = runLabelParts(
+    group.instance.kind,
+    group.type === "functional" ? group.clusterMode : undefined,
+    run,
+    clusterVersionLabel(group),
+    cng,
+    isCapellaGroup(group),
+    isCapellaAnalyticsGroup(group),
+  );
+  const clusterSeg = clusterSegmentLabel(run.path, parts.clusterMode, parts.clusterVersion, parts.enterpriseAnalytics, parts.capella, parts.capellaAnalytics);
+  // Set the cluster segment from the run's own labels rather than leaving it to cluster
+  // setup: a situational run has no setup step to set it, and a definition that mixes
+  // situational and functional groups would otherwise keep showing a stale one.
   setLogContext({
     progress: `${globalIterationIndex + 1}/${totalGlobalIterations}`,
+    cluster: clusterSeg,
     performer: performerLabel(run.path, run.sdk.value, run.performerVersion),
     run: runLabel(run.path, run.type, run.testSelection.presets, cng),
   });
@@ -461,15 +511,6 @@ function announce(
     : testSelection.mavenTestSelector
       ? `${testSelection.selectedTests.length} test(s): ${testSelection.mavenTestSelector}`
       : "all tests";
-  const parts = runLabelParts(
-    group.instance.kind,
-    group.type === "functional" ? group.clusterMode : undefined,
-    run,
-    clusterVersionLabel(group),
-    cng,
-    isCapellaGroup(group),
-    isCapellaAnalyticsGroup(group),
-  );
   console.log(`\n=== ${formatRunLabel(run.path, parts)} (${group.instance.kind}, ${run.type}) ===`);
   const instSeg = instanceLabel(run.path, parts.instanceKind);
   const instDesc =
@@ -479,10 +520,14 @@ function announce(
         ? `Running on GCP Compute Engine instance ${run.path.instanceIndex + 1}`
         : "Running locally on this machine";
   console.log(`  ${instSeg}:  ${instDesc}`);
-  const clusterSeg = clusterSegmentLabel(run.path, parts.clusterMode, parts.clusterVersion, parts.enterpriseAnalytics, parts.capella, parts.capellaAnalytics);
   if (clusterSeg) {
     let clusterDesc: string;
-    if (parts.capellaAnalytics) {
+    if (run.type === "situational") {
+      // cbdino runs inside the test-driver here, so the cluster only exists for the run's
+      // duration and fit-cli never sees it: CNG deploys via the Couchbase Autonomous
+      // Operator, everything else is a Capella cloud cluster.
+      clusterDesc = `${cng ? "CNG (CAO)" : "Capella"} ${parts.clusterVersion} cluster, created by cbdinocluster from inside the test-driver`;
+    } else if (parts.capellaAnalytics) {
       clusterDesc = "Capella Analytics (cloud) cluster, provisioned via cbdinocluster";
     } else if (parts.enterpriseAnalytics) {
       clusterDesc = `Self-managed Enterprise Analytics ${parts.clusterVersion ?? ""} cluster, provisioned via cbdinocluster`.replace(/\s+/g, " ").trim();
