@@ -127,8 +127,10 @@ import {
 import {
   ANALYTICS_TEST_DRIVER_MODULE,
   DEFAULT_TEST_DRIVER_MODULE,
+  didFitTestDriverPass,
   runTestDriver,
   type FitTestDriverSummary,
+  type TestRunResult,
 } from "../../shared/run-test-driver/run-test-driver.js";
 import {
   buildFitTestSelection,
@@ -167,6 +169,7 @@ import {
   ClassifiedFailure,
   throwFatalToCluster,
   throwFatalToSession,
+  type FailureFacts,
 } from "../../shared/failure-classification.js";
 import { RunFailureTracker, type FailureContext } from "../../shared/run-failure-tracker.js";
 import {
@@ -845,9 +848,19 @@ export async function runTests(
     surefireDir: join(dirname(testRun.logFile), "surefire-reports"),
   });
   if (!testRun.ok) {
-    throwFatalToSession("FIT tests failed — check the test-driver log for details.");
+    throwFatalToSession("FIT tests failed — check the test-driver log for details.", testFailureFacts(testRun));
   }
   return { artifacts, details };
+}
+
+/**
+ * When surefire reported failing tests, the per-run test-results table describes the
+ * failure completely, so the CI summary shouldn't also hoist a log-tail snippet for it.
+ * A run that failed with no usable counts — Maven died before the tests, the driver was
+ * killed — still needs one: the table has nothing to show.
+ */
+export function testFailureFacts(testRun: TestRunResult): FailureFacts {
+  return { explainedByTestResults: testRun.summary !== undefined && !didFitTestDriverPass(testRun.summary) };
 }
 
 /** Expand situational named presets into concrete class selectors. */
@@ -1098,7 +1111,7 @@ export async function runSituationalTests(
     ...(testRun.situationalResultsCsv ? { situationalResultsCsv: testRun.situationalResultsCsv } : {}),
   });
   if (!testRun.ok) {
-    throwFatalToSession("FIT tests failed — check the test-driver log for details.");
+    throwFatalToSession("FIT tests failed — check the test-driver log for details.", testFailureFacts(testRun));
   }
   return { artifacts, details };
 }
@@ -2548,13 +2561,20 @@ export async function runFromDefinition(
               (err.classification === "FatalToRun" || err.classification === "FatalToSession")
             ) {
               if (stopOnFailure) {
-                throw new ClassifiedFailure(`${err.message} (stopping — --stop-on-failure)`, "FatalToAll");
+                throw new ClassifiedFailure(`${err.message} (stopping — --stop-on-failure)`, "FatalToAll", {
+                  explainedByTestResults: err.explainedByTestResults,
+                });
               }
               const nextStep = isLastIteration
                 ? "no more runs in this execution group"
                 : "moving to the next run";
               fitCliError({ classification: err.classification }, `\n✗ ${err.message} (${nextStep})`);
-              tracker.record(err.classification, err.message, failureContextFromPath(iteration.path, failureLabel(activeCycle, iteration)));
+              tracker.record(
+                err.classification,
+                err.message,
+                failureContextFromPath(iteration.path, failureLabel(activeCycle, iteration)),
+                { explainedByTestResults: err.explainedByTestResults },
+              );
             } else {
               throw err;
             }
@@ -2655,7 +2675,12 @@ export async function runFromDefinition(
     } catch (err) {
       if (err instanceof ClassifiedFailure && err.classification === "FatalToAll") {
         fitCliError({ classification: "FatalToAll" }, `\n✗ ${err.message} (aborting run)`);
-        tracker.record("FatalToAll", err.message, activeResumePath ? failureContextFromPath(activeResumePath) : { instanceIndex: 0 });
+        tracker.record(
+          "FatalToAll",
+          err.message,
+          activeResumePath ? failureContextFromPath(activeResumePath) : { instanceIndex: 0 },
+          { explainedByTestResults: err.explainedByTestResults },
+        );
       } else {
         throw err;
       }

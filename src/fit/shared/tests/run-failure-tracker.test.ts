@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { formatFailureSummaryLine, worstFailureShouldExitNonZero } from "../../../util/non-fit/artifacts.js";
+import { formatFailureSummaryLine, shouldHoistFailureSnippet, worstFailureShouldExitNonZero } from "../../../util/non-fit/artifacts.js";
 import { RunFailureTracker } from "../run-failure-tracker.js";
 
 const ctx = { instanceIndex: 0, clusterIndex: 1, sessionIndex: 2 };
@@ -141,4 +141,53 @@ test("formatFailureSummaryLine: shows +1 more singular for two failures", () => 
     2,
   );
   assert.match(line, /\(\+1 more failure\)/);
+});
+
+test("RunFailureTracker: a test-results failure carries the flag through to the worst failure", () => {
+  const tracker = new RunFailureTracker();
+  tracker.record("FatalToSession", "FIT tests failed", ctx, { explainedByTestResults: true });
+
+  assert.equal(tracker.worst?.explainedByTestResults, true);
+  assert.equal(shouldHoistFailureSnippet(tracker.worst), false);
+});
+
+test("RunFailureTracker: at equal severity, an unexplained failure displaces a test-results one", () => {
+  const tracker = new RunFailureTracker();
+  tracker.record("FatalToSession", "FIT tests failed", ctx, { explainedByTestResults: true });
+  tracker.record("FatalToSession", "performer sanity check failed", ctx);
+
+  assert.equal(tracker.worst?.message, "performer sanity check failed");
+  assert.equal(shouldHoistFailureSnippet(tracker.worst), true);
+});
+
+test("RunFailureTracker: a test-results failure does not displace an equal-severity unexplained one", () => {
+  const tracker = new RunFailureTracker();
+  tracker.record("FatalToSession", "performer sanity check failed", ctx);
+  tracker.record("FatalToSession", "FIT tests failed", ctx, { explainedByTestResults: true });
+
+  assert.equal(tracker.worst?.message, "performer sanity check failed");
+});
+
+test("RunFailureTracker: severity still outranks the explained-by-test-results tie-break", () => {
+  const tracker = new RunFailureTracker();
+  tracker.record("FatalToRun", "no JUnit reports", ctx);
+  tracker.record("FatalToCluster", "FIT tests failed", ctx, { explainedByTestResults: true });
+
+  assert.equal(tracker.worst?.message, "FIT tests failed");
+  assert.equal(shouldHoistFailureSnippet(tracker.worst), false);
+});
+
+test("RunFailureTracker: a failing test run still exits non-zero when its snippet is suppressed", () => {
+  const tracker = new RunFailureTracker();
+  tracker.record("FatalToSession", "FIT tests failed", ctx, { explainedByTestResults: true });
+
+  assert.equal(tracker.shouldExitNonZero(), true);
+  assert.equal(worstFailureShouldExitNonZero(tracker.worst!), true);
+});
+
+test("shouldHoistFailureSnippet: a failure with no test-results explanation is hoisted", () => {
+  assert.equal(
+    shouldHoistFailureSnippet({ classification: "FatalToCluster", message: "cbdino allocate failed", context: { instanceIndex: 0 } }),
+    true,
+  );
 });
