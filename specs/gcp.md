@@ -13,7 +13,7 @@ Unfortunately there is no SDK for IAP: the `gcloud` binary must be installed.
 Are created in us-west1 in project couchbase-qe.
 
 # Credentials
-The goal is the same as AWS: get to a useful pre-creaed 'thing' (service account in GCP world - `fit-cli-gcp` - a role in AWS) that has the required permissions, ASAP.
+The goal is the same as AWS: get to a useful pre-created 'thing' (service account in GCP world - `fit-cli-gcp` - a role in AWS) that has the required permissions, ASAP.
 This allows a stable testing setup where everything works the same across CI and user laptops.
 The mechanism is that a GCP instance is created with service account `fit-cli-gcp` attached.
 
@@ -29,3 +29,8 @@ They map very closely and the end result is similar: GitHub's OIDC token is exch
 The instance's GCP metadata server will create short-lived tokens for `fit-cli-gcp` service account automatically.
 Then anything running on this instance that uses GCP Application Default Credentials will pick them up transparently, effectively running as `fit-cli-gcp`.
 No credential file is ever written to disk (unlike AWS).
+
+## Admin
+The author (grahamp) needs to apply for GCP admin privileges via Zendesh whenever some Terraform changes are required:
+particularly when adding new repos.
+Specifically roles/iam.workloadIdentityPoolAdmin on couchbase-qe is required.

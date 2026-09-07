@@ -30,3 +30,12 @@ Use a local repo:
 ```
 fit run preset op-capella-sit-lite --performer scala-fit-performer:main --interactive --repo-dir transactions-fit-performer=/path/to/local/tfp/checkout
 ```
+
+# Cloud platform
+Replace AWS with GCP in a preset:
+```
+fit run preset op-multi-lite \
+    --override instances.0.aws=null --override instances.0.gcp={} \
+    --performer java-fit-performer:main
+```
+Caveat: this will lead to the private endpoint testing not actually testing PE - just being regular FIT/SIT testing on GCP.
