@@ -82,7 +82,7 @@
     // (pinned rather than tracking "latest" so that cbdino breakages, which have occurred with
     // v0.0.121, do not break the "ci" channel), or a { pr: <n> } / { branch: "<name>" } object
     // (optionally with a `repo: "owner/repo"` override) to build from a PR or branch instead.
-    cbdinoclusterVersion: "v0.0.123",
+    cbdinoclusterVersion: "v0.0.124",
     // cbdinoclusterVersion: { pr: 123 },
     // cbdinoclusterVersion: { branch: "my-fix" },
 
