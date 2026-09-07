@@ -10,6 +10,7 @@ locals {
     "couchbase/couchbase-cxx-client",
     "couchbase/couchbase-net-client",
     "couchbase/gocb",
+    "couchbase/gocbinsights",
     "couchbase/couchnode",
     "couchbase/couchbase-python-client",
     "couchbase/couchbase-ruby-client",
