@@ -1921,6 +1921,8 @@ function describeExecutionOverride(override: ExecutionOverride, declaredKind: st
 }
 
 export interface RunFromDefinitionOptions {
+  /** Same value across several calls groups them as one situational run. */
+  situationalRunId?: string;
   resumeAt?: ResumePoint;
   resumeSelector?: ResumeSelector;
   cbcollect?: boolean;
@@ -1974,7 +1976,20 @@ export async function runFromDefinition(
   const preconditionCtx: FailureContext = { instanceIndex: 0 };
   const savedState = resumeAt ? readRunState(dirname(resolve(definitionPath))) : undefined;
   // Comma-separated presets are separate calls, so they get separate ids by design.
-  const situationalRunId = savedState?.situationalRunId ?? randomUUID();
+  if (
+    savedState?.situationalRunId !== undefined &&
+    options.situationalRunId !== undefined &&
+    savedState.situationalRunId !== options.situationalRunId
+  ) {
+    fitCliError(
+      { classification: "FatalToAll" },
+      `\nresume: --situational-run-id is ${options.situationalRunId}, but this run was started as ` +
+        `${savedState.situationalRunId}. Resume it under the id it started with, or leave the flag off.`,
+    );
+    tracker.record("FatalToAll", "Supplied situational run id disagrees with the saved run state", preconditionCtx);
+    return finalizeRunFromDefinition([], [], undefined, tracker.worst, tracker.failureCount);
+  }
+  const situationalRunId = savedState?.situationalRunId ?? options.situationalRunId ?? randomUUID();
   if (resumeAt) {
     if (!savedState) {
       fitCliError(

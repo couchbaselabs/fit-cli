@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { formatUncaughtError, isMain, runCli } from "../../util/non-fit/cli.js";
 import { extractCbcollectFlag, extractInteractiveFlag, extractReplayFlag, markNonInteractiveByDefault } from "../../util/non-fit/replay.js";
 import { runFromDefinition, type RunFromDefinitionOptions } from "../functional/run-from-definition/run-from-definition.js";
+import { UUID_RE } from "../../util/non-fit/uuid.js";
 import {
   definitionSummary,
   detectDefinitionFormat,
@@ -62,8 +63,8 @@ function buildHelp(): string {
   return `Run FIT tests from a preset or a definition file.
 
 Usage:
-  ${run} preset <preset>[,<preset>...] --performer <image> [--env-override <path>=<value>] [resume flags] [--cbcollect] [--slack-thread <ref>] [--repeat <n>] [--stop-on-failure]
-  ${run} definition <file.json5> [--override <dotpath>=<value>] [--resume-at=<point>] [resume selectors] [--cbcollect] [--slack-thread <ref>] [--repeat <n>] [--stop-on-failure]
+  ${run} preset <preset>[,<preset>...] --performer <image> [--env-override <path>=<value>] [resume flags] [--cbcollect] [--slack-thread <ref>] [--repeat <n>] [--stop-on-failure] [--situational-run-id <uuid>]
+  ${run} definition <file.json5> [--override <dotpath>=<value>] [--resume-at=<point>] [resume selectors] [--cbcollect] [--slack-thread <ref>] [--repeat <n>] [--stop-on-failure] [--situational-run-id <uuid>]
   ${run} --help
 
 Subcommands:
@@ -173,6 +174,27 @@ function extractSlackThreadFlag(argv: readonly string[]): { slackThread?: string
     }
   }
   return { slackThread, positionals };
+}
+
+/** See {@link RunFromDefinitionOptions.situationalRunId}. */
+function extractSituationalRunIdFlag(argv: readonly string[]): { situationalRunId?: string; positionals: string[] } {
+  const positionals: string[] = [];
+  let situationalRunId: string | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--situational-run-id") {
+      situationalRunId = argv[++i];
+    } else if (arg.startsWith("--situational-run-id=")) {
+      situationalRunId = arg.slice("--situational-run-id=".length);
+    } else {
+      positionals.push(arg);
+    }
+  }
+  if (situationalRunId !== undefined && !UUID_RE.test(situationalRunId)) {
+    console.error(`--situational-run-id must be a UUID, got: ${situationalRunId}`);
+    process.exit(2);
+  }
+  return { situationalRunId, positionals };
 }
 
 /**
@@ -362,7 +384,8 @@ function extractRunOptions(
   const { cbcollect, positionals: afterCbcollect } = extractCbcollectFlag(afterSelector);
   const { slackThread, positionals: afterSlackThread } = extractSlackThreadFlag(afterCbcollect);
   const { slackResultFile, positionals: afterSlackResultFile } = extractSlackResultFileFlag(afterSlackThread);
-  const { repeat, stopOnFailure, positionals } = extractRepeatFlags(afterSlackResultFile);
+  const { situationalRunId, positionals: afterSituationalRunId } = extractSituationalRunIdFlag(afterSlackResultFile);
+  const { repeat, stopOnFailure, positionals } = extractRepeatFlags(afterSituationalRunId);
   let resumePoint;
   try {
     resumePoint = parseResumePoint(resumeAt);
@@ -376,6 +399,7 @@ function extractRunOptions(
     ...(cbcollect ? { cbcollect } : {}),
     ...(slackThread ? { slackThread } : {}),
     ...(stopOnFailure ? { stopOnFailure } : {}),
+    ...(situationalRunId ? { situationalRunId } : {}),
   };
   return { runOpts, repeat, ...(slackResultFile ? { slackResultFile } : {}), positionals };
 }
