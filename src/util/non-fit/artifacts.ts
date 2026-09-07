@@ -30,6 +30,12 @@ export interface DetailCollection {
 export interface RecordedFailure {
   classification: string;
   message: string;
+  /**
+   * The run's test-results table already explains this failure (the test-driver ran to
+   * completion and reported failing tests), so the CI summary doesn't need a hoisted
+   * failure snippet for it. See `FailureFacts`.
+   */
+  explainedByTestResults?: boolean;
   context: {
     instanceIndex: number;
     clusterIndex?: number;
@@ -57,6 +63,20 @@ const FAILURE_SEVERITY: Record<string, number> = {
 
 export function worstFailureShouldExitNonZero(failure: RecordedFailure): boolean {
   return (FAILURE_SEVERITY[failure.classification] ?? 0) >= FAILURE_SEVERITY.FatalToRun;
+}
+
+/**
+ * Whether the CI summary should hoist a failure snippet to the top of the page.
+ *
+ * It exists to explain the failures a results table can't — a cluster that never
+ * allocated, a box that never came up — where the log tail is the only clue. Once the
+ * test-driver has run and reported failing tests, the per-run test-results table says
+ * it better, and the tail is whatever teardown printed afterwards. The tracker's
+ * tie-break makes sure an unexplained failure of equal severity wins the `worstFailure`
+ * slot, so suppressing here can't hide a failure that had no other explanation.
+ */
+export function shouldHoistFailureSnippet(failure: RecordedFailure): boolean {
+  return !failure.explainedByTestResults;
 }
 
 export function formatFailureSummaryLine(failure: RecordedFailure, totalCount: number): string {

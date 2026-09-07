@@ -1,4 +1,4 @@
-import type { FailureClassification } from "./failure-classification.js";
+import type { FailureClassification, FailureFacts } from "./failure-classification.js";
 import type { RecordedFailure } from "../../util/non-fit/artifacts.js";
 
 const SEVERITY: Record<FailureClassification, number> = {
@@ -33,14 +33,33 @@ export interface FailureContext {
   label?: string;
 }
 
+/**
+ * Should `candidate` replace `current` as the run's worst failure? Severity decides it
+ * normally. On a tie, a failure the test-results table doesn't already explain wins:
+ * it's the one whose log tail the CI summary needs to show, and equal severity gives us
+ * no other reason to prefer either.
+ */
+function beatsWorst(candidate: RecordedFailure, current: RecordedFailure): boolean {
+  const candidateSeverity = SEVERITY[candidate.classification as FailureClassification];
+  const currentSeverity = SEVERITY[current.classification as FailureClassification];
+  if (candidateSeverity !== currentSeverity) return candidateSeverity > currentSeverity;
+  return current.explainedByTestResults === true && candidate.explainedByTestResults !== true;
+}
+
 export class RunFailureTracker {
   private worstFailure?: RecordedFailure;
   private count = 0;
 
-  record(classification: FailureClassification, message: string, context: FailureContext): void {
+  record(classification: FailureClassification, message: string, context: FailureContext, facts: FailureFacts = {}): void {
     this.count++;
-    if (!this.worstFailure || SEVERITY[classification] > SEVERITY[this.worstFailure.classification as FailureClassification]) {
-      this.worstFailure = { classification, message, context };
+    const candidate: RecordedFailure = {
+      classification,
+      message,
+      context,
+      ...(facts.explainedByTestResults ? { explainedByTestResults: true } : {}),
+    };
+    if (!this.worstFailure || beatsWorst(candidate, this.worstFailure)) {
+      this.worstFailure = candidate;
     }
   }
 

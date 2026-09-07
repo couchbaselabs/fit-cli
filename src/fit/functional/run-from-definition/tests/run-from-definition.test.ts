@@ -15,6 +15,7 @@ import {
   scopedPromptId,
   setupCluster,
   situationalCbdinoSettings,
+  testFailureFacts,
 } from "../run-from-definition.js";
 import { loadEnvironments } from "../../../util/environments.js";
 
@@ -359,4 +360,32 @@ test("situationalCbdinoSettings sets deployer to gcp for a gcp instance", () => 
   const settings = situationalCbdinoSettings(false, false, undefined, "gcp");
   assert.equal(settings.deployer, "gcp");
   assert.equal(settings.region, loadEnvironments().defaults.gcp?.region);
+});
+
+const failedTestRun = (summary?: { testsRun: number; failures: number; errors: number; skipped: number }) => ({
+  ok: false,
+  logFile: "/tmp/test-driver.log",
+  artifacts: [],
+  details: [],
+  ...(summary ? { summary } : {}),
+});
+
+test("testFailureFacts: surefire reported failures, so the test-results table explains the run", () => {
+  const facts = testFailureFacts(failedTestRun({ testsRun: 3655, failures: 491, errors: 0, skipped: 0 }));
+  assert.equal(facts.explainedByTestResults, true);
+});
+
+test("testFailureFacts: surefire reported errors, so the test-results table explains the run", () => {
+  const facts = testFailureFacts(failedTestRun({ testsRun: 10, failures: 0, errors: 2, skipped: 0 }));
+  assert.equal(facts.explainedByTestResults, true);
+});
+
+test("testFailureFacts: an all-green surefire report explains nothing — the command itself failed", () => {
+  const facts = testFailureFacts(failedTestRun({ testsRun: 10, failures: 0, errors: 0, skipped: 0 }));
+  assert.equal(facts.explainedByTestResults, false);
+});
+
+test("testFailureFacts: no surefire report at all leaves the table with nothing to show", () => {
+  const facts = testFailureFacts(failedTestRun());
+  assert.equal(facts.explainedByTestResults, false);
 });

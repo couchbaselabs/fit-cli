@@ -8,6 +8,7 @@ import {
   formatDetailsSection,
   combineRunOutputs,
   reconcileArtifactsWithDir,
+  shouldHoistFailureSnippet,
   worstFailureShouldExitNonZero,
   formatFailureSummaryLine,
   producedOnlyBoilerplate,
@@ -79,8 +80,12 @@ async function renderRunSummary(
   emitGhaArtifactNotice(s3Uri ?? undefined);
 
   // Last of the writers that prepend, so the failure lands above the artifacts block and
-  // is the first thing on the summary page.
-  if (heading) {
+  // is the first thing on the summary page. Skipped for a failure the per-run test-results
+  // table already explains (see shouldHoistFailureSnippet) — unless something *also* threw,
+  // since then the tail holds a failure no table accounts for.
+  const explainedByResultsTable =
+    context.uncaughtError === undefined && !!runOutput.worstFailure && !shouldHoistFailureSnippet(runOutput.worstFailure);
+  if (heading && !explainedByResultsTable) {
     appendFailureSnippetToGhaSummary(heading, sessionTail);
   }
 }
