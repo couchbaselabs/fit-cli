@@ -1280,20 +1280,24 @@ async function resumePerformer(
 }
 
 /** Run one iteration: stand up (or reuse) its performer, then run the tests. */
-async function runIteration(
-  execution: FitExecutionContext,
-  functionalClusterMode: ResolvedFunctionalExecutionGroup["clusterMode"] | undefined,
-  fitPerformerGerritRef: string | undefined,
-  run: ResolvedExecutionRun,
-  setupPerformerPhase: boolean,
-  savedState: RunState | undefined,
-  globalIterationIndex: number,
-  definitionPath: string,
-  recordResult: RecordRunResult,
-  functionalClusterVersion?: string,
-  existingPerformer?: RunningPerformer,
-  instanceKind?: "aws" | "gcp" | "localhost",
-): Promise<{ output: RunOutput; performer?: RunningPerformer }> {
+interface IterationInputs {
+  execution: FitExecutionContext;
+  /** Situational groups build their cluster in the driver, so they have no mode. */
+  functionalClusterMode?: ResolvedFunctionalExecutionGroup["clusterMode"];
+  fitPerformerGerritRef?: string;
+  run: ResolvedExecutionRun;
+  setupPerformerPhase: boolean;
+  savedState?: RunState;
+  globalIterationIndex: number;
+  definitionPath: string;
+  recordResult: RecordRunResult;
+  functionalClusterVersion?: string;
+  existingPerformer?: RunningPerformer;
+  instanceKind?: "aws" | "gcp" | "localhost";
+}
+
+async function runIteration(inputs: IterationInputs): Promise<{ output: RunOutput; performer?: RunningPerformer }> {
+  const { execution, functionalClusterMode, fitPerformerGerritRef, run, setupPerformerPhase, savedState, globalIterationIndex, definitionPath, recordResult, functionalClusterVersion, existingPerformer, instanceKind } = inputs;
   const artifacts: Artifact[] = [];
   const details: Detail[] = [];
 
@@ -2496,20 +2500,20 @@ export async function runFromDefinition(
           const isStartIteration = cycleIndex === startCycleIndex && cycleIterationIndex === startIterationIndex;
           const setupPerformerPhase = isStartIteration ? phases.setupPerformer : true;
           try {
-            const { output, performer } = await runIteration(
+            const { output, performer } = await runIteration({
               execution,
-              activeCycle.type === "functional" ? activeCycle.clusterMode : undefined,
-              resolved.fitPerformerGerritRef,
-              iteration,
+              functionalClusterMode: activeCycle.type === "functional" ? activeCycle.clusterMode : undefined,
+              fitPerformerGerritRef: resolved.fitPerformerGerritRef,
+              run: iteration,
               setupPerformerPhase,
               savedState,
               globalIterationIndex,
               definitionPath,
               recordResult,
-              clusterVersionLabel(activeCycle),
-              sessionPerformer,
-              activeCycle.instance.kind,
-            );
+              functionalClusterVersion: clusterVersionLabel(activeCycle),
+              existingPerformer: sessionPerformer,
+              instanceKind: activeCycle.instance.kind,
+            });
             artifacts.push(...output.artifacts);
             details.push(...output.details);
             if (performer) {
