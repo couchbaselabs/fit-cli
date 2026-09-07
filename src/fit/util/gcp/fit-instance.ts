@@ -52,17 +52,30 @@ export function defaultGcpInstanceType(): string {
   return process.env.FIT_GCP_INSTANCE_TYPE ?? "n2-standard-8";
 }
 
+/** Random tail for an instance name; see gcpFitInstanceName for why it is needed. */
+function randomNameSuffix(): string {
+  return Math.random().toString(36).slice(2, 6).padEnd(4, "0");
+}
+
 /**
  * GCP instance names must be RFC1035 labels: start with a lowercase letter,
  * then lowercase letters/digits/hyphens, <= 63 chars. `creator` is folded to
  * fit that (AWS's Name tag has no such restriction, so its fitInstanceName
  * doesn't need this).
+ *
+ * Includes seconds and a random tail, unlike the AWS side's minute-resolution
+ * stamp, because on GCP the name *is* the identity — (project, zone, name) is
+ * the primary key, so a repeat is a hard ALREADY_EXISTS rather than the
+ * harmless duplicate Name tag it would be on EC2. Two runs by the same creator
+ * in the same minute is entirely ordinary: CI's three GCP jobs all run as
+ * `runner` and reach this point whenever their AWS legs happen to finish.
+ * `suffix` is injectable so tests can assert the shape without randomness.
  */
-export function gcpFitInstanceName(creator: string, now: Date = new Date()): string {
+export function gcpFitInstanceName(creator: string, now: Date = new Date(), suffix: string = randomNameSuffix()): string {
   const iso = now.toISOString(); // 2026-06-12T10:37:00.000Z
-  const stamp = `${iso.slice(0, 10).replace(/-/g, "")}-${iso.slice(11, 16).replace(":", "")}`;
+  const stamp = `${iso.slice(0, 10).replace(/-/g, "")}-${iso.slice(11, 19).replace(/:/g, "")}`;
   const safeCreator = creator.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 20) || "user";
-  return `fit-cli-${safeCreator}-${stamp}`;
+  return `fit-cli-${safeCreator}-${stamp}-${suffix}`;
 }
 
 type RequiredGcpDefaults = { [K in "project" | "zone" | "network" | "subnet" | "serviceAccountEmail"]: string };
@@ -149,6 +162,9 @@ export async function provisionFitGcpInstance(options: GcpProvisionOptions = {})
   mkdirSync(instanceDir, { recursive: true, mode: 0o700 });
 
   const name = gcpFitInstanceName(creatorTag);
+  // Mirrors the AWS side's fit-cli-launch-id tag: proves an instance wearing
+  // our chosen name is actually the one this call created (see the catch below).
+  const launchId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   try {
     await createGcpInstance({
       project: config.project,
@@ -160,7 +176,7 @@ export async function provisionFitGcpInstance(options: GcpProvisionOptions = {})
       network: config.network,
       subnet: config.subnet,
       serviceAccountEmail: config.serviceAccountEmail,
-      labels: { "fit-cli": "owned", "created-by": creatorTag },
+      labels: { "fit-cli": "owned", "created-by": creatorTag, "launch-id": launchId },
       ...(pe ? { networkTags: [PRIVATE_ENDPOINT_NETWORK_TAG] } : {}),
     });
     console.log(`  launched ${name}, waiting for it to start...`);
@@ -212,9 +228,17 @@ export async function provisionFitGcpInstance(options: GcpProvisionOptions = {})
     console.log(formatBanner("DEBUG ACCESS (IAP)", [`  ${debugCommand}`]));
     return { instanceName: name, project: config.project, zone: config.zone, address, target, artifacts, details, terminate };
   } catch (err) {
-    // The name was chosen before launching, so it's always known — delete
-    // unconditionally rather than needing launch-id tracking like the AWS side.
-    await terminateGcpInstance(config.project, config.zone, name).catch(() => {});
+    // Don't leave a paid box lying around if bring-up failed — but only delete
+    // one carrying this run's launch-id label. Deleting purely by name (which is
+    // what this used to do) is unsafe: the name is the identity on GCP, so a
+    // colliding run's `insert` fails with ALREADY_EXISTS, lands here, and would
+    // delete the *other* run's healthy instance out from under it. Checking the
+    // label also still cleans up the case this originally cared about, where the
+    // instance was created but a later step threw.
+    const existing = await describeGcpInstance(config.project, config.zone, name).catch(() => null);
+    if (existing?.labels?.["launch-id"] === launchId) {
+      await terminateGcpInstance(config.project, config.zone, name).catch(() => {});
+    }
     throw err;
   }
 }
