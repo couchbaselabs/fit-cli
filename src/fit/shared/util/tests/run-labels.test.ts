@@ -22,7 +22,15 @@ test("clusterLabel prefers the cbdino cluster version when known", () => {
   assert.equal(clusterLabel(path, "cbdinocluster", "8.1.0"), "8.1.0");
   // A known version doesn't override the existing-cluster form (we don't claim a version for those).
   assert.equal(clusterLabel(path, "connection", "8.1.0"), "existing1");
-  assert.equal(clusterLabel({ ...path, clusterlessSession: true }, "cbdinocluster", "8.1.0"), undefined);
+});
+
+test("clusterLabel names a clusterless session's cluster by version alone", () => {
+  const clusterless = { ...path, clusterlessSession: true };
+  // A situational run's cluster is created inside the test-driver, so the version is all we have.
+  assert.equal(clusterLabel(clusterless, undefined, "8.0-stable", false, true), "Capella:8.0-stable");
+  assert.equal(clusterLabel(clusterless, undefined, "7.6.6"), "7.6.6");
+  // With no version there's nothing to name, so the segment is dropped entirely.
+  assert.equal(clusterLabel(clusterless, undefined, undefined, false, true), undefined);
 });
 
 test("clusterLabel prefixes EA: for a self-managed Enterprise Analytics cluster", () => {
@@ -65,6 +73,21 @@ test("formatRunLabel joins the four segments, dropping absent ones", () => {
       { instanceKind: "aws", sdkValue: "java", type: "situational" },
     ),
     "aws1 / java / situational",
+  );
+  assert.equal(
+    formatRunLabel(
+      { instanceIndex: 0, sessionIndex: 0, runIndex: 0, clusterlessSession: true },
+      {
+        instanceKind: "aws",
+        clusterVersion: "8.0",
+        capella: true,
+        sdkValue: "java",
+        performerVersion: "main",
+        type: "situational",
+        presets: ["standard-qe"],
+      },
+    ),
+    "aws1 / Capella:8.0 / java:main / situational:standard-qe",
   );
   assert.equal(
     formatRunLabel(path, {

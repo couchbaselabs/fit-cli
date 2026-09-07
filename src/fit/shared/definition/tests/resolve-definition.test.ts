@@ -517,3 +517,18 @@ test("versions appends :v{version} to the run dir segment to avoid collisions", 
   assert.equal(resolved.runs[0]?.path.dirSegments?.run, "situational:v8.0-stable");
   assert.equal(resolved.runs[1]?.path.dirSegments?.run, "situational:v7.6");
 });
+
+test("a run path keeps its cluster's index, so labels built from a run match the group's", () => {
+  // The announce header labels the cluster from the run's path, while cluster setup labels it
+  // from the group's; the second cluster on an instance would silently read as the first if a
+  // run path lost clusterIndex.
+  const def = definition();
+  const cluster = def.instances[0]?.clusters[0];
+  assert.ok(cluster);
+  def.instances[0].clusters = [cluster, structuredClone(cluster)];
+  const groups = buildExecutionGroups(resolveDefinition(def).instances);
+  const second = groups[1];
+  assert.ok(second?.type === "functional");
+  assert.equal(second.path.clusterIndex, 1);
+  assert.equal(second.sessions[0]?.runs[0]?.path.clusterIndex, 1);
+});
