@@ -11,8 +11,11 @@ import {
   buildOpenShiftK8sBlock,
   cngKubernetesBackend,
   DEFAULT_OC_VERSION,
+  detectNodeLeak,
   ocInstallScript,
   openshiftCapacityScript,
+  openshiftNodeLeakScript,
+  parseNodeLeakCounts,
   resolveOcVersion,
   withOpenShiftK8sBlock,
 } from "../cng-openshift.js";
@@ -96,4 +99,27 @@ test("openshiftCapacityScript stays bounded and never fails the run", () => {
     if (!line.startsWith("oc ")) continue;
     assert.match(line, /\|\| true$/, `unguarded oc command could fail the run: ${line}`);
   }
+});
+
+test("openshiftNodeLeakScript reports empty (not zero) counts when oc is missing", () => {
+  const script = openshiftNodeLeakScript();
+  assert.match(script, /command -v oc/);
+  assert.match(script, /echo "NODES="/);
+  assert.match(script, /echo "MACHINES="/);
+});
+
+test("parseNodeLeakCounts reads NODES=/MACHINES= lines", () => {
+  assert.deepEqual(parseNodeLeakCounts("NODES=2\nMACHINES=3\n"), { nodes: 2, machines: 3 });
+});
+
+test("parseNodeLeakCounts returns undefined when either count is missing (couldn't tell, not a clean bill of health)", () => {
+  assert.equal(parseNodeLeakCounts("NODES=\nMACHINES=\n"), undefined);
+  assert.equal(parseNodeLeakCounts("NODES=2\nMACHINES=\n"), undefined);
+  assert.equal(parseNodeLeakCounts(""), undefined);
+});
+
+test("detectNodeLeak flags a Running Machine with no matching Node", () => {
+  assert.equal(detectNodeLeak({ nodes: 2, machines: 3 }), true);
+  assert.equal(detectNodeLeak({ nodes: 3, machines: 3 }), false);
+  assert.equal(detectNodeLeak({ nodes: 3, machines: 2 }), false);
 });

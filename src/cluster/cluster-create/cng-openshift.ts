@@ -22,6 +22,8 @@
  *   bun src/cluster/cluster-create/cng-openshift.ts print-preflight
  *   # Print the ROSA capacity/scheduling diagnostic script:
  *   bun src/cluster/cluster-create/cng-openshift.ts print-capacity
+ *   # Print the leaked-EC2-instance / Machine-vs-Node leak check script:
+ *   bun src/cluster/cluster-create/cng-openshift.ts print-leak-check
  *   # Print the k8s block fit-cli uploads, for a given home + context:
  *   bun src/cluster/cluster-create/cng-openshift.ts k8s-block /home/ubuntu my-context
  *   # Provision oc + login + pre-flight + cao tools on a saved instance dir
@@ -279,6 +281,79 @@ export async function logOpenShiftCapacity(execution: OpenShiftExecutor, when: s
 }
 
 /**
+ * Shell script that prints `NODES=<n>` and `MACHINES=<n>`: the worker Node count `oc`
+ * sees vs the count of Machine objects `openshift-machine-api` reports as `Running`.
+ *
+ * This is the `oc`-only equivalent of the EC2-instances-vs-nodes leak check from
+ * https://gist.github.com/brett19/a1d63e3ab20cacf1ee48f441776b6895 — fit-cli has no AWS
+ * credentials for the ROSA cluster's own account (only OpenShift login creds), but a
+ * Machine object *is* Red Hat's own record of that EC2 instance's lifecycle on a ROSA
+ * cluster, so comparing it to the registered Node count catches the same leak (an EC2
+ * instance that exists but never joined as a Node, silently eating capacity) without
+ * needing them.
+ *
+ * Best-effort: prints empty values (not `0`) when `oc` is missing or the machine-api
+ * isn't reachable, so the caller can distinguish "couldn't tell" from "counted zero".
+ * Pure logic.
+ */
+export function openshiftNodeLeakScript(): string {
+  return [
+    "set -u",
+    'if ! command -v oc >/dev/null 2>&1; then echo "NODES="; echo "MACHINES="; exit 0; fi',
+    'nodes=$(oc get nodes -l node-role.kubernetes.io/worker= --no-headers 2>/dev/null | wc -l | tr -d " ")',
+    "machines=$(oc get machines -n openshift-machine-api -o jsonpath='{range .items[*]}{.status.phase}{\"\\n\"}{end}' 2>/dev/null" +
+      " | grep -c '^Running$')",
+    'echo "NODES=$nodes"',
+    'echo "MACHINES=${machines:-0}"',
+  ].join("\n");
+}
+
+/** Parsed output of {@link openshiftNodeLeakScript}. */
+export type NodeLeakCounts = { readonly nodes: number; readonly machines: number };
+
+/**
+ * Parse {@link openshiftNodeLeakScript}'s output. Returns `undefined` when either count
+ * is missing (oc absent or machine-api unreachable) — that means "couldn't tell", which
+ * callers must not treat as "no leak". Pure logic.
+ */
+export function parseNodeLeakCounts(output: string): NodeLeakCounts | undefined {
+  const nodes = output.match(/^NODES=(\d*)$/m)?.[1];
+  const machines = output.match(/^MACHINES=(\d*)$/m)?.[1];
+  if (!nodes || !machines) return undefined;
+  return { nodes: Number(nodes), machines: Number(machines) };
+}
+
+/**
+ * A leak is a Machine ROSA's cluster-api considers `Running` (so an EC2 instance exists
+ * and is being billed for it) with no matching registered worker Node — e.g. left behind
+ * by a previous run's broken teardown, or a stuck scale-down. Pure logic.
+ */
+export function detectNodeLeak(counts: NodeLeakCounts): boolean {
+  return counts.machines > counts.nodes;
+}
+
+/**
+ * Fast-fail guard for the leak above: run before a CNG allocate so a leak is reported in
+ * seconds instead of discovered ~30 minutes later as an unexplained allocate timeout (see
+ * {@link openshiftCapacityScript}'s doc comment for the incident that motivated that one).
+ * Throws when a leak is detected; does nothing when the check couldn't be run (oc missing,
+ * machine-api unreachable) — this fails fast on a *detected* leak, it is not proof the
+ * cluster is healthy when it can't tell.
+ */
+export async function assertNoRosaNodeLeak(execution: OpenShiftExecutor): Promise<void> {
+  const output = await execution.capture("sh", ["-lc", openshiftNodeLeakScript()], undefined, { quiet: true });
+  const counts = parseNodeLeakCounts(output);
+  if (!counts || !detectNodeLeak(counts)) return;
+  throw new Error(
+    `ROSA cluster leak detected: ${counts.machines} Machine(s) in openshift-machine-api report Running but ` +
+      `only ${counts.nodes} worker Node(s) are registered. This is an EC2 instance that never joined the ` +
+      `cluster (or is stuck leaving it) silently eating capacity — a CNG allocate would likely time out after ` +
+      `~30 minutes waiting for room that isn't there. Failing fast instead: investigate with ` +
+      `'oc get machines -n openshift-machine-api' before retrying.`,
+  );
+}
+
+/**
  * `oc login` to the ROSA cluster. The password is kept out of the echoed command
  * via `display`. `--insecure-skip-tls-verify` matches the self-signed serving cert
  * the shared ROSA cluster presents (CNG itself also runs with `tls.insecure`).
@@ -355,6 +430,7 @@ export async function provisionRemoteOpenShift(
   await installOcRemote(execution, version);
   await ocLogin(execution, creds);
   await logOpenShiftCapacity(execution, "before allocate");
+  await assertNoRosaNodeLeak(execution);
   const context = await currentOcContext(execution);
   // Pre-flight temporarily disabled — see https://github.com/couchbaselabs/fit-cli/issues/TBD
   // await runOpenShiftPreflight(execution);
@@ -391,6 +467,10 @@ if (isMain(import.meta.url)) {
       console.log(openshiftCapacityScript());
       return;
     }
+    if (action === "print-leak-check") {
+      console.log(openshiftNodeLeakScript());
+      return;
+    }
     if (action === "k8s-block") {
       console.log(YAML.stringify(buildOpenShiftK8sBlock(argv[1] ?? "/home/ubuntu", argv[2] ?? "my-context")));
       return;
@@ -410,6 +490,7 @@ if (isMain(import.meta.url)) {
           "  cng-openshift.ts print-oc-install [--version 4.10.67]\n" +
           "  cng-openshift.ts print-preflight\n" +
           "  cng-openshift.ts print-capacity\n" +
+          "  cng-openshift.ts print-leak-check\n" +
           "  cng-openshift.ts k8s-block <home-dir> <context>\n" +
           "  cng-openshift.ts --dir <instance-dir> [--user ubuntu] [--version 4.10.67]\n" +
           "  cng-openshift.ts --instance <ec2-id> [--user ubuntu] [--version 4.10.67]",
