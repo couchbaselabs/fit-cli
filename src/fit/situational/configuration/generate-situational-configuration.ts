@@ -30,8 +30,9 @@ export function generateSituationalConfiguration(
   path: DefinitionRunPath,
   performerPort: number = DEFAULT_PERFORMER_PORT,
   fitConfigPiece?: PieceData,
+  situationalRunId?: string,
 ): RunOutput & { path: string } {
-  const config = buildSituationalConfiguration(cbdino, performerPort, fitConfigPiece);
+  const config = buildSituationalConfiguration(cbdino, performerPort, fitConfigPiece, situationalRunId);
 
   console.log(
     `\nGenerating a situational FITConfiguration.json for you. You can also produce this by hand by ` +

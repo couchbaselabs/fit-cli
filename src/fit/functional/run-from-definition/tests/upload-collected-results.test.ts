@@ -44,7 +44,8 @@ interface UploadReceipt {
 }
 
 function capturingUpload(receipts: UploadReceipt[]) {
-  return (dir: string, bucket?: string, id?: string) => {
+  return (dir: string, bucket?: string, opts?: { assertId?: string; fallbackId?: string }) => {
+    const id = opts?.fallbackId ?? opts?.assertId;
     const runDirs = Object.fromEntries(
       readdirSync(dir, { withFileTypes: true })
         .filter((e) => e.isDirectory())

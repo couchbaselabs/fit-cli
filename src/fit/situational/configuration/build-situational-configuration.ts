@@ -99,7 +99,7 @@ function baseConfigPiece(performerPort: number): ConfigPiece {
  * file can opt back in with a `fitConfig.excludeTests` override, which replaces
  * this array wholesale.
  */
-export function situationalConfigPiece(cbdino: CbdinoSettings): ConfigPiece {
+export function situationalConfigPiece(cbdino: CbdinoSettings, situationalRunId?: string): ConfigPiece {
   return {
     label: "situational",
     data: {
@@ -116,6 +116,7 @@ export function situationalConfigPiece(cbdino: CbdinoSettings): ConfigPiece {
             : {}),
         },
         files: { outputDirectory: SITUATIONAL_RESULTS_DIR_NAME },
+        ...(situationalRunId !== undefined ? { situationalRunId } : {}),
       },
     },
   };
@@ -130,6 +131,7 @@ export function buildSituationalConfiguration(
   cbdino: CbdinoSettings = DEFAULT_CBDINO_SETTINGS,
   performerPort: number = DEFAULT_PERFORMER_PORT,
   fitConfigPiece?: PieceData,
+  situationalRunId?: string,
 ): Record<string, unknown> {
   // The fitConfig piece merges last and can only add keys, so a definition that
   // still sets situational.database ends up with both blocks. The driver rejects
@@ -141,7 +143,7 @@ export function buildSituationalConfiguration(
   }
   return mergeConfigPieces([
     baseConfigPiece(performerPort),
-    situationalConfigPiece(cbdino),
+    situationalConfigPiece(cbdino, situationalRunId),
     ...(fitConfigPiece ? [{ label: "definition fitConfig piece", data: fitConfigPiece }] : []),
   ]);
 }

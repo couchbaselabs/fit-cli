@@ -109,3 +109,9 @@ test("a definition fitConfig piece is layered last and can override generated fi
   assert.deepEqual(config.excludeTests, ["openshift"]);
   assert.deepEqual(config.extra, { added: true });
 });
+
+test("the situational run id is passed to the driver when given", () => {
+  const situational = buildSituationalConfiguration(DEFAULT_CBDINO_SETTINGS, 8060, undefined, "52cad896-2bb7-4248-8d3b-92f3e72ac5c6")
+    .situational as Record<string, unknown>;
+  assert.equal(situational.situationalRunId, "52cad896-2bb7-4248-8d3b-92f3e72ac5c6");
+});

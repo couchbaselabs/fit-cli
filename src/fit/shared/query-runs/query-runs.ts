@@ -10,12 +10,11 @@
  */
 import postgres from "postgres";
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
+import { UUID_RE } from "../../../util/non-fit/uuid.js";
 import { resolveResultsDbCredentials, DEFAULT_RESULTS_ENV, type ResolvedResultsDbCredentials } from "../../util/config.js";
 
 const RESULTS_DB_PORT = 5432;
 const RESULTS_DB_NAME = "perf";
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** A row from the `runs` table — shape is whatever columns that table has. */
 export type RunRow = Record<string, unknown>;
