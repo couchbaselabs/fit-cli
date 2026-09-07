@@ -95,6 +95,8 @@ export interface RunState {
   target: ResumeTargetState;
   cluster?: ResumeClusterState;
   performers: ResumePerformerState[];
+  /** Reused on resume; a fresh id would split one run across two groups. */
+  situationalRunId?: string;
 }
 
 /** Where the run-state file lives inside the artifact directory `runDir`. */

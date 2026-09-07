@@ -17,8 +17,7 @@ import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { type Detail, type RunOutput } from "../../../util/non-fit/artifacts.js";
 import { s3Client } from "../../../cloud/util/aws/aws-clients.js";
 import { uploadDirectoryToS3 } from "../../../cloud/util/aws/upload-directory.js";
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import { UUID_RE } from "../../../util/non-fit/uuid.js";
 
 /**
  * Where results go by default: the same bucket the run-artifacts zips live in
@@ -63,29 +62,52 @@ export interface UploadPlan {
  * A dir without a parseable run.json5 is skipped (the run died before
  * finalizeRun wrote it), as is one whose run.json5 uuid doesn't match the dir
  * name since uploading it would store the data under the wrong run.
+ *
+ * run.json5 owns the situational id. `fallbackId` is only reached against a driver
+ * too old to record one; `assertId` is the user asserting what the files should say,
+ * so a disagreement fails.
  */
 export function planResultsUpload(
   runDirs: readonly ResultsRunDir[],
-  situationalRunId?: string,
+  opts: { assertId?: string; fallbackId?: string } = {},
   newSituationalRunId: () => string = randomUUID,
 ): UploadPlan {
-  const uploads: PlannedUpload[] = [];
+  const found: { dirName: string; runUuid: string }[] = [];
   const skipped: string[] = [];
   // Lowercased because S3 keys are case-sensitive
-  const situationalRunUuid = situationalRunId?.toLowerCase() ?? newSituationalRunId();
+  const assertId = opts.assertId?.toLowerCase();
+  let fromFiles: string | undefined;
 
   for (const dir of [...runDirs].sort((a, b) => a.dirName.localeCompare(b.dirName))) {
     if (dir.runJson5 === undefined) {
       skipped.push(`${dir.dirName}: no run.json5 (the run was never finalized)`);
       continue;
     }
-    let forDatabase: { runUuid?: string };
+    let forDatabase: { runUuid?: string; situationalRunUuid?: string };
     try {
       const parsed = JSON5.parse<{ forDatabase?: typeof forDatabase }>(dir.runJson5);
       forDatabase = parsed.forDatabase ?? {};
     } catch (err) {
       skipped.push(`${dir.dirName}: run.json5 is unparseable (${(err as Error).message})`);
       continue;
+    }
+    const recorded =
+      typeof forDatabase.situationalRunUuid === "string" && UUID_RE.test(forDatabase.situationalRunUuid)
+        ? forDatabase.situationalRunUuid.toLowerCase()
+        : undefined;
+    if (recorded !== undefined) {
+      if (assertId !== undefined && recorded !== assertId) {
+        throw new Error(
+          `Situational run id mismatch for ${dir.dirName}: --situational-run-id says ${assertId}, its run.json5 says ${recorded}.`,
+        );
+      }
+      if (fromFiles !== undefined && recorded !== fromFiles) {
+        throw new Error(
+          `${dir.dirName} belongs to situational run ${recorded}, but an earlier directory here belongs to ${fromFiles}. ` +
+            "Upload one situational run at a time.",
+        );
+      }
+      fromFiles = recorded;
     }
     // `?.` alone would still crash on a non-string runUuid (e.g. numeric); a bad
     // run.json5 must skip this one dir, not fail the whole plan.
@@ -99,13 +121,16 @@ export function planResultsUpload(
       continue;
     }
 
-    uploads.push({
-      dirName: dir.dirName,
-      runUuid,
-      keyPrefix: `incoming/${situationalRunUuid}/${runUuid}`,
-    });
+    found.push({ dirName: dir.dirName, runUuid });
   }
-  return { situationalRunUuid, uploads, skipped };
+
+  // Only now is the id settled, so this is where the key prefixes can be built.
+  const situationalRunUuid = fromFiles ?? assertId ?? opts.fallbackId?.toLowerCase() ?? newSituationalRunId();
+  return {
+    situationalRunUuid,
+    uploads: found.map((f) => ({ ...f, keyPrefix: `incoming/${situationalRunUuid}/${f.runUuid}` })),
+    skipped,
+  };
 }
 
 function readResultsDir(resultsDir: string): ResultsRunDir[] {
@@ -137,9 +162,9 @@ async function writeDoneMarker(bucket: string, keyPrefix: string): Promise<void>
 export async function uploadSituationalResults(
   resultsDir: string,
   bucket: string = RESULTS_BUCKET,
-  situationalRunId?: string,
+  opts: { assertId?: string; fallbackId?: string } = {},
 ): Promise<RunOutput> {
-  const plan = planResultsUpload(readResultsDir(resultsDir), situationalRunId);
+  const plan = planResultsUpload(readResultsDir(resultsDir), opts);
   for (const skip of plan.skipped) {
     console.warn(`Skipping ${skip}`);
   }
@@ -165,7 +190,7 @@ Usage: bun src/fit/situational/upload-results/upload-results.ts <resultsDir> [op
 
 Options:
   --bucket <name>              Upload to this bucket instead of ${RESULTS_BUCKET}.
-  --situational-run-id <uuid>  Group all runs under this situational run id.
+  --situational-run-id <uuid>  Require all runs to match this situational run id.
   --help, -h                   Show this help.
 
 <resultsDir> is the files output directory a FIT/SIT test-driver run wrote
@@ -195,6 +220,6 @@ function parseArgs(argv: string[]): { resultsDir: string; bucket: string; situat
 if (isMain(import.meta.url)) {
   runCli(async () => {
     const parsed = parseArgs(process.argv.slice(2));
-    return await uploadSituationalResults(parsed.resultsDir, parsed.bucket, parsed.situationalRunId);
+    return await uploadSituationalResults(parsed.resultsDir, parsed.bucket, { assertId: parsed.situationalRunId });
   });
 }
