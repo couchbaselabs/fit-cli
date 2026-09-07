@@ -144,11 +144,12 @@ export interface RunOptions {
    */
   timeoutMs?: number;
   /**
-   * A file on the execution target that this command is writing its real output to, so a
-   * remote target can read it directly if its own output stream goes quiet. Only meaningful
-   * remotely (see ssm-target's stall watchdog) and only for the models that redirect output
-   * to a file — LogType3's `streamToArtifactFile` sets it to the artifact path. Local runs
-   * ignore it: there is no transport in between to go wrong.
+   * A file on the execution target that this command is writing its real output to. Setting
+   * it says the command prints nothing itself, so a remote target reads this file directly,
+   * on our own clock, for proof-of-life rather than waiting on an output stream that would
+   * have to keep working for the command's whole life. Only meaningful remotely and only for
+   * the models that redirect output to a file — LogType3's `streamToArtifactFile` sets it to
+   * the artifact path. Local runs ignore it: there is no transport in between to go wrong.
    *
    * Distinct from `timeoutMs`: that bounds a command we want to give up on, this keeps us
    * informed about one we want to keep waiting for.
@@ -629,7 +630,12 @@ export function announceArtifactStream({ logPath, command, onHost }: ArtifactStr
     `This may be a long-running process; full output goes to the log file.\n` +
       `  Log: ${logPath}${where}\n` +
       `  Command: ${command}${where}\n` +
-      `The last log line will be printed every ${HEARTBEAT_INTERVAL_SECS}s as proof-of-life.\n`,
+      // Remotely the line is read back out of the file itself, which is worth saying: it
+      // makes the heartbeat proof that the command is still writing, not just that some
+      // output stream is still open.
+      (onHost
+        ? `That file's last line will be read and printed every ${HEARTBEAT_INTERVAL_SECS}s as proof-of-life.\n`
+        : `The last log line will be printed every ${HEARTBEAT_INTERVAL_SECS}s as proof-of-life.\n`),
   );
 }
 

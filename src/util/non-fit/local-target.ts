@@ -9,6 +9,7 @@ import type { ExecutionTarget } from "./target.js";
 
 export class LocalTarget implements ExecutionTarget {
   readonly kind = "local" as const;
+  readonly streamsOutputLive = true;
   readonly description = "this machine";
 
   run(command: string, args: string[], cwd?: string, opts?: RunOptions): Promise<void> {

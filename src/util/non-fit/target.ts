@@ -18,6 +18,14 @@ export interface ExecutionTarget {
   readonly kind: "local" | "remote";
   /** Short human-readable description, e.g. "this machine" or "ubuntu@1.2.3.4". */
   readonly description: string;
+  /**
+   * Whether a running command's output reaches us as it happens. True for a pipe (local
+   * processes, IAP's ssh); false for SSM, which batches through CloudWatch Logs and can
+   * fail to deliver at all. It decides where L3 proof-of-life comes from: a command on a
+   * live-streaming target can cheaply tail its own log file in-band, while on SSM the
+   * command stays silent and the target tails `livenessPath` out-of-band instead.
+   */
+  readonly streamsOutputLive: boolean;
 
   /** Run a command, streaming its output, resolving when it finishes (rejects non-zero). */
   run(command: string, args: string[], cwd?: string, opts?: RunOptions): Promise<void>;

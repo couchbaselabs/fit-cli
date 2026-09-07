@@ -45,11 +45,22 @@ resource "aws_iam_role_policy" "fit_cli_ssm_instance_command_output" {
         Sid    = "FitCliSsmCommandOutputLogs"
         Effect = "Allow"
         Action = [
+          "logs:CreateLogGroup",
           "logs:CreateLogStream",
           "logs:PutLogEvents",
           "logs:DescribeLogStreams",
         ]
         Resource = "arn:aws:logs:*:958525475024:log-group:/fit-cli/ssm-command-output:*"
+      },
+      {
+        # Must stay "*": DescribeLogGroups is a list operation that takes no resource, and
+        # the agent's denial came back against an empty ARN
+        # ("arn:aws:logs:us-west-2:958525475024:log-group::log-stream:"), so scoping this
+        # to the log group turns it straight back into a denial.
+        Sid      = "FitCliSsmCommandOutputDescribeLogGroups"
+        Effect   = "Allow"
+        Action   = ["logs:DescribeLogGroups"]
+        Resource = "*"
       },
     ]
   })

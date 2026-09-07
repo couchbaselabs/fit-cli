@@ -27,7 +27,7 @@ import { cloudWatchLogsClient, ssmClient } from "../../cloud/util/aws/aws-client
 import { ensureSsmLogGroup } from "../../cloud/util/aws/ssm-log-group.js";
 import { commandOn, echoCommand, fitCliWarn, formatCommandLine, startGreyTextOutput, stopGreyTextOutput } from "./fit-cli-log.js";
 import { buildRemoteCommand, posixQuote } from "./remote-target.js";
-import { writeCommandOutputToDebugLog, type RunOptions } from "./proc.js";
+import { HEARTBEAT_INTERVAL_SECS, writeCommandOutputToDebugLog, type RunOptions } from "./proc.js";
 import { exponentialDelays, retryWhole } from "./retry.js";
 import type { ExecutionTarget } from "./target.js";
 import { ssmGetFile, ssmPutFile } from "./ssm-file-relay.js";
@@ -326,8 +326,16 @@ async function deleteLogStreams(commandId: string, instanceId: string): Promise<
   }
 }
 
-async function sendShellCommand(instanceId: string, command: string, runAsUser: string): Promise<{ commandId: string }> {
-  await ensureLogGroup();
+async function sendShellCommand(
+  instanceId: string,
+  command: string,
+  runAsUser: string,
+  // Commands whose output we only ever read from GetCommandInvocation's inline copy have
+  // nothing to gain from CloudWatch, and asking for it is not free: each request makes the
+  // agent stand its publisher up and tear it down, and log the attempt, on the instance.
+  { withCloudWatchOutput = true }: { withCloudWatchOutput?: boolean } = {},
+): Promise<{ commandId: string }> {
+  if (withCloudWatchOutput) await ensureLogGroup();
   // AWS-RunShellScript runs as root; sudo -u keeps parity with the box's normal
   // login user (home dir, environment, group membership — e.g. docker) instead
   // of silently switching every command to root.
@@ -337,7 +345,9 @@ async function sendShellCommand(instanceId: string, command: string, runAsUser: 
     DocumentName: "AWS-RunShellScript",
     Parameters: { commands: [script], executionTimeout: [String(DEFAULT_TIMEOUT_SECONDS)] },
     TimeoutSeconds: DEFAULT_TIMEOUT_SECONDS,
-    CloudWatchOutputConfig: { CloudWatchLogGroupName: SSM_LOG_GROUP_NAME, CloudWatchOutputEnabled: true },
+    ...(withCloudWatchOutput
+      ? { CloudWatchOutputConfig: { CloudWatchLogGroupName: SSM_LOG_GROUP_NAME, CloudWatchOutputEnabled: true } }
+      : {}),
   })));
   const commandId = resp.Command?.CommandId;
   if (!commandId) throw new Error(`SendCommand on ${instanceId} returned no CommandId.`);
@@ -350,69 +360,91 @@ async function sendShellCommand(instanceId: string, command: string, runAsUser: 
  *
  * The SSM Agent's CloudWatch publishing is not guaranteed to keep pace with a long-running
  * command. On one situational run it stopped publishing 57 minutes in, silently dropped
- * every proof-of-life line after that, and surfaced only the already-buffered ones when the
- * invocation finally went terminal — 3h20m of apparent silence over a command that was
- * healthy the whole time, which read exactly like a hang and was investigated as one. We
- * can't make the agent publish, but we can refuse to present its silence as the command's.
+ * every line after that, and surfaced only the already-buffered ones when the invocation
+ * finally went terminal — 3h20m of apparent silence over a command that was healthy the
+ * whole time, which read exactly like a hang and was investigated as one. We can't make the
+ * agent publish, but we can refuse to present its silence as the command's.
+ *
+ * Only the streaming path needs this. A command redirecting its output to a file
+ * (`livenessPath`) prints nothing at all, so a quiet stream there is the normal case — it
+ * gets proof-of-life from {@link probeLiveness} instead.
  */
 const OUTPUT_STALL_WARN_MS = 5 * 60 * 1_000;
 
+/** How long the log file may go without growing before we say so. */
+const LOG_STALL_WARN_MS = 5 * 60 * 1_000;
+
 /**
- * A diagnostic must never outlast the thing it is diagnosing: this runs inside the poll
- * loop of a command we still want to stream, and the instance it is questioning is by
- * definition already behaving oddly. So it gets its own deadline rather than
- * pollUntilDone's unbounded wait.
+ * A probe must never outlast the thing it is watching: it runs inside the poll loop of a
+ * command we still want to follow. So it gets its own deadline rather than pollUntilDone's
+ * unbounded wait.
  */
 const PROBE_TIMEOUT_MS = 60_000;
 
+/** Marks the size line, so parsing still works when `stat` fails and prints nothing. */
+const LIVENESS_STAT_PREFIX = "FITSTAT ";
+
+/** What a probe found out about the file a command is redirecting its output to. */
+export interface LivenessProbe {
+  /** Its last line, absent while the file is still empty or unreadable. */
+  line?: string;
+  /** Its size in bytes, absent if it doesn't exist yet. Growth is what proves progress. */
+  sizeBytes?: number;
+}
+
+export function parseLivenessProbe(stdout: string): LivenessProbe {
+  const newlineAt = stdout.indexOf("\n");
+  const header = newlineAt === -1 ? stdout : stdout.slice(0, newlineAt);
+  // No marker means something other than the probe answered, so treat it all as the line
+  // rather than silently eating its first line as a size.
+  if (!header.startsWith(LIVENESS_STAT_PREFIX)) return { line: stdout.trim() || undefined };
+  const size = header.slice(LIVENESS_STAT_PREFIX.length).trim();
+  return {
+    sizeBytes: /^\d+$/.test(size) ? Number(size) : undefined,
+    line: (newlineAt === -1 ? "" : stdout.slice(newlineAt + 1)).trim() || undefined,
+  };
+}
+
 /**
- * Read the last line of a file on the instance with a *separate*, short-lived command.
+ * Read the last line and size of a file on the instance with a *separate*, short-lived
+ * command.
  *
- * Deliberately reads only GetCommandInvocation's inline copy and never CloudWatch: this
- * exists precisely for when the CloudWatch path has stopped delivering, so routing the
- * rescue through it too would be pointless. One tail line is far below the inline caps.
+ * Deliberately reads only GetCommandInvocation's inline copy, and asks for no CloudWatch
+ * output: this is the proof-of-life for a command whose own output goes to that file, so
+ * routing it through a stream that would have to keep working for the command's whole
+ * (many-hour) life is the exact dependency it exists to avoid. One tail line is far below
+ * the inline caps.
  */
-async function probeRemoteTail(instanceId: string, path: string, runAsUser: string): Promise<string | undefined> {
-  const { commandId } = await sendShellCommand(instanceId, `tail -n 1 ${posixQuote(path)}`, runAsUser);
+async function probeLiveness(instanceId: string, path: string, runAsUser: string): Promise<LivenessProbe> {
+  const quoted = posixQuote(path);
+  const { commandId } = await sendShellCommand(
+    instanceId,
+    // `|| true` because only this command's stdout matters: without it, probing before the
+    // file exists exits non-zero and leaves a trail of Failed invocations in SSM's history
+    // for a run that is doing nothing wrong.
+    `printf '${LIVENESS_STAT_PREFIX}%s\\n' "$(stat -c %s ${quoted} 2>/dev/null)"; tail -n 1 ${quoted} 2>/dev/null || true`,
+    runAsUser,
+    { withCloudWatchOutput: false },
+  );
   const deadline = Date.now() + PROBE_TIMEOUT_MS;
   for (;;) {
     const status = await withSsmRetry(() => getInvocationStatus(instanceId, commandId));
-    if (status.done) {
-      void deleteLogStreams(commandId, instanceId);
-      return status.inline.stdout.trim() || undefined;
-    }
+    if (status.done) return parseLivenessProbe(status.inline.stdout);
     if (Date.now() >= deadline) throw new Error(`it did not finish within ${PROBE_TIMEOUT_MS / 1_000}s`);
     await sleep(POLL_INTERVAL_MS);
   }
 }
 
 /**
- * Tell the user that the *stream* has gone quiet, not necessarily the command — and, when
- * the caller told us which file the command is writing, prove it either way by reading that
- * file directly. Best-effort throughout: a failed probe still leaves the warning, and
- * nothing here may take the run down.
+ * Tell the user that the *stream* has gone quiet, not necessarily the command. Nothing here
+ * may take the run down.
  */
-async function reportStalledOutput(
-  instanceId: string,
-  status: string,
-  runAsUser: string,
-  quietForMs: number,
-  livenessPath?: string,
-): Promise<void> {
-  const preamble =
+function reportStalledOutput(instanceId: string, status: string, quietForMs: number): void {
+  fitCliWarn(
     `No output from ${instanceId} for ${Math.round(quietForMs / 60_000)}m. SSM still reports the command as ` +
     `${status}, so this is most likely the instance's SSM Agent having stopped publishing to CloudWatch Logs ` +
-    `rather than the command itself being stuck.`;
-  if (!livenessPath) {
-    fitCliWarn(preamble);
-    return;
-  }
-  try {
-    const line = await probeRemoteTail(instanceId, livenessPath, runAsUser);
-    fitCliWarn(`${preamble}\nLast line of ${livenessPath}, read directly just now:\n  ${line ?? "(the file is still empty)"}`);
-  } catch (err) {
-    fitCliWarn(`${preamble}\nReading ${livenessPath} directly failed too: ${err instanceof Error ? err.message : String(err)}`);
-  }
+    `rather than the command itself being stuck.`,
+  );
 }
 
 async function runShellCommandStreamed(instanceId: string, remoteCmd: string, runAsUser: string, livenessPath?: string): Promise<void> {
@@ -420,16 +452,26 @@ async function runShellCommandStreamed(instanceId: string, remoteCmd: string, ru
   let lastMs = 0;
   let wroteAnything = false;
   let lastOutputAt = Date.now();
+  let nextProofOfLifeAt = Date.now() + HEARTBEAT_INTERVAL_SECS * 1_000;
+  let lastSizeBytes: number | undefined;
+  let grewAt = Date.now();
   for (;;) {
-    // Streamed output is for a human to read, so both streams go to the terminal
-    // interleaved — only capture() needs them kept apart.
-    const chunk = await fetchNewLogLines(commandId, instanceId, lastMs);
-    if (chunk.combined) {
-      process.stdout.write(chunk.combined);
-      wroteAnything = true;
-      lastOutputAt = Date.now();
+    // A command with a livenessPath sends everything to that file, so its stdout is empty
+    // by construction and there is nothing here to read. Not reading it is the point:
+    // FilterLogEvents is capped at 10 TPS account-wide and that cap cannot be raised, which
+    // makes it the binding constraint when many FIT runs poll at once. A multi-hour driver
+    // run must not spend that quota on reads which can never return anything.
+    if (livenessPath === undefined) {
+      // Streamed output is for a human to read, so both streams go to the terminal
+      // interleaved — only capture() needs them kept apart.
+      const chunk = await fetchNewLogLines(commandId, instanceId, lastMs);
+      if (chunk.combined) {
+        process.stdout.write(chunk.combined);
+        wroteAnything = true;
+        lastOutputAt = Date.now();
+      }
+      lastMs = chunk.lastMs;
     }
-    lastMs = chunk.lastMs;
 
     const status = await withSsmRetry(() => getInvocationStatus(instanceId, commandId));
     if (status.done) {
@@ -455,12 +497,40 @@ async function runShellCommandStreamed(instanceId: string, remoteCmd: string, ru
       return;
     }
 
-    const quietForMs = Date.now() - lastOutputAt;
-    if (quietForMs >= OUTPUT_STALL_WARN_MS) {
-      // Re-arm before reporting, so a persistent stall repeats at this cadence rather than
-      // on every 1.5s poll — and so a slow probe doesn't immediately re-trip it.
-      lastOutputAt = Date.now();
-      await reportStalledOutput(instanceId, status.status, runAsUser, quietForMs, livenessPath);
+    if (livenessPath === undefined) {
+      const quietForMs = Date.now() - lastOutputAt;
+      if (quietForMs >= OUTPUT_STALL_WARN_MS) {
+        // Re-arm before reporting, so a persistent stall repeats at this cadence rather
+        // than on every 1.5s poll.
+        lastOutputAt = Date.now();
+        reportStalledOutput(instanceId, status.status, quietForMs);
+      }
+    } else if (Date.now() >= nextProofOfLifeAt) {
+      // Re-arm first: a probe is a whole round trip to the instance, so a slow or failing
+      // one must not turn the interval into a tight retry loop.
+      nextProofOfLifeAt = Date.now() + HEARTBEAT_INTERVAL_SECS * 1_000;
+      try {
+        const probe = await probeLiveness(instanceId, livenessPath, runAsUser);
+        // No timestamp: this line was read just now, so the log's own prefix already
+        // says when. Printed even when unchanged — that a run is still on the same line
+        // is itself worth seeing.
+        if (probe.line) process.stdout.write(`${probe.line}\n`);
+        if (probe.sizeBytes !== lastSizeBytes) {
+          lastSizeBytes = probe.sizeBytes;
+          grewAt = Date.now();
+        } else {
+          const staleForMs = Date.now() - grewAt;
+          if (staleForMs >= LOG_STALL_WARN_MS) {
+            grewAt = Date.now();
+            fitCliWarn(
+              `${livenessPath} on ${instanceId} has not grown in ${Math.round(staleForMs / 60_000)}m, though SSM ` +
+              `still reports the command as ${status.status}. The command may be stuck.`,
+            );
+          }
+        }
+      } catch (err) {
+        fitCliWarn(`Could not read ${livenessPath} on ${instanceId} for proof-of-life (will retry): ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
     await sleep(POLL_INTERVAL_MS);
   }
@@ -518,6 +588,9 @@ async function runShellCommandCaptured(instanceId: string, remoteCmd: string, ru
 
 export class SsmTarget implements ExecutionTarget {
   readonly kind = "remote" as const;
+  // Output goes via the agent's CloudWatch Logs publishing, which batches (30s/200kb) and
+  // has been seen to stop entirely mid-command. Never treat it as live.
+  readonly streamsOutputLive = false;
   readonly description: string;
 
   constructor(readonly instanceId: string, readonly runAsUser: string = DEFAULT_SSM_USER) {

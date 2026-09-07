@@ -1,12 +1,13 @@
 /**
- * Unit tests for splitting SSM's CloudWatch output back into stdout and stderr.
+ * Unit tests for splitting SSM's CloudWatch output back into stdout and stderr, and for
+ * reading back a liveness probe.
  *
  * Run on their own:
  *   node --import tsx --test src/util/non-fit/tests/ssm-target.test.ts
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { inlineOutputIsComplete, partitionLogEvents } from "../ssm-target.js";
+import { inlineOutputIsComplete, parseLivenessProbe, partitionLogEvents } from "../ssm-target.js";
 
 const stdoutStream = "cmd-1/i-abc/aws-runShellScript/stdout";
 const stderrStream = "cmd-1/i-abc/aws-runShellScript/stderr";
@@ -83,4 +84,25 @@ test("inlineOutputIsComplete rejects a stream sitting at its cap even with no ma
   assert.equal(inlineOutputIsComplete(inline("x".repeat(24_000))), false);
   assert.equal(inlineOutputIsComplete(inline("ok", "e".repeat(8_000))), false);
   assert.equal(inlineOutputIsComplete(inline("x".repeat(23_999))), true);
+});
+
+test("parseLivenessProbe splits the size marker from the log line", () => {
+  assert.deepEqual(parseLivenessProbe("FITSTAT 4096\n11:19:25.961 INFO Execution of Replace\n"), {
+    sizeBytes: 4096,
+    line: "11:19:25.961 INFO Execution of Replace",
+  });
+});
+
+test("parseLivenessProbe reports a size of zero for a file that exists but is empty", () => {
+  // Distinct from an absent size: 0 that stays 0 is a command producing nothing, which the
+  // stall warning should notice, whereas an unknown size says nothing either way.
+  assert.deepEqual(parseLivenessProbe("FITSTAT 0\n"), { sizeBytes: 0, line: undefined });
+});
+
+test("parseLivenessProbe survives stat failing", () => {
+  assert.deepEqual(parseLivenessProbe("FITSTAT \nlast line\n"), { sizeBytes: undefined, line: "last line" });
+});
+
+test("parseLivenessProbe keeps unmarked output whole rather than eating its first line", () => {
+  assert.deepEqual(parseLivenessProbe("sudo: unknown user\n"), { line: "sudo: unknown user" });
 });

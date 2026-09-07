@@ -5,6 +5,7 @@ import {
   gitCredentialsLine,
   heartbeatShellCommand,
   pathPrefixedCommand,
+  redirectCompoundToFileCommand,
   redirectToFileCommand,
   remoteDockerWrapperScript,
   remoteFitRepos,
@@ -92,6 +93,15 @@ test("redirectToFileCommand quotes shell-sensitive args and paths", () => {
     redirectToFileCommand("./mvnw", ["-Dtest=a b", "test"], "/tmp/fit logs/driver.log"),
     "./mvnw '-Dtest=a b' test > '/tmp/fit logs/driver.log' 2>&1",
   );
+});
+
+test("redirectCompoundToFileCommand subshells a compound so it redirects as a whole", () => {
+  const script = redirectCompoundToFileCommand("export PATH=/tmp/bin:$PATH; ./mvnw test", "/tmp/fit logs/driver.log");
+  // The subshell is what makes the leading `export` share the redirect, and leaves the
+  // exit code as ./mvnw's. Nothing is printed: on this path (SSM) the target tails the
+  // file itself, so an in-band heartbeat would only sit in a buffer.
+  assert.equal(script, "( export PATH=/tmp/bin:$PATH; ./mvnw test ) > '/tmp/fit logs/driver.log' 2>&1");
+  assert.doesNotMatch(script, /tail/);
 });
 
 test("heartbeatShellCommand redirects full output to file and emits a periodic last-line heartbeat", () => {
