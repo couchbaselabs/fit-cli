@@ -1161,9 +1161,15 @@ export type ResultsCollector = Pick<
  * Collection and publishing are independent:
  *   - local runs already have their result files;
  *   - remote runs collect and extract them first;
- *   - CI publishes the resulting files to S3;
- *   - non-CI runs preserve them locally.
+ *   - CI, and a remote (cloud instance) run, publish the resulting files to S3 —
+ *     a remote run is byte-for-byte what CI does, so it gets the same treatment;
+ *   - a run on your own laptop preserves them locally instead, so interactive
+ *     development doesn't surprise-upload to the shared results bucket.
  */
+function shouldUploadResults(execution: Pick<ResultsCollector, "kind">, env: NodeJS.ProcessEnv): boolean {
+  return artifactUploadEnabled(env) || execution.kind === "remote";
+}
+
 export async function uploadCollectedResults(
   execution: ResultsCollector,
   driverResultsDir: string,
@@ -1182,16 +1188,16 @@ export async function uploadCollectedResults(
 
   // A local run has the files on this machine already, so upload them directly.
   if (execution.kind === "local") {
-    // Publish results automatically from CI only. Non-CI runs keep the files locally;
-    // upload-results.ts can publish them explicitly.
-    if (!artifactUploadEnabled(env)) {
+    // Publish results automatically from CI only. A run on your own laptop keeps the
+    // files locally; upload-results.ts can publish them explicitly.
+    if (!shouldUploadResults(execution, env)) {
       // removeTree wipes driverResultsDir at the start of the next situational
       // run, so copy the results into this run's artifact dir now, or a second
       // local run in a row loses the first one's results with nothing preserved.
       const localResultsDir = join(localRunDir, SITUATIONAL_RESULTS_DIR_NAME);
       rmSync(localResultsDir, { recursive: true, force: true });
       cpSync(driverResultsDir, localResultsDir, { recursive: true });
-      console.log(`\nResult files preserved to ${localResultsDir}. Not uploaded: results go to S3 from CI only.`);
+      console.log(`\nResult files preserved to ${localResultsDir}. Not uploaded: results go to S3 from CI or a cloud instance only.`);
       return { artifacts: [], details: [{ label: "Preserved results", value: localResultsDir }] };
     }
     return upload(driverResultsDir, RESULTS_BUCKET, { fallbackId: situationalRunId });
@@ -1219,10 +1225,11 @@ export async function uploadCollectedResults(
     await execution.removeTree(remoteTar).catch(() => {});
   }
 
-  // The tar is the artifact either way. Outside CI keep the extracted copy too:
-  // an unpacked tree is easier to read than a tar.
-  if (!artifactUploadEnabled(env)) {
-    console.log(`\nCollected result files to ${localResultsDir}. Not uploaded: results go to S3 from CI only.`);
+  // The tar is the artifact either way. A remote run is byte-for-byte what CI does, so
+  // it always publishes too — only a genuinely local run keeps the extracted copy
+  // instead: an unpacked tree is easier to read than a tar.
+  if (!shouldUploadResults(execution, env)) {
+    console.log(`\nCollected result files to ${localResultsDir}. Not uploaded: results go to S3 from CI or a cloud instance only.`);
     return { artifacts, details: [] };
   }
 

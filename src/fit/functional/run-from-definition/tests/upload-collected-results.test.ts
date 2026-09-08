@@ -166,17 +166,18 @@ test("local outside CI: preserves the results into the run dir, uploads nothing"
   assert.ok(existsSync(join(resultsDir, "aaaaaaaa", "run.json5")));
 });
 
-test("remote outside CI: still collects the tar, uploads nothing, keeps the extracted copy", async () => {
+test("remote outside CI: uploads anyway, since a cloud instance run is treated like CI", async () => {
   const { box, runDir } = tempDirs();
   const resultsDir = writeResultsDir(box);
   const receipts: UploadReceipt[] = [];
 
   const output = await uploadCollectedResults(realContext("remote"), resultsDir, runDir, "11111111-2222-4333-8444-555555555555", capturingUpload(receipts), {});
 
-  assert.equal(receipts.length, 0);
-  // The tar is still this run's artifact, and the extracted tree stays since nothing else has the data.
+  assert.equal(receipts.length, 1);
+  assert.equal(receipts[0]?.id, "11111111-2222-4333-8444-555555555555");
+  // The tar is the artifact. The extracted tree and the remote tar are removed, same as in CI.
   assert.deepEqual(output.artifacts.map((a) => a.filename.endsWith("results.tar")), [true]);
-  assert.ok(existsSync(join(runDir, "results", "aaaaaaaa")));
+  assert.ok(!existsSync(join(runDir, "results")));
   assert.ok(!existsSync(`${resultsDir}.tar`));
 });
 
