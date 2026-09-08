@@ -243,7 +243,7 @@ function capellaConfigScript(capella: ResolvedCapellaConfig): string {
     `export CAPELLA_API_SECRET=${posixQuote(capella.apiSecret)}`,
   ];
   // Optional: only present for environments the Capella team has issued them for
-  // (currently just "dev"). Both have env-var fallbacks in cbdinocluster's `init`,
+  // (currently "dev" and the sandbox). Both have env-var fallbacks in cbdinocluster's `init`,
   // unlike --upload-server-logs-host-name (which has none, so it's passed as an
   // explicit init flag instead — see default-cbdinocluster-init-config.ts).
   if (capella.internalSupportToken) {

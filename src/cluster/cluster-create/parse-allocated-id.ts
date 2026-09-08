@@ -13,7 +13,7 @@
  */
 import { isMain, runCli } from "../../util/non-fit/cli.js";
 
-// Standard UUID with dashes: df45d6d0-cfbe-4905-bc8c-989a09c03817
+// A line that is exactly a dashed UUID (8-4-4-4-12 hex): df45d6d0-cfbe-4905-bc8c-989a09c03817
 const UUID_LINE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // Compact 32-char hex (CNG/CAO deployer): 34cbd9e163264c97af394f6ad05d93e0
 const HEX32_LINE = /^[0-9a-f]{32}$/i;

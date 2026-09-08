@@ -57,7 +57,7 @@ import {
 } from "../../../util/non-fit/replay.js";
 import { clusterLabel as clusterSegmentLabel, formatRunLabel, instanceLabel, performerLabel, runLabel, type RunLabelParts } from "../../shared/util/run-labels.js";
 import { confirm, select } from "../../../util/non-fit/prompts.js";
-import { DEFAULT_CAPELLA_ENV, resolveCapellaConfig, resolveFitPerformerDir, resolveGithubCredentials, resolveResultsDbCredentials, resolveRosaCredentials } from "../../util/config.js";
+import { clearResolvedCapellaCache, DEFAULT_CAPELLA_ENV, resolveCapellaConfig, resolveFitPerformerDir, resolveGithubCredentials, resolveResultsDbCredentials, resolveRosaCredentials } from "../../util/config.js";
 import { ssmStartSessionCommand, terminateInstanceCommand } from "../../util/aws/lifecycle-warning.js";
 import { gcpDebugAccessCommand, gcpTerminateInstanceCommand } from "../../util/gcp/lifecycle-warning.js";
 import { buildSlackRunResults, postSlackRunResults } from "../../slack/post-run-summary.js";
@@ -75,6 +75,7 @@ import { printClusterUiAccess } from "../../../cluster/cluster-diag/cluster-ui-l
 import { prepareCbdinoclusterInit, remoteCbdinoclusterCloudEnabled, removeCapellaApiKeyPool, removeCluster, setupDeclarativeCluster } from "../../../cluster/cluster-create/setup-declarative-cluster.js";
 import { capellaFunctionalCbdinoclusterInitArgs, capellaAnalyticsCbdinoclusterInitArgs, situationalCbdinoclusterInitArgs } from "../../../cluster/cluster-create/default-cbdinocluster-init-config.js";
 import { isAlias, resolveAlias } from "../../../cluster/cluster-create/cb-alias.js";
+import { printCapellaPreflightInfo } from "../../../cluster/cluster-create/capella-debug-links.js";
 import { collectClusterLogsIfSupported } from "../../../cluster/cluster-cbcollect/cluster-cbcollect.js";
 import { installCbdinoclusterRemote } from "../../../cluster/cluster-create/install-cbdinocluster.js";
 import {
@@ -101,7 +102,7 @@ import { resourceCreationPiece, type ClusterCreatingConfig } from "../util/build
 import { generateSituationalConfiguration } from "../../situational/configuration/generate-situational-configuration.js";
 import { RESULTS_BUCKET, uploadSituationalResults } from "../../situational/upload-results/upload-results.js";
 import { DEFAULT_CBDINO_SETTINGS, SITUATIONAL_RESULTS_DIR_NAME, type CbdinoSettings } from "../../situational/configuration/build-situational-configuration.js";
-import { loadEnvironments } from "../../util/environments.js";
+import { applyCapellaEnvironmentOverrides, isSandboxCapellaEnvironment, loadEnvironments } from "../../util/environments.js";
 import {
   createFitExecutionContext,
   uploadRemoteCapellaConfig,
@@ -423,8 +424,24 @@ function isCapellaAnalyticsGroup(group: ResolvedExecutionGroup): boolean {
   return group.type === "functional" && group.cbdinocluster?.config.columnar === true && group.cbdinocluster.deployer === "cloud";
 }
 
-function isCapellaGroup(group: ResolvedExecutionGroup): boolean {
+function isCapellaGroup(group: ResolvedExecutionGroup): group is ResolvedFunctionalExecutionGroup {
   return group.type === "functional" && group.cbdinocluster?.capella !== undefined;
+}
+
+function capellaEnvironmentsInUse(groups: ResolvedExecutionGroup[]): string[] {
+  const names = new Set<string>();
+  for (const group of groups) {
+    // CNG situational runs deploy via CAO/ROSA, not Capella. Check per-run (not group.cng, which is true
+    // if *any* run is CNG) so a group mixing CNG and non-CNG runs still preflights its Capella creds.
+    if ((group.type === "situational" && group.runs.some((run) => !run.cng)) || isCapellaAnalyticsGroup(group)) {
+      names.add(group.capellaEnvironment);
+    }
+    // Not an else — a group can be both, and each half authenticates separately.
+    if (isCapellaGroup(group)) {
+      names.add(group.cbdinocluster?.capella?.environment ?? group.capellaEnvironment);
+    }
+  }
+  return [...names];
 }
 
 /**
@@ -1941,10 +1958,20 @@ export async function runFromDefinition(
   definitionPath: string,
   options: RunFromDefinitionOptions = {},
 ): Promise<RunOutput> {
-  const tracker = new RunFailureTracker();
   const { resumeAt, resumeSelector = {}, cbcollect = false, slackThread, promptScope, stopOnFailure = false, deferSlackTo } = options;
   const phases = phasesForResumePoint(resumeAt);
   const definition = loadDefinition(definitionPath);
+  // Patch in this file's sandbox coordinates before anything reads Capella settings from the registry,
+  // and drop any Capella config cached against a previous definition's (now-replaced) coordinates.
+  const tracker = new RunFailureTracker();
+  clearResolvedCapellaCache();
+  try {
+    applyCapellaEnvironmentOverrides(definition.setup?.capellaEnvironments ?? {});
+  } catch (err) {
+    fitCliError({ classification: "FatalToAll" }, `\n✗ ${(err as Error).message}`);
+    tracker.record("FatalToAll", (err as Error).message, { instanceIndex: 0 });
+    return finalizeRunFromDefinition([], [], undefined, tracker.worst, tracker.failureCount);
+  }
   const resolved = resolveDefinition(definition);
   const executionGroups = buildExecutionGroups(resolved.instances);
   console.log(`\nRunning FIT tests from definition:\n  ${definitionPath}`);
@@ -2110,6 +2137,21 @@ export async function runFromDefinition(
       }
       resultsEnvHosts.set(block, host);
     }
+  }
+
+  // Resolve each sandbox's env-var creds up front, so a missing credential fails fast before provisioning.
+  for (const block of capellaEnvironmentsInUse(executionGroups.slice(startCycleIndex))) {
+    if (!isSandboxCapellaEnvironment(block)) continue;
+    console.log(`\n"${block}" is a pre-deployed Capella sandbox — its control plane, from this definition file:`);
+    printCapellaPreflightInfo(block);
+    try {
+      await resolveCapellaConfig({ block });
+    } catch (err) {
+      fitCliError({ classification: "FatalToAll" }, `\n✗ ${(err as Error).message}`);
+      tracker.record("FatalToAll", `Cannot resolve Capella credentials for sandbox environment "${block}"`, preconditionCtx);
+      return finalizeRunFromDefinition([], [], undefined, tracker.worst, tracker.failureCount);
+    }
+    console.log(`  ✓ Sandbox Capella credentials resolved from the environment.`);
   }
 
   const artifacts: Artifact[] = [];

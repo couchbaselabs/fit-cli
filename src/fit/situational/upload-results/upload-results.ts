@@ -18,7 +18,9 @@ import { type Detail, type RunOutput } from "../../../util/non-fit/artifacts.js"
 import { s3Client } from "../../../cloud/util/aws/aws-clients.js";
 import { uploadDirectoryToS3 } from "../../../cloud/util/aws/upload-directory.js";
 
+// A canonical dashed UUID (8-4-4-4-12 hex), the shape of a run id.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 
 /**
  * Where results go by default: the same bucket the run-artifacts zips live in
