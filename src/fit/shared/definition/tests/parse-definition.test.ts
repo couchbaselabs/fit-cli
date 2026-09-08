@@ -147,7 +147,7 @@ instances:
           - type: situational
             situational:
               database:
-                mode: hosted
+                mode: files
             tests:
               presets: [all]
 `);
@@ -174,7 +174,7 @@ instances:
           - type: situational
             situational:
               database:
-                mode: hosted
+                mode: files
               privateEndpoint: {}
             tests:
               presets: [all]
@@ -406,7 +406,7 @@ instances:
           - type: situational
             situational:
               database:
-                mode: local
+                mode: files
             tests:
               presets: [all]
 `);
@@ -727,7 +727,7 @@ instances:
           - type: situational
             situational:
               database:
-                mode: hosted
+                mode: files
             tests:
               presets: [all]
 `;
@@ -740,22 +740,33 @@ test("parses versions on a situational run, expanding to N sequential runs at re
 });
 
 test("parses situational.version", () => {
-  const def = parseDefinition(SITUATIONAL.replace("mode: hosted", "mode: hosted\n              version: 8.0-stable"));
+  const def = parseDefinition(SITUATIONAL.replace("mode: files", "mode: files\n              version: 8.0-stable"));
   const run = def.instances[0]?.clusterlessSessions?.[0]?.runs[0];
   assert.ok(run && run.type === "situational");
   assert.equal(run.situational.version, "8.0-stable");
 });
 
 test("parses a situational run with the files database mode", () => {
-  const def = parseDefinition(SITUATIONAL.replace("mode: hosted", "mode: files"));
+  const def = parseDefinition(SITUATIONAL.replace("mode: files", "mode: files"));
   const run = def.instances[0]?.clusterlessSessions?.[0]?.runs[0];
   assert.ok(run?.type === "situational");
   assert.equal(run.situational.database.mode, "files");
 });
 
-test("rejects resultsEnvironment combined with the files database mode", () => {
-  const def = SITUATIONAL.replace("mode: hosted", "mode: files\n                resultsEnvironment: prod");
-  assert.throws(() => parseDefinition(def), /only applies to mode "hosted"/);
+test("rejects resultsEnvironment, which no longer applies", () => {
+  const def = SITUATIONAL.replace("mode: files", "mode: files\n                resultsEnvironment: prod");
+  assert.throws(() => parseDefinition(def), /no longer applies/);
+});
+
+test("rejects the retired hosted and local database modes with a migration message", () => {
+  for (const mode of ["hosted", "local"]) {
+    assert.throws(
+      () => parseDefinition(SITUATIONAL.replace("mode: files", `mode: ${mode}`)),
+      (err: unknown) =>
+        err instanceof InvalidDefinitionError && /no longer supported/.test(err.message) && /Use "files"/.test(err.message),
+      `expected ${mode} to be rejected`,
+    );
+  }
 });
 
 test("rejects empty versions array", () => {
@@ -776,7 +787,7 @@ test("rejects versions combined with situational.version", () => {
   assert.throws(
     () => parseDefinition(
       SITUATIONAL
-        .replace("mode: hosted", "mode: hosted\n              version: \"7.6\"")
+        .replace("mode: files", "mode: files\n              version: \"7.6\"")
         .replace("presets: [all]", "presets: [all]\n            versions: [8.0-stable]"),
     ),
     (err: unknown) => err instanceof InvalidDefinitionError && /mutually exclusive/.test(err.message),
@@ -787,7 +798,7 @@ test("rejects versions combined with situational.cng", () => {
   assert.throws(
     () => parseDefinition(
       SITUATIONAL
-        .replace("mode: hosted", "mode: hosted\n              cng: {}")
+        .replace("mode: files", "mode: files\n              cng: {}")
         .replace("presets: [all]", "presets: [all]\n            versions: [8.0-stable]"),
     ),
     (err: unknown) => err instanceof InvalidDefinitionError && /CNG pins its own cluster version/.test(err.message),
@@ -797,7 +808,7 @@ test("rejects versions combined with situational.cng", () => {
 test("rejects situational.version combined with situational.cng", () => {
   assert.throws(
     () => parseDefinition(
-      SITUATIONAL.replace("mode: hosted", "mode: hosted\n              version: 8.0-stable\n              cng: {}"),
+      SITUATIONAL.replace("mode: files", "mode: files\n              version: 8.0-stable\n              cng: {}"),
     ),
     (err: unknown) => err instanceof InvalidDefinitionError && /mutually exclusive/.test(err.message),
   );

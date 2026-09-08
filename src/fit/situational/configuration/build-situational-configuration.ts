@@ -5,7 +5,7 @@
  * manage its own clusters, so the clusterAccess block is just a placeholder (the
  * FIT docs say it's ignored for situational-only runs). What matters is the
  * `situational.cbdino` block (which cluster version cbdino should build) and the
- * `situational.database` block (where the timeseries results land).
+ * `situational.files` block (where the driver writes result files).
  *
  * The config is assembled from config-pieces, so a shared base piece is layered
  * with the situational-specific piece — the artifact-pieces idea from the README.
@@ -21,7 +21,6 @@
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { mergeConfigPieces, type ConfigPiece, type PieceData } from "../../../util/non-fit/config-pieces.js";
 import { DEFAULT_PERFORMER_PORT } from "../../performers/util/performer-port.js";
-import { type ResultsDatabase } from "../../shared/util/results-database.js";
 import { AUTO_GENERATED_MARKER } from "../../shared/fit-configuration/write-fit-configuration.js";
 
 /**
@@ -39,9 +38,6 @@ export const DEFAULT_CAPELLA_CLUSTER_VERSION = "8.0";
  * and collection share one constant.
  */
 export const SITUATIONAL_RESULTS_DIR_NAME = "results";
-
-/** Where situational results go: a hosted database, or "files" for files mode. */
-export type ResultsTarget = ResultsDatabase | "files";
 
 /** How cbdino should build the cluster the situational tests run against. */
 export interface CbdinoSettings {
@@ -97,21 +93,13 @@ function baseConfigPiece(performerPort: number): ConfigPiece {
 
 /**
  * The situational-specific part: don't exclude situational tests, add cbdino +
- * database. Analytics/Columnar situational tests (tagged "columnar", e.g.
- * ColumnarTest) are excluded by default — they need an Analytics performer and
- * fail against a plain operational one. A definition file can opt back in with
- * a `fitConfig.excludeTests` override, which replaces this array wholesale.
- *
- * The database block deliberately carries only the non-secret jdbc + username.
- * The password is NOT written here: FITConfiguration.json is collected into CI
- * artifacts, so a password in it leaks. fit-cli passes it to the test-driver via
- * the FIT_RESULTS_DB_PASSWORD environment variable instead (see runTestDriver),
- * and the driver rejects a password found in config.
- *
- * Pass "files" to emit a files block instead of database - the files-only driver
- * rejects a database block.
+ * the results files block. Analytics/Columnar situational tests (tagged
+ * "columnar", e.g. ColumnarTest) are excluded by default — they need an
+ * Analytics performer and fail against a plain operational one. A definition
+ * file can opt back in with a `fitConfig.excludeTests` override, which replaces
+ * this array wholesale.
  */
-export function situationalConfigPiece(target: ResultsTarget, cbdino: CbdinoSettings): ConfigPiece {
+export function situationalConfigPiece(cbdino: CbdinoSettings): ConfigPiece {
   return {
     label: "situational",
     data: {
@@ -127,14 +115,7 @@ export function situationalConfigPiece(target: ResultsTarget, cbdino: CbdinoSett
             ? { deployer: "cao", operatorVersion: cbdino.cao.operatorVersion, gatewayVersion: cbdino.cao.gatewayVersion }
             : {}),
         },
-        ...(target === "files"
-          ? { files: { outputDirectory: SITUATIONAL_RESULTS_DIR_NAME } }
-          : {
-              database: {
-                jdbc: target.jdbc,
-                username: target.username,
-              },
-            }),
+        files: { outputDirectory: SITUATIONAL_RESULTS_DIR_NAME },
       },
     },
   };
@@ -146,34 +127,28 @@ export function situationalConfigPiece(target: ResultsTarget, cbdino: CbdinoSett
  * last so a definition file can override or extend any generated field.
  */
 export function buildSituationalConfiguration(
-  target: ResultsTarget,
   cbdino: CbdinoSettings = DEFAULT_CBDINO_SETTINGS,
   performerPort: number = DEFAULT_PERFORMER_PORT,
   fitConfigPiece?: PieceData,
 ): Record<string, unknown> {
-  // The fitConfig piece merges last and can only add keys, so a definition in
-  // files mode that still sets situational.database ends up with both blocks.
-  // The driver rejects that only at startup, once the cluster is provisioned -
-  // fail here instead.
-  if (target === "files" && (fitConfigPiece?.situational as Record<string, unknown> | undefined)?.database !== undefined) {
+  // The fitConfig piece merges last and can only add keys, so a definition that
+  // still sets situational.database ends up with both blocks. The driver rejects
+  // that only at startup, once the cluster is provisioned - fail here instead.
+  if ((fitConfigPiece?.situational as Record<string, unknown> | undefined)?.database !== undefined) {
     throw new Error(
-      "The definition's fitConfig sets situational.database, but this run uses files mode - remove the database override from the definition.",
+      "The definition's fitConfig sets situational.database, but results go to files - remove the database override from the definition.",
     );
   }
   return mergeConfigPieces([
     baseConfigPiece(performerPort),
-    situationalConfigPiece(target, cbdino),
+    situationalConfigPiece(cbdino),
     ...(fitConfigPiece ? [{ label: "definition fitConfig piece", data: fitConfigPiece }] : []),
   ]);
 }
 
 if (isMain(import.meta.url)) {
   runCli(() => {
-    const sample = buildSituationalConfiguration({
-      jdbc: "jdbc:postgresql://performance-sdk.couchbase.com:5432/perf",
-      username: "results_writer",
-      password: "***",
-    });
+    const sample = buildSituationalConfiguration();
     console.log(JSON.stringify(sample, null, 2));
     return Promise.resolve();
   });
