@@ -142,8 +142,9 @@
               type: 'situational',
               situational: {
                 database: {
-                  // Where situational timeseries results land.
-                  mode: 'hosted',
+                  // Situational results are written to files. This example runs on localhost, so
+                  // they stay local. Results go to S3 from CI only.
+                  mode: 'files',
                 },
               },
               tests: {

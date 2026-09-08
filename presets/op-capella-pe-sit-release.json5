@@ -5,6 +5,15 @@
   },
   version: 1,
   type: 'fit',
+  // Temporary: pin to the situational run id change until it merges to TFP main. Remove once
+  // https://review.couchbase.org/c/transactions-fit-performer/+/252815 is merged.
+  setup: {
+    repos: {
+      'transactions-fit-performer': {
+        gerritRef: 'refs/changes/15/252815/3',
+      },
+    },
+  },
   instances: [
     {
       aws: {
@@ -25,9 +34,7 @@
               },
               situational: {
                 database: {
-                  mode: 'hosted',
-                  // used to go to 'dev'
-                  resultsEnvironment: 'prod',
+                  mode: 'files',
                 },
                 privateEndpoint: {},
               },
@@ -60,9 +67,7 @@
               },
               situational: {
                 database: {
-                  mode: 'hosted',
-                  // used to go to 'dev'
-                  resultsEnvironment: 'prod',
+                  mode: 'files',
                 },
                 privateEndpoint: {},
               },

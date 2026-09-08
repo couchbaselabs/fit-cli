@@ -36,11 +36,7 @@
               },
               situational: {
                 database: {
-                  mode: 'hosted',
-                  // 'dev' (faas.couchbase.com) is only reachable from the AWS network;
-                  // GCP instances need 'prod' (performance-sdk.couchbase.com), matching
-                  // what the real op-*-sit-* presets use.
-                  resultsEnvironment: 'prod',
+                  mode: 'files',
                 },
               },
             },

@@ -13,6 +13,7 @@ import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { prepareAwsCli } from "./aws-cli.js";
 import { s3Client } from "./aws-clients.js";
+import { AWS_REGION } from "./aws-target.js";
 
 function* walkDir(dir: string): Generator<string> {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -33,6 +34,12 @@ function parseS3Uri(uri: string): { bucket: string; prefix: string } {
   return { bucket: match[1], prefix: match[2] ?? "" };
 }
 
+/** Console URL for browsing a bucket/prefix's objects (not just the raw s3:// URI). */
+function s3ConsoleUrl(bucket: string, prefix: string): string {
+  const encodedPrefix = encodeURIComponent(prefix ? `${prefix}/` : "");
+  return `https://${AWS_REGION}.console.aws.amazon.com/s3/buckets/${bucket}?prefix=${encodedPrefix}&region=${AWS_REGION}`;
+}
+
 /**
  * Recursively upload `localDir` to `s3Uri` (e.g. s3://bucket/prefix). Logs
  * each uploaded file. Rejects if any upload fails.
@@ -41,6 +48,7 @@ export async function uploadDirectoryToS3(localDir: string, s3Uri: string): Prom
   const { bucket, prefix } = parseS3Uri(s3Uri);
   const files = [...walkDir(localDir)];
   console.log(`Uploading ${files.length} file(s) to ${s3Uri}...`);
+  console.log(`  ${s3ConsoleUrl(bucket, prefix)}`);
   for (const file of files) {
     const relPath = relative(localDir, file).replace(/\\/g, "/");
     const key = prefix ? `${prefix}/${relPath}` : relPath;

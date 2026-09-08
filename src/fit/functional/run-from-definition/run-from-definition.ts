@@ -31,7 +31,7 @@
  * run state so `--resume-at` can pick it back up.
  */
 import { randomUUID } from "node:crypto";
-import { copyFileSync, mkdirSync, rmSync } from "node:fs";
+import { copyFileSync, cpSync, mkdirSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   artifactFromPath,
@@ -57,7 +57,7 @@ import {
 } from "../../../util/non-fit/replay.js";
 import { clusterLabel as clusterSegmentLabel, formatRunLabel, instanceLabel, performerLabel, runLabel, type RunLabelParts } from "../../shared/util/run-labels.js";
 import { confirm, select } from "../../../util/non-fit/prompts.js";
-import { DEFAULT_CAPELLA_ENV, resolveCapellaConfig, resolveFitPerformerDir, resolveGithubCredentials, resolveResultsDbCredentials, resolveRosaCredentials } from "../../util/config.js";
+import { DEFAULT_CAPELLA_ENV, resolveCapellaConfig, resolveFitPerformerDir, resolveGithubCredentials, resolveRosaCredentials } from "../../util/config.js";
 import { ssmStartSessionCommand, terminateInstanceCommand } from "../../util/aws/lifecycle-warning.js";
 import { gcpDebugAccessCommand, gcpTerminateInstanceCommand } from "../../util/gcp/lifecycle-warning.js";
 import { buildSlackRunResults, postSlackRunResults } from "../../slack/post-run-summary.js";
@@ -100,6 +100,7 @@ import { generateFitConfiguration } from "../../shared/fit-configuration/generat
 import { resourceCreationPiece, type ClusterCreatingConfig } from "../util/build-fit-configuration.js";
 import { generateSituationalConfiguration } from "../../situational/configuration/generate-situational-configuration.js";
 import { RESULTS_BUCKET, uploadSituationalResults } from "../../situational/upload-results/upload-results.js";
+import { artifactUploadEnabled } from "../../util/aws/upload-run-artifacts.js";
 import { DEFAULT_CBDINO_SETTINGS, SITUATIONAL_RESULTS_DIR_NAME, type CbdinoSettings } from "../../situational/configuration/build-situational-configuration.js";
 import { loadEnvironments } from "../../util/environments.js";
 import {
@@ -142,12 +143,6 @@ import {
   STANDARD_QE_REBALANCE_CLASS,
   type FitTestSelection,
 } from "../../shared/select-fit-tests/select-fit-tests.js";
-import {
-  checkResultsDatabaseConnectivity,
-  resolveResultsDatabase,
-  resultsHostFromJdbc,
-  situationalResultsUrl,
-} from "../../situational/choose-results-database/choose-results-database.js";
 import {
   checkObservabilityCollectorConnectivity,
   OBSERVABILITY_COLLECTOR_HOST,
@@ -428,6 +423,19 @@ function isCapellaGroup(group: ResolvedExecutionGroup): boolean {
 }
 
 /**
+ * Situational runs upload their result files to S3, but only from CI - a local run
+ * leaves them on disk (see uploadCollectedResults). So only ask for AWS credentials
+ * when the upload will actually happen.
+ */
+export function needsResultsUpload(
+  executionGroups: ResolvedExecutionGroup[],
+  startCycleIndex: number,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return artifactUploadEnabled(env) && executionGroups.slice(startCycleIndex).some((group) => group.type === "situational");
+}
+
+/**
  * GitHub creds are only needed so cbdinocluster/CAO can pull private ghcr.io/cb-rhcc
  * images. Only true when some upcoming group will actually provision via cbdinocluster —
  * groups on `clusterMode: "connection"` or `"useExisting"`, or a resumed run that skips
@@ -559,9 +567,6 @@ function announce(
   }
   console.log(`  SDK:     ${run.sdk.name}`);
   console.log(`  Tests:   ${testsLabel}`);
-  if (run.type === "situational") {
-    console.log(`  Results database: ${run.databaseMode}`);
-  }
   console.log(`  Performer port: ${run.performerPort}`);
   if (run.performerVersion) {
     console.log(`  Performer version: ${run.performerVersion}`);
@@ -1051,7 +1056,9 @@ export async function runSituationalTests(
   run: ResolvedSituationalExecutionRun,
   dependencies: {
     recordResult?: RecordRunResult;
-  } = {},
+    /** One per runFromDefinition call, not per run. */
+    situationalRunId: string;
+  },
   instanceKind: "aws" | "gcp" | "localhost" = execution.kind === "remote" ? "aws" : "localhost",
 ): Promise<RunOutput> {
   console.log(
@@ -1059,18 +1066,8 @@ export async function runSituationalTests(
       "(usually `dinonet`) so it can reach the cluster cbdino creates.",
   );
 
-  // Files mode has no results database - the driver writes result files and we
-  // upload them after the run. `database` stays undefined in that case.
-  const database = run.databaseMode === "files"
-    ? undefined
-    : await resolveResultsDatabase(run.databaseMode, run.resultsEnvironment);
-  if (database && !database.ready) {
-    return { artifacts: database.artifacts, details: database.details };
-  }
-  const filesMode = database === undefined;
-
-  const artifacts: Artifact[] = [...(database?.artifacts ?? [])];
-  const details: Detail[] = [...(database?.details ?? [])];
+  const artifacts: Artifact[] = [];
+  const details: Detail[] = [];
 
   // Resolve cbdinocluster to its absolute path on the execution host so the FIT
   // test driver can invoke it even when its environment doesn't inherit the same PATH.
@@ -1078,13 +1075,14 @@ export async function runSituationalTests(
   const fitConfigPiece = await withResolvedSituationalCbdino(run.fitConfig, cbdinoclusterPath);
   const resolvedVersion = run.version !== undefined && isAlias(run.version) ? await resolveAlias(run.version) : run.version;
 
+  const situationalRunId = dependencies.situationalRunId;
   const fitConfig = generateSituationalConfiguration(
-    database?.database ?? "files",
     situationalCbdinoSettings(run.cng, run.privateEndpoint !== undefined, resolvedVersion, instanceKind),
     execution.fitPerformerDir,
     run.path,
     run.performerPort,
     fitConfigPiece.config,
+    situationalRunId,
   );
   artifacts.push(...fitConfig.artifacts);
   details.push(...fitConfig.details);
@@ -1094,7 +1092,7 @@ export async function runSituationalTests(
   // is empty (unconfigured localhost): the path would be relative, so rm -rf would
   // delete test-driver/results under the cwd. runTestDriver rejects those runs.
   const driverResultsDir = join(execution.fitPerformerDir, DEFAULT_TEST_DRIVER_MODULE, SITUATIONAL_RESULTS_DIR_NAME);
-  if (filesMode && execution.fitPerformerDir) {
+  if (execution.fitPerformerDir) {
     await execution.removeTree(driverResultsDir);
   }
 
@@ -1107,9 +1105,6 @@ export async function runSituationalTests(
     run.extraMavenArgs,
     DEFAULT_TEST_DRIVER_MODULE,
     true,
-    // The results-DB password goes to the driver via the environment, not the
-    // config file, so it can't leak into the collected FITConfiguration.json.
-    database ? { FIT_RESULTS_DB_PASSWORD: database.database.password } : undefined,
   );
   artifacts.push(...testRun.artifacts);
   const pathLabel = formatRunLabel(
@@ -1123,27 +1118,17 @@ export async function runSituationalTests(
     ...testRun.details,
   );
 
-  if (database) {
-    // Derive the UI URL from the chosen database's host so it matches where data
-    // actually lands (dev vs prod), rather than a fixed constant.
-    const resultsUrl = situationalResultsUrl(resultsHostFromJdbc(database.database.jdbc));
-    console.log(`\nWhen this run produces data, view it at:\n  ${resultsUrl}`);
-    details.push({ label: "Results UI", value: resultsUrl, callToAction: true });
-  } else {
-    // Groups the results this invocation uploads under one id.
-    const situationalRunId = randomUUID();
-    try {
-      const uploadOutput = await uploadCollectedResults(execution, driverResultsDir, runRunDir(run.path), situationalRunId);
-      details.push(...uploadOutput.details);
-      artifacts.push(...uploadOutput.artifacts);
-    } catch (err) {
-      // Don't fail the run if the upload fails - the tests already ran.
-      fitCliError(
-        `\nCollecting/uploading the run's result files failed: ${(err as Error).message}\n` +
-          `  Files: ${join(runRunDir(run.path), SITUATIONAL_RESULTS_DIR_NAME)} (or results.tar there, if extraction failed), or on the box under ${driverResultsDir}.\n` +
-          `  Upload by hand before re-running (the next run purges the results dir): bun src/fit/situational/upload-results/upload-results.ts <resultsDir> --situational-run-id ${situationalRunId}`,
-      );
-    }
+  try {
+    const uploadOutput = await uploadCollectedResults(execution, driverResultsDir, runRunDir(run.path), situationalRunId);
+    details.push(...uploadOutput.details);
+    artifacts.push(...uploadOutput.artifacts);
+  } catch (err) {
+    // Don't fail the run if the upload fails - the tests already ran.
+    fitCliError(
+      `\nCollecting/uploading the run's result files failed: ${(err as Error).message}\n` +
+        `  Files: ${join(runRunDir(run.path), SITUATIONAL_RESULTS_DIR_NAME)} (or results.tar there, if extraction failed), or on the box under ${driverResultsDir}.\n` +
+        `  Upload by hand before re-running (the next run purges the results dir): bun src/fit/situational/upload-results/upload-results.ts <resultsDir> --situational-run-id ${situationalRunId}`,
+    );
   }
   dependencies.recordResult?.({
     path: run.path,
@@ -1172,13 +1157,26 @@ export type ResultsCollector = Pick<
  * (test-driver/results, one per run) off the execution host into this run's
  * artifact dir, then upload them to the results S3 bucket, where a downstream
  * job loads them into the results database.
+ *
+ * Collection and publishing are independent:
+ *   - local runs already have their result files;
+ *   - remote runs collect and extract them first;
+ *   - CI, and a remote (cloud instance) run, publish the resulting files to S3 —
+ *     a remote run is byte-for-byte what CI does, so it gets the same treatment;
+ *   - a run on your own laptop preserves them locally instead, so interactive
+ *     development doesn't surprise-upload to the shared results bucket.
  */
+function shouldUploadResults(execution: Pick<ResultsCollector, "kind">, env: NodeJS.ProcessEnv): boolean {
+  return artifactUploadEnabled(env) || execution.kind === "remote";
+}
+
 export async function uploadCollectedResults(
   execution: ResultsCollector,
   driverResultsDir: string,
   localRunDir: string,
   situationalRunId: string,
   upload: typeof uploadSituationalResults = uploadSituationalResults,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<RunOutput> {
   if (!(await execution.pathExists(driverResultsDir))) {
     fitCliWarn(
@@ -1190,7 +1188,19 @@ export async function uploadCollectedResults(
 
   // A local run has the files on this machine already, so upload them directly.
   if (execution.kind === "local") {
-    return upload(driverResultsDir, RESULTS_BUCKET, situationalRunId);
+    // Publish results automatically from CI only. A run on your own laptop keeps the
+    // files locally; upload-results.ts can publish them explicitly.
+    if (!shouldUploadResults(execution, env)) {
+      // removeTree wipes driverResultsDir at the start of the next situational
+      // run, so copy the results into this run's artifact dir now, or a second
+      // local run in a row loses the first one's results with nothing preserved.
+      const localResultsDir = join(localRunDir, SITUATIONAL_RESULTS_DIR_NAME);
+      rmSync(localResultsDir, { recursive: true, force: true });
+      cpSync(driverResultsDir, localResultsDir, { recursive: true });
+      console.log(`\nResult files preserved to ${localResultsDir}. Not uploaded: results go to S3 from CI or a cloud instance only.`);
+      return { artifacts: [], details: [{ label: "Preserved results", value: localResultsDir }] };
+    }
+    return upload(driverResultsDir, RESULTS_BUCKET, { fallbackId: situationalRunId });
   }
 
   // Remote run: archive the directory on the host, download it, extract locally.
@@ -1215,7 +1225,15 @@ export async function uploadCollectedResults(
     await execution.removeTree(remoteTar).catch(() => {});
   }
 
-  const uploaded = await upload(localResultsDir, RESULTS_BUCKET, situationalRunId);
+  // The tar is the artifact either way. A remote run is byte-for-byte what CI does, so
+  // it always publishes too — only a genuinely local run keeps the extracted copy
+  // instead: an unpacked tree is easier to read than a tar.
+  if (!shouldUploadResults(execution, env)) {
+    console.log(`\nCollected result files to ${localResultsDir}. Not uploaded: results go to S3 from CI or a cloud instance only.`);
+    return { artifacts, details: [] };
+  }
+
+  const uploaded = await upload(localResultsDir, RESULTS_BUCKET, { fallbackId: situationalRunId });
   // The tar is kept as the artifact and already has the data. Remove the extracted
   // copy so it isn't also swept into this run's end-of-run artifact archive. On
   // upload failure we don't reach here, so the tree stays as the recovery copy.
@@ -1271,20 +1289,26 @@ async function resumePerformer(
 }
 
 /** Run one iteration: stand up (or reuse) its performer, then run the tests. */
-async function runIteration(
-  execution: FitExecutionContext,
-  functionalClusterMode: ResolvedFunctionalExecutionGroup["clusterMode"] | undefined,
-  fitPerformerGerritRef: string | undefined,
-  run: ResolvedExecutionRun,
-  setupPerformerPhase: boolean,
-  savedState: RunState | undefined,
-  globalIterationIndex: number,
-  definitionPath: string,
-  recordResult: RecordRunResult,
-  functionalClusterVersion?: string,
-  existingPerformer?: RunningPerformer,
-  instanceKind?: "aws" | "gcp" | "localhost",
-): Promise<{ output: RunOutput; performer?: RunningPerformer }> {
+interface IterationInputs {
+  execution: FitExecutionContext;
+  /** Situational groups build their cluster in the driver, so they have no mode. */
+  functionalClusterMode?: ResolvedFunctionalExecutionGroup["clusterMode"];
+  fitPerformerGerritRef?: string;
+  run: ResolvedExecutionRun;
+  setupPerformerPhase: boolean;
+  savedState?: RunState;
+  globalIterationIndex: number;
+  definitionPath: string;
+  recordResult: RecordRunResult;
+  /** Read only by situational runs. */
+  situationalRunId: string;
+  functionalClusterVersion?: string;
+  existingPerformer?: RunningPerformer;
+  instanceKind?: "aws" | "gcp" | "localhost";
+}
+
+async function runIteration(inputs: IterationInputs): Promise<{ output: RunOutput; performer?: RunningPerformer }> {
+  const { execution, functionalClusterMode, fitPerformerGerritRef, run, setupPerformerPhase, savedState, globalIterationIndex, definitionPath, recordResult, situationalRunId, functionalClusterVersion, existingPerformer, instanceKind } = inputs;
   const artifacts: Artifact[] = [];
   const details: Detail[] = [];
 
@@ -1312,7 +1336,7 @@ async function runIteration(
   let output: RunOutput;
   try {
     if (run.type === "situational") {
-      output = await runSituationalTests(execution, run, { recordResult }, instanceKind);
+      output = await runSituationalTests(execution, run, { recordResult, situationalRunId }, instanceKind);
     } else {
       const clusterMode: ResolvedFunctionalExecutionGroup["clusterMode"] = functionalClusterMode ?? "useExisting";
       output = await runTests(execution, clusterMode, run, performer, { recordResult }, functionalClusterVersion, instanceKind);
@@ -1518,6 +1542,7 @@ interface TeardownInputs {
   cbcollect?: boolean;
   /** See {@link RunFromDefinitionOptions.promptScope}. */
   promptScope?: string;
+  situationalRunId?: string;
 }
 
 /**
@@ -1705,7 +1730,7 @@ function printRunResultsTables(results: readonly RunResultSummary[]): void {
  * failed before it came up); only the instance is then up to leave or terminate.
  */
 async function teardownRun(inputs: TeardownInputs): Promise<{ leftUp: boolean }> {
-  const { definitionPath, runDir, executionGroupIndex, runIndex, resumePath, execution, teardown, forceLocalhost, forceAws, clusterState, capellaKeyPool, performers, performerStates, results, cbcollect = false, promptScope } = inputs;
+  const { definitionPath, runDir, executionGroupIndex, runIndex, resumePath, execution, teardown, forceLocalhost, forceAws, clusterState, capellaKeyPool, performers, performerStates, results, cbcollect = false, promptScope, situationalRunId } = inputs;
 
   const nothingToLeaveUp = !teardown.terminate && !clusterState && performerStates.length === 0;
   if (nothingToLeaveUp) {
@@ -1749,6 +1774,7 @@ async function teardownRun(inputs: TeardownInputs): Promise<{ leftUp: boolean }>
       target: targetStateFrom(teardown),
       ...(clusterState ? { cluster: clusterState } : {}),
       performers: [...performerStates],
+      ...(situationalRunId ? { situationalRunId } : {}),
     };
     const path = runDir ? writeRunState(runDir, state) : undefined;
     console.log(`\n✓ Leaving everything up.${path ? ` Saved run state to:\n  ${path}` : ""}`);
@@ -1902,6 +1928,8 @@ function describeExecutionOverride(override: ExecutionOverride, declaredKind: st
 }
 
 export interface RunFromDefinitionOptions {
+  /** Same value across several calls groups them as one situational run. */
+  situationalRunId?: string;
   resumeAt?: ResumePoint;
   resumeSelector?: ResumeSelector;
   cbcollect?: boolean;
@@ -1954,6 +1982,21 @@ export async function runFromDefinition(
 
   const preconditionCtx: FailureContext = { instanceIndex: 0 };
   const savedState = resumeAt ? readRunState(dirname(resolve(definitionPath))) : undefined;
+  // Comma-separated presets are separate calls, so they get separate ids by design.
+  if (
+    savedState?.situationalRunId !== undefined &&
+    options.situationalRunId !== undefined &&
+    savedState.situationalRunId !== options.situationalRunId
+  ) {
+    fitCliError(
+      { classification: "FatalToAll" },
+      `\nresume: --situational-run-id is ${options.situationalRunId}, but this run was started as ` +
+        `${savedState.situationalRunId}. Resume it under the id it started with, or leave the flag off.`,
+    );
+    tracker.record("FatalToAll", "Supplied situational run id disagrees with the saved run state", preconditionCtx);
+    return finalizeRunFromDefinition([], [], undefined, tracker.worst, tracker.failureCount);
+  }
+  const situationalRunId = savedState?.situationalRunId ?? options.situationalRunId ?? randomUUID();
   if (resumeAt) {
     if (!savedState) {
       fitCliError(
@@ -2025,13 +2068,9 @@ export async function runFromDefinition(
   // Check this before anything else that might need AWS — including GitHub credentials
   // below, whose own AWS Secrets Manager fallback would otherwise produce a confusing
   // "localhost.github.user not found" error when the real problem is AWS credentials.
-  // Files mode also uploads to S3 from this machine, so it needs AWS credentials
-  // even under forced localhost. Better to fail here than after a multi-hour run.
-  const needsResultsUpload = executionGroups
-    .slice(startCycleIndex)
-    .some((group) => group.type === "situational" && group.runs.some((run) => run.databaseMode === "files"));
+  // Better to fail here than after a multi-hour run.
   let awsCredentials: AwsCredentials | undefined;
-  if (willRunOnAws || needsResultsUpload) {
+  if (willRunOnAws || needsResultsUpload(executionGroups, startCycleIndex)) {
     const result = await checkAwsCredentials();
     if (!result.ok) {
       fitCliError({ classification: "FatalToAll" }, `\n✗ ${result.message}`);
@@ -2076,40 +2115,6 @@ export async function runFromDefinition(
       return finalizeRunFromDefinition([], [], undefined, tracker.worst, tracker.failureCount);
     }
     githubCredentials = result;
-  }
-
-  // Check hosted results-database credentials upfront — fail before provisioning
-  // an instance when credentials can't be resolved from AWS Secrets Manager.
-  const needsHostedDatabase = executionGroups
-    .slice(startCycleIndex)
-    .some(
-      (group) =>
-        group.type === "situational" &&
-        group.runs.some((run) => run.databaseMode === "hosted"),
-    );
-  // block -> host, populated during credential resolution; used later for connectivity checks.
-  const resultsEnvHosts = new Map<string, string>();
-  if (needsHostedDatabase) {
-    // Each hosted situational run names a results environment; validate every distinct
-    // one upfront (credentials resolvable from AWS) before provisioning.
-    const resultsEnvs = new Set<string>();
-    for (const group of executionGroups.slice(startCycleIndex)) {
-      if (group.type !== "situational") continue;
-      for (const run of group.runs) {
-        if (run.databaseMode === "hosted") resultsEnvs.add(run.resultsEnvironment);
-      }
-    }
-    for (const block of resultsEnvs) {
-      let host: string;
-      try {
-        ({ host } = await resolveResultsDbCredentials({ block }));
-      } catch (err) {
-        fitCliError({ classification: "FatalToAll" }, `\n✗ ${(err as Error).message}`);
-        tracker.record("FatalToAll", `Cannot resolve results database credentials for "${block}"`, preconditionCtx);
-        return finalizeRunFromDefinition([], [], undefined, tracker.worst, tracker.failureCount);
-      }
-      resultsEnvHosts.set(block, host);
-    }
   }
 
   const artifacts: Artifact[] = [];
@@ -2164,24 +2169,6 @@ export async function runFromDefinition(
     );
     tracker.record("FatalToAll", "No local transactions-fit-performer checkout configured", preconditionCtx);
     return finalizeRunFromDefinition([], [], undefined, tracker.worst, tracker.failureCount);
-  }
-
-  // Local connectivity check — skip when running remotely, since EC2 instances are
-  // in the same VPC as faas.couchbase.com and can reach it without VPN.
-  if (needsHostedDatabase && forceLocalhost) {
-    for (const [block, host] of resultsEnvHosts) {
-      console.log(`\nChecking connectivity to the "${block}" results database at ${host}...`);
-      if (!(await checkResultsDatabaseConnectivity(undefined, host))) {
-        fitCliError(
-          { classification: "FatalToAll" },
-          `\n✗ Cannot reach the results database at ${host}:5432.\n` +
-            `  Make sure you are connected to the vpn-public VPN.`,
-        );
-        tracker.record("FatalToAll", `Cannot reach results database at ${host}:5432`, preconditionCtx);
-        return finalizeRunFromDefinition([], [], undefined, tracker.worst, tracker.failureCount);
-      }
-      console.log(`  ✓ Reached ${host}.`);
-    }
   }
 
   // The "active" set tracks the cycle currently up so the outer finally tears down
@@ -2301,11 +2288,6 @@ export async function runFromDefinition(
         }
       }
 
-      // This cycle's situational iterations may stream to the hosted DB; if it runs
-      // on a remote box, confirm the box can reach the DB before doing real work.
-      const cycleNeedsHostedDatabase =
-        group.type === "situational" && group.runs.some((run) => run.databaseMode === "hosted");
-
       let activeCycle = group;
       let clusterState: ResumeClusterState | undefined;
       // Situational only. Functional runs carry the same fact on clusterState.
@@ -2314,25 +2296,6 @@ export async function runFromDefinition(
       const cyclePerformerStates: ResumePerformerState[] = [];
 
       try {
-        if (cycleNeedsHostedDatabase && execution.kind === "remote") {
-          const blocks = new Set(
-            group.type === "situational"
-              ? group.runs.filter((run) => run.databaseMode === "hosted").map((run) => run.resultsEnvironment)
-              : [],
-          );
-          for (const block of blocks) {
-            const { host } = await resolveResultsDbCredentials({ block });
-            console.log(`\nChecking "${block}" results database connectivity from the remote instance...`);
-            if (!(await checkResultsDatabaseConnectivity((cmd, args) => execution.capture(cmd, args), host))) {
-              throwFatalToCluster(
-                `The remote instance cannot reach the results database at ${host}:5432. ` +
-                  `Make sure the instance has network access to reach the database (VPN / security-group rules).`,
-              );
-            }
-            console.log(`  ✓ Reached ${host} from the remote instance.`);
-          }
-        }
-
         // Functional observability tests (ClusterLabelsTest, GetOrNullObservabilityTest,
         // etc.) send traces/metrics to a shared collector and then poll it back; if it's
         // unreachable from wherever the tests actually run, every one of those tests only
@@ -2567,20 +2530,21 @@ export async function runFromDefinition(
           const isStartIteration = cycleIndex === startCycleIndex && cycleIterationIndex === startIterationIndex;
           const setupPerformerPhase = isStartIteration ? phases.setupPerformer : true;
           try {
-            const { output, performer } = await runIteration(
+            const { output, performer } = await runIteration({
               execution,
-              activeCycle.type === "functional" ? activeCycle.clusterMode : undefined,
-              resolved.fitPerformerGerritRef,
-              iteration,
+              functionalClusterMode: activeCycle.type === "functional" ? activeCycle.clusterMode : undefined,
+              fitPerformerGerritRef: resolved.fitPerformerGerritRef,
+              run: iteration,
               setupPerformerPhase,
               savedState,
               globalIterationIndex,
               definitionPath,
               recordResult,
-              clusterVersionLabel(activeCycle),
-              sessionPerformer,
-              activeCycle.instance.kind,
-            );
+              situationalRunId,
+              functionalClusterVersion: clusterVersionLabel(activeCycle),
+              existingPerformer: sessionPerformer,
+              instanceKind: activeCycle.instance.kind,
+            });
             artifacts.push(...output.artifacts);
             details.push(...output.details);
             if (performer) {
@@ -2763,6 +2727,7 @@ export async function runFromDefinition(
       ...(activeCapellaKeyPool ? { capellaKeyPool: activeCapellaKeyPool } : {}),
       performers: activePerformers,
       performerStates: activePerformerStates,
+      situationalRunId,
       results: runResults,
       cbcollect,
       ...(promptScope ? { promptScope } : {}),

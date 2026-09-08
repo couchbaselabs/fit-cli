@@ -405,8 +405,6 @@ function situationalRun(overrides: Partial<ResolvedSituationalExecutionRun> = {}
     onPortInUse: "restart",
     testSelection: { allTests: [], selectedTests: [], presets: ["standard-qe"] },
     extraMavenArgs: [],
-    databaseMode: "hosted",
-    resultsEnvironment: "prod",
     cng: false,
     ...overrides,
   };

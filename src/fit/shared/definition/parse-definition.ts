@@ -496,9 +496,9 @@ function isSituationalDatabaseMode(value: unknown): value is SituationalDatabase
 }
 
 /**
- * Validate an optional environment-name selector (capellaEnvironment / resultsEnvironment).
- * Only checks it's a string here; whether the named environment actually exists is checked
- * at run time against environments.json5 (resolveCapellaConfig / resolveResultsDbCredentials).
+ * Validate an optional environment-name selector (capellaEnvironment). Only checks
+ * it's a string here; whether the named environment actually exists is checked at
+ * run time against environments.json5 (resolveCapellaConfig).
  */
 function optionalEnvironmentName(record: Record<string, unknown>, key: string, path: string): string | undefined {
   const value = record[key];
@@ -512,14 +512,20 @@ function optionalEnvironmentName(record: Record<string, unknown>, key: string, p
 function validateSituationalDatabase(value: unknown, path: string): SituationalDatabaseSetup {
   const record = requireRecord(value, path);
   rejectUnknown(record, ["mode", "resultsEnvironment"], path);
+  // By name, so an old definition gets told what to do rather than failing in the driver.
+  if (record.mode === "hosted" || record.mode === "local") {
+    throw new InvalidDefinitionError(
+      `"${path}.mode" is "${record.mode}", which wrote results straight to Postgres and is no longer supported. ` +
+        `Use "files", and drop "${path}.resultsEnvironment".`,
+    );
+  }
   if (!isSituationalDatabaseMode(record.mode)) {
     throw new InvalidDefinitionError(`"${path}.mode" must be one of ${SITUATIONAL_DATABASE_MODES.join(", ")}; got ${JSON.stringify(record.mode)}`);
   }
-  const resultsEnvironment = optionalEnvironmentName(record, "resultsEnvironment", path);
-  if (record.mode !== "hosted" && resultsEnvironment !== undefined) {
-    throw new InvalidDefinitionError(`"${path}.resultsEnvironment" only applies to mode "hosted".`);
+  if (record.resultsEnvironment !== undefined) {
+    throw new InvalidDefinitionError(`"${path}.resultsEnvironment" no longer applies, results go to files.`);
   }
-  return { mode: record.mode, ...(resultsEnvironment !== undefined ? { resultsEnvironment } : {}) };
+  return { mode: record.mode };
 }
 
 function validateSituationalCng(value: unknown, path: string): SituationalCngSetup {
