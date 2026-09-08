@@ -1056,7 +1056,9 @@ export async function runSituationalTests(
   run: ResolvedSituationalExecutionRun,
   dependencies: {
     recordResult?: RecordRunResult;
-  } = {},
+    /** One per runFromDefinition call, not per run. */
+    situationalRunId: string;
+  },
   instanceKind: "aws" | "gcp" | "localhost" = execution.kind === "remote" ? "aws" : "localhost",
 ): Promise<RunOutput> {
   console.log(
@@ -1073,12 +1075,14 @@ export async function runSituationalTests(
   const fitConfigPiece = await withResolvedSituationalCbdino(run.fitConfig, cbdinoclusterPath);
   const resolvedVersion = run.version !== undefined && isAlias(run.version) ? await resolveAlias(run.version) : run.version;
 
+  const situationalRunId = dependencies.situationalRunId;
   const fitConfig = generateSituationalConfiguration(
     situationalCbdinoSettings(run.cng, run.privateEndpoint !== undefined, resolvedVersion, instanceKind),
     execution.fitPerformerDir,
     run.path,
     run.performerPort,
     fitConfigPiece.config,
+    situationalRunId,
   );
   artifacts.push(...fitConfig.artifacts);
   details.push(...fitConfig.details);
@@ -1114,8 +1118,6 @@ export async function runSituationalTests(
     ...testRun.details,
   );
 
-  // Groups the results this invocation uploads under one id.
-  const situationalRunId = randomUUID();
   try {
     const uploadOutput = await uploadCollectedResults(execution, driverResultsDir, runRunDir(run.path), situationalRunId);
     details.push(...uploadOutput.details);
@@ -1192,7 +1194,7 @@ export async function uploadCollectedResults(
       console.log(`\nResult files preserved to ${localResultsDir}. Not uploaded: results go to S3 from CI only.`);
       return { artifacts: [], details: [{ label: "Preserved results", value: localResultsDir }] };
     }
-    return upload(driverResultsDir, RESULTS_BUCKET, situationalRunId);
+    return upload(driverResultsDir, RESULTS_BUCKET, { fallbackId: situationalRunId });
   }
 
   // Remote run: archive the directory on the host, download it, extract locally.
@@ -1224,7 +1226,7 @@ export async function uploadCollectedResults(
     return { artifacts, details: [] };
   }
 
-  const uploaded = await upload(localResultsDir, RESULTS_BUCKET, situationalRunId);
+  const uploaded = await upload(localResultsDir, RESULTS_BUCKET, { fallbackId: situationalRunId });
   // The tar is kept as the artifact and already has the data. Remove the extracted
   // copy so it isn't also swept into this run's end-of-run artifact archive. On
   // upload failure we don't reach here, so the tree stays as the recovery copy.
@@ -1280,20 +1282,26 @@ async function resumePerformer(
 }
 
 /** Run one iteration: stand up (or reuse) its performer, then run the tests. */
-async function runIteration(
-  execution: FitExecutionContext,
-  functionalClusterMode: ResolvedFunctionalExecutionGroup["clusterMode"] | undefined,
-  fitPerformerGerritRef: string | undefined,
-  run: ResolvedExecutionRun,
-  setupPerformerPhase: boolean,
-  savedState: RunState | undefined,
-  globalIterationIndex: number,
-  definitionPath: string,
-  recordResult: RecordRunResult,
-  functionalClusterVersion?: string,
-  existingPerformer?: RunningPerformer,
-  instanceKind?: "aws" | "gcp" | "localhost",
-): Promise<{ output: RunOutput; performer?: RunningPerformer }> {
+interface IterationInputs {
+  execution: FitExecutionContext;
+  /** Situational groups build their cluster in the driver, so they have no mode. */
+  functionalClusterMode?: ResolvedFunctionalExecutionGroup["clusterMode"];
+  fitPerformerGerritRef?: string;
+  run: ResolvedExecutionRun;
+  setupPerformerPhase: boolean;
+  savedState?: RunState;
+  globalIterationIndex: number;
+  definitionPath: string;
+  recordResult: RecordRunResult;
+  /** Read only by situational runs. */
+  situationalRunId: string;
+  functionalClusterVersion?: string;
+  existingPerformer?: RunningPerformer;
+  instanceKind?: "aws" | "gcp" | "localhost";
+}
+
+async function runIteration(inputs: IterationInputs): Promise<{ output: RunOutput; performer?: RunningPerformer }> {
+  const { execution, functionalClusterMode, fitPerformerGerritRef, run, setupPerformerPhase, savedState, globalIterationIndex, definitionPath, recordResult, situationalRunId, functionalClusterVersion, existingPerformer, instanceKind } = inputs;
   const artifacts: Artifact[] = [];
   const details: Detail[] = [];
 
@@ -1321,7 +1329,7 @@ async function runIteration(
   let output: RunOutput;
   try {
     if (run.type === "situational") {
-      output = await runSituationalTests(execution, run, { recordResult }, instanceKind);
+      output = await runSituationalTests(execution, run, { recordResult, situationalRunId }, instanceKind);
     } else {
       const clusterMode: ResolvedFunctionalExecutionGroup["clusterMode"] = functionalClusterMode ?? "useExisting";
       output = await runTests(execution, clusterMode, run, performer, { recordResult }, functionalClusterVersion, instanceKind);
@@ -1527,6 +1535,7 @@ interface TeardownInputs {
   cbcollect?: boolean;
   /** See {@link RunFromDefinitionOptions.promptScope}. */
   promptScope?: string;
+  situationalRunId?: string;
 }
 
 /**
@@ -1714,7 +1723,7 @@ function printRunResultsTables(results: readonly RunResultSummary[]): void {
  * failed before it came up); only the instance is then up to leave or terminate.
  */
 async function teardownRun(inputs: TeardownInputs): Promise<{ leftUp: boolean }> {
-  const { definitionPath, runDir, executionGroupIndex, runIndex, resumePath, execution, teardown, forceLocalhost, forceAws, clusterState, capellaKeyPool, performers, performerStates, results, cbcollect = false, promptScope } = inputs;
+  const { definitionPath, runDir, executionGroupIndex, runIndex, resumePath, execution, teardown, forceLocalhost, forceAws, clusterState, capellaKeyPool, performers, performerStates, results, cbcollect = false, promptScope, situationalRunId } = inputs;
 
   const nothingToLeaveUp = !teardown.terminate && !clusterState && performerStates.length === 0;
   if (nothingToLeaveUp) {
@@ -1758,6 +1767,7 @@ async function teardownRun(inputs: TeardownInputs): Promise<{ leftUp: boolean }>
       target: targetStateFrom(teardown),
       ...(clusterState ? { cluster: clusterState } : {}),
       performers: [...performerStates],
+      ...(situationalRunId ? { situationalRunId } : {}),
     };
     const path = runDir ? writeRunState(runDir, state) : undefined;
     console.log(`\n✓ Leaving everything up.${path ? ` Saved run state to:\n  ${path}` : ""}`);
@@ -1911,6 +1921,8 @@ function describeExecutionOverride(override: ExecutionOverride, declaredKind: st
 }
 
 export interface RunFromDefinitionOptions {
+  /** Same value across several calls groups them as one situational run. */
+  situationalRunId?: string;
   resumeAt?: ResumePoint;
   resumeSelector?: ResumeSelector;
   cbcollect?: boolean;
@@ -1963,6 +1975,21 @@ export async function runFromDefinition(
 
   const preconditionCtx: FailureContext = { instanceIndex: 0 };
   const savedState = resumeAt ? readRunState(dirname(resolve(definitionPath))) : undefined;
+  // Comma-separated presets are separate calls, so they get separate ids by design.
+  if (
+    savedState?.situationalRunId !== undefined &&
+    options.situationalRunId !== undefined &&
+    savedState.situationalRunId !== options.situationalRunId
+  ) {
+    fitCliError(
+      { classification: "FatalToAll" },
+      `\nresume: --situational-run-id is ${options.situationalRunId}, but this run was started as ` +
+        `${savedState.situationalRunId}. Resume it under the id it started with, or leave the flag off.`,
+    );
+    tracker.record("FatalToAll", "Supplied situational run id disagrees with the saved run state", preconditionCtx);
+    return finalizeRunFromDefinition([], [], undefined, tracker.worst, tracker.failureCount);
+  }
+  const situationalRunId = savedState?.situationalRunId ?? options.situationalRunId ?? randomUUID();
   if (resumeAt) {
     if (!savedState) {
       fitCliError(
@@ -2496,20 +2523,21 @@ export async function runFromDefinition(
           const isStartIteration = cycleIndex === startCycleIndex && cycleIterationIndex === startIterationIndex;
           const setupPerformerPhase = isStartIteration ? phases.setupPerformer : true;
           try {
-            const { output, performer } = await runIteration(
+            const { output, performer } = await runIteration({
               execution,
-              activeCycle.type === "functional" ? activeCycle.clusterMode : undefined,
-              resolved.fitPerformerGerritRef,
-              iteration,
+              functionalClusterMode: activeCycle.type === "functional" ? activeCycle.clusterMode : undefined,
+              fitPerformerGerritRef: resolved.fitPerformerGerritRef,
+              run: iteration,
               setupPerformerPhase,
               savedState,
               globalIterationIndex,
               definitionPath,
               recordResult,
-              clusterVersionLabel(activeCycle),
-              sessionPerformer,
-              activeCycle.instance.kind,
-            );
+              situationalRunId,
+              functionalClusterVersion: clusterVersionLabel(activeCycle),
+              existingPerformer: sessionPerformer,
+              instanceKind: activeCycle.instance.kind,
+            });
             artifacts.push(...output.artifacts);
             details.push(...output.details);
             if (performer) {
@@ -2692,6 +2720,7 @@ export async function runFromDefinition(
       ...(activeCapellaKeyPool ? { capellaKeyPool: activeCapellaKeyPool } : {}),
       performers: activePerformers,
       performerStates: activePerformerStates,
+      situationalRunId,
       results: runResults,
       cbcollect,
       ...(promptScope ? { promptScope } : {}),
