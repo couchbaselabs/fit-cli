@@ -5,6 +5,15 @@
   },
   version: 1,
   type: 'fit',
+  // Temporary: pin to the files-only situational change until it merges to TFP main. Remove once
+  // https://review.couchbase.org/c/transactions-fit-performer/+/250130 is merged.
+  setup: {
+    repos: {
+      'transactions-fit-performer': {
+        gerritRef: 'refs/changes/30/250130/16',
+      },
+    },
+  },
   instances: [
     {
       aws: {
