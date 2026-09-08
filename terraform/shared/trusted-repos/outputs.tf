@@ -3,23 +3,34 @@
 # Bare "owner/repo" form; each cloud formats it into its own condition syntax.
 locals {
   repos = [
+    # FIT repos
     "couchbaselabs/fit-cli",
     "couchbaselabs/transactions-fit-performer",
-    "couchbaselabs/operational-insights-nodejs-client",
-    "couchbaselabs/operational-insights-python-client",
+
+    # Operational SDKs
     "couchbase/couchbase-jvm-clients",
-    "couchbase/couchbase-analytics-jvm-clients",
-    "couchbase/couchbase-insights-jvm-clients",
     "couchbase/couchbase-cxx-client",
     "couchbase/couchbase-net-client",
     "couchbase/gocb",
-    "couchbase/gocbinsights",
     "couchbase/couchnode",
     "couchbase/couchbase-python-client",
     "couchbase/couchbase-ruby-client",
     "couchbase/couchbase-rs",
     "couchbase/couchbase-php-client",
+
+    # Operation Insights SDKs
+    "couchbaselabs/operational-insights-nodejs-client",
+    "couchbaselabs/operational-insights-python-client",
+    # These do not exist yet - looking to future
+    "couchbase/operational-insights-nodejs-client",
+    "couchbase/operational-insights-python-client",
+    "couchbase/couchbase-insights-jvm-clients",
+    "couchbase/gocbinsights",
+
+    # Enterprise Analytics SDKs
     "couchbase/analytics-dotnet-client",
+    "couchbase/couchbase-analytics-jvm-clients",
+
   ]
 
   # GitHub has started issuing "immutable OIDC subjects" for recently created repos:
