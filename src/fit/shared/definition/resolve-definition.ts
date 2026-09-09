@@ -395,7 +395,10 @@ function resolveFitConfigTls(value: unknown, path: string): SelectedCluster["tls
   if (typeof record.certPath === "string") {
     return { certPath: record.certPath };
   }
-  throw new Error(`${path} must be null, { insecure: true }, or { certPath: <path> }.`);
+  if (typeof record.cert === "string") {
+    return { cert: record.cert };
+  }
+  throw new Error(`${path} must be null, { insecure: true }, { certPath: <path> }, or { cert: <PEM string> }.`);
 }
 
 function resolveClusterConnectionRecord(clusterAccess: Record<string, unknown>, path: string): SelectedCluster {

@@ -19,8 +19,8 @@ import { isMain, runCli } from "../../util/non-fit/cli.js";
 import { input, select } from "../../util/non-fit/prompts.js";
 import type { ClusterFlavour } from "./classify-connection-string.js";
 
-/** The tls section of clusterAccess: null (none), insecure, or a cert path. */
-export type TlsConfig = null | { insecure: true } | { certPath: string };
+/** The tls section of clusterAccess: null (none), insecure, a cert path, or a cert as a PEM string. */
+export type TlsConfig = null | { insecure: true } | { certPath: string } | { cert: string };
 
 /**
  * Work out the tls section for a couchbases:// cluster, asking the user how to
