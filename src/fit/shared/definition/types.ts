@@ -12,7 +12,7 @@ export const FIT_RUN_TYPES = ["functional", "situational", "analytics-functional
 
 export type FitRunType = (typeof FIT_RUN_TYPES)[number];
 export type FitConfigPiece = PieceData;
-export type ClusterTls = null | { insecure: true } | { certPath: string } | { cert: string };
+export type ClusterTls = null | Record<string, never> | { insecure: true } | { certPath: string } | { cert: string };
 
 export interface ConnectionClusterSetup {
   connectionString: string;

@@ -145,8 +145,13 @@ function validateTls(value: unknown, path: string): ClusterTls {
     rejectUnknown(record, ["cert"], path);
     return { cert: record.cert };
   }
+  // {} means plain TLS with the system/JDK default trust store — distinct from
+  // null (no TLS at all).
+  if (Object.keys(record).length === 0) {
+    return {};
+  }
   throw new InvalidDefinitionError(
-    `"${path}" must be null, { insecure: true }, { certPath: <path> }, or { cert: <PEM string> }; got ${JSON.stringify(value)}`,
+    `"${path}" must be null, {}, { insecure: true }, { certPath: <path> }, or { cert: <PEM string> }; got ${JSON.stringify(value)}`,
   );
 }
 

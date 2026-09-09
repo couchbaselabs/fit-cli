@@ -72,7 +72,9 @@ test("dockerNetworkFromInitArgs reads --docker-network in both forms", () => {
 test("buildSelectedClusterFromConnstr trusts production Capella's built-in CA instead of connecting insecurely", () => {
   const production = buildSelectedClusterFromConnstr("couchbases://cb.abc123.cloud.couchbase.com");
   assert.equal(production?.flavour, "production-capella");
-  assert.equal(production?.tls, null);
+  // {} not null — null means no TLS at all, which makes the test-driver's REST
+  // client use http:// instead of https:// against Capella's TLS-only REST port.
+  assert.deepEqual(production?.tls, {});
 
   const internal = buildSelectedClusterFromConnstr("couchbases://cb.abc123.nonprod-project-avengers.com");
   assert.equal(internal?.flavour, "internal-capella");
