@@ -534,9 +534,10 @@ export function buildSelectedClusterFromConnstr(connectionString: string): Selec
     flavour: classification.flavour,
     credentials: isCapella ? { ...CAPELLA_DEFAULT_CREDENTIALS } : { ...DEFAULT_CREDENTIALS },
     // A cbdino couchbases:// cluster uses a self-signed cert; trust it insecurely.
-    // Production Capella needs no TLS section — it's trusted by the SDK's built-in CA.
+    // Production Capella needs no certificate — it's trusted by the SDK's built-in
+    // CA — but {} (not null) so the REST client still knows to use TLS.
     tls: classification.flavour === "production-capella"
-      ? null
+      ? {}
       : classification.scheme === "couchbases" ? { insecure: true } : null,
   };
 }

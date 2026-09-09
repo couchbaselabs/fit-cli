@@ -98,7 +98,7 @@ function capellaCluster() {
     defaultHostname: "cb.abc.cloud.couchbase.com",
     flavour: "production-capella" as const,
     credentials: { username: "Administrator", password: "password" },
-    tls: null,
+    tls: {},
   };
 }
 

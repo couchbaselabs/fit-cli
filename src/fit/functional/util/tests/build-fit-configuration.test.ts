@@ -66,7 +66,7 @@ test("a Capella cluster resolves DNS SRV, skips bucket creation and drops the pr
     defaultHostname: "cb.abc.cloud.couchbase.com",
     flavour: "production-capella",
     credentials,
-    tls: null,
+    tls: {},
   });
 
   const access = config.clusterAccess as Record<string, unknown>;
@@ -83,7 +83,7 @@ test("a local run against Capella also excludes requiresLowLatencyConnection tes
     defaultHostname: "cb.abc.cloud.couchbase.com",
     flavour: "production-capella",
     credentials,
-    tls: null,
+    tls: {},
   } as const;
 
   assert.deepEqual(buildFitConfiguration(cluster).excludeTests, ["situational", "ssh", "realCapella"]);

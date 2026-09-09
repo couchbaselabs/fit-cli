@@ -1,8 +1,10 @@
 /**
  * Step: decide the TLS section of the config for a couchbases:// cluster.
  *
- * - Production Capella: the SDK trusts Capella's built-in CA, so no TLS section
- *   is needed (returns null).
+ * - Production Capella: the SDK trusts Capella's built-in CA, so no certificate
+ *   is needed — but it's still TLS (returns {}, not null; null means no TLS at
+ *   all, which would make the test-driver's REST client use http:// instead of
+ *   https:// against Capella's TLS-only management port).
  * - Internal Capella / other couchbases:// clusters: the SDK needs either the
  *   cluster certificate or to connect insecurely — we ask which.
  *
@@ -19,8 +21,11 @@ import { isMain, runCli } from "../../util/non-fit/cli.js";
 import { input, select } from "../../util/non-fit/prompts.js";
 import type { ClusterFlavour } from "./classify-connection-string.js";
 
-/** The tls section of clusterAccess: null (none), insecure, a cert path, or a cert as a PEM string. */
-export type TlsConfig = null | { insecure: true } | { certPath: string } | { cert: string };
+/**
+ * The tls section of clusterAccess: null (no TLS at all), plain TLS with the
+ * system/JDK default trust store ({}), insecure, a cert path, or a cert as a PEM string.
+ */
+export type TlsConfig = null | Record<string, never> | { insecure: true } | { certPath: string } | { cert: string };
 
 /**
  * Work out the tls section for a couchbases:// cluster, asking the user how to
@@ -32,7 +37,7 @@ export async function askTls(flavour: ClusterFlavour): Promise<TlsConfig> {
     console.log(
       "Production Capella clusters are trusted by the SDK's built-in CA, so no certificate is needed.",
     );
-    return null;
+    return {};
   }
 
   const choice = await select<"cert" | "insecure">({
