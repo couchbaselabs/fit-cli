@@ -534,7 +534,10 @@ export function buildSelectedClusterFromConnstr(connectionString: string): Selec
     flavour: classification.flavour,
     credentials: isCapella ? { ...CAPELLA_DEFAULT_CREDENTIALS } : { ...DEFAULT_CREDENTIALS },
     // A cbdino couchbases:// cluster uses a self-signed cert; trust it insecurely.
-    tls: classification.scheme === "couchbases" ? { insecure: true } : null,
+    // Production Capella needs no TLS section — it's trusted by the SDK's built-in CA.
+    tls: classification.flavour === "production-capella"
+      ? null
+      : classification.scheme === "couchbases" ? { insecure: true } : null,
   };
 }
 
@@ -562,6 +565,29 @@ async function connstrFor(
     return null;
   }
   return connectionString;
+}
+
+/**
+ * Fetch an internal Capella cluster's CA certificate via `cbdinocluster certificates
+ * get-ca <id>`. Returns undefined (after explaining) if it couldn't be fetched.
+ */
+async function internalCapellaCaCert(
+  cbdinocluster: string,
+  id: string,
+  execution: ClusterCommandExecutor,
+): Promise<string | undefined> {
+  let cert: string;
+  try {
+    cert = (await execution.capture(cbdinocluster, ["certificates", "get-ca", id])).trim();
+  } catch (err) {
+    console.error(`✗ setup-cluster: couldn't fetch the CA certificate for ${id}: ${(err as Error).message}`);
+    return undefined;
+  }
+  if (!cert) {
+    console.error(`✗ setup-cluster: cbdinocluster returned an empty CA certificate for ${id}.`);
+    return undefined;
+  }
+  return cert;
 }
 
 /**
@@ -635,9 +661,18 @@ async function selectedClusterFor(
     return undefined;
   }
   console.log(`→ setup-cluster: cluster ${id} is at ${connectionString}`);
-  const builtCluster = buildSelectedClusterFromConnstr(connectionString);
+  let builtCluster = buildSelectedClusterFromConnstr(connectionString);
   if (!builtCluster) {
     return undefined;
+  }
+  // Fetch the cert rather than falling back to insecure on failure — a silent
+  // fallback would stop this from ever verifying the connection at all.
+  if (builtCluster.flavour === "internal-capella" && builtCluster.scheme === "couchbases") {
+    const cert = await internalCapellaCaCert(cbdinocluster, id, execution);
+    if (!cert) {
+      return undefined;
+    }
+    builtCluster = { ...builtCluster, tls: { cert } };
   }
   // Tag PrivateLink connections so build-fit-configuration knows not to rely on
   // Capella's public-DNS SRV record (the private DNS hostname has no SRV record).

@@ -141,8 +141,12 @@ function validateTls(value: unknown, path: string): ClusterTls {
     rejectUnknown(record, ["certPath"], path);
     return { certPath: record.certPath };
   }
+  if (isString(record.cert)) {
+    rejectUnknown(record, ["cert"], path);
+    return { cert: record.cert };
+  }
   throw new InvalidDefinitionError(
-    `"${path}" must be null, { insecure: true }, or { certPath: <path> }; got ${JSON.stringify(value)}`,
+    `"${path}" must be null, { insecure: true }, { certPath: <path> }, or { cert: <PEM string> }; got ${JSON.stringify(value)}`,
   );
 }
 

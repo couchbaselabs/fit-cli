@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ClusterCommandExecutor } from "../allocate-cluster.js";
-import { cbdinoclusterNeedsInit, dockerNetworkFromInitArgs, remoteCbdinoclusterCloudEnabled, setupDeclarativeCluster } from "../setup-declarative-cluster.js";
+import { buildSelectedClusterFromConnstr, cbdinoclusterNeedsInit, dockerNetworkFromInitArgs, remoteCbdinoclusterCloudEnabled, setupDeclarativeCluster } from "../setup-declarative-cluster.js";
 
 const CLUSTER_PS_OUTPUT = `2026-06-03T13:02:18.157+0100    INFO    logger initialized
 Clusters:
@@ -66,6 +66,20 @@ test("dockerNetworkFromInitArgs reads --docker-network in both forms", () => {
   assert.equal(dockerNetworkFromInitArgs("--auto --disable-k8s"), undefined);
 });
 
+test("buildSelectedClusterFromConnstr trusts production Capella's built-in CA instead of connecting insecurely", () => {
+  const production = buildSelectedClusterFromConnstr("couchbases://cb.abc123.cloud.couchbase.com");
+  assert.equal(production?.flavour, "production-capella");
+  assert.equal(production?.tls, null);
+
+  const internal = buildSelectedClusterFromConnstr("couchbases://cb.abc123.nonprod-project-avengers.com");
+  assert.equal(internal?.flavour, "internal-capella");
+  assert.deepEqual(internal?.tls, { insecure: true });
+
+  const selfManaged = buildSelectedClusterFromConnstr("couchbases://172.18.0.2");
+  assert.equal(selfManaged?.flavour, "self-managed");
+  assert.deepEqual(selfManaged?.tls, { insecure: true });
+});
+
 /** A minimal remote executor whose `capture` returns a fixed `~/.cbdinocluster`. */
 function configReadingExecutor(config: string): ClusterCommandExecutor & { kind: "remote" } {
   return {
@@ -94,7 +108,9 @@ test("remoteCbdinoclusterCloudEnabled detects whether init enabled the cloud dep
 });
 
 /** A remote executor that only succeeds at `ps` once `cbdinocluster init` has run. */
-function initAwareExecutor(): ClusterCommandExecutor & {
+function initAwareExecutor(
+  connstr = "couchbase://172.18.0.2\n",
+): ClusterCommandExecutor & {
   kind: "remote";
   runCalls: Array<{ command: string; args: string[] }>;
   stagedFiles: Array<{ localPath: string; targetPath: string }>;
@@ -127,7 +143,10 @@ function initAwareExecutor(): ClusterCommandExecutor & {
           : Promise.reject(new Error("cbdinocluster exited with code 1: FATAL you must run the `init` command first"));
       }
       if (args[0] === "connstr") {
-        return Promise.resolve("couchbase://172.18.0.2\n");
+        return Promise.resolve(connstr);
+      }
+      if (args[0] === "certificates" && args[1] === "get-ca") {
+        return Promise.resolve("-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----\n");
       }
       return Promise.resolve("");
     },
@@ -182,6 +201,47 @@ test("setupDeclarativeCluster runs `cbdinocluster init` for the docker args path
   assert.ok(execution.runCalls.some((c) => c.command === "docker" && c.args.join(" ") === "network create fit"));
   assert.equal(execution.stagedFiles.length, 0);
   assert.equal(result.cluster?.defaultHostname, "172.18.0.2");
+});
+
+test("setupDeclarativeCluster fetches internal Capella's CA certificate instead of connecting insecurely", async () => {
+  const execution = initAwareExecutor("couchbases://cb.abc123.nonprod-project-avengers.com\n");
+
+  const result = await setupDeclarativeCluster(
+    {
+      init: { args: "--auto --disable-k8s --docker-network fit" },
+      config: { nodes: [{ count: 1, version: "8.1.0", services: ["kv"] }] },
+      onClusterExists: "useExisting",
+    },
+    execution,
+  );
+
+  assert.equal(result.cluster?.flavour, "internal-capella");
+  assert.deepEqual(result.cluster?.tls, {
+    cert: "-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----",
+  });
+});
+
+test("setupDeclarativeCluster fails rather than falling back to insecure when the CA certificate can't be fetched", async () => {
+  const execution = initAwareExecutor("couchbases://cb.abc123.nonprod-project-avengers.com\n");
+  const originalCapture = execution.capture.bind(execution);
+  execution.capture = (command, args, cwd, opts) => {
+    if (args[0] === "certificates" && args[1] === "get-ca") {
+      return Promise.reject(new Error("cbdinocluster: cluster not found"));
+    }
+    return originalCapture(command, args, cwd, opts);
+  };
+
+  const result = await setupDeclarativeCluster(
+    {
+      init: { args: "--auto --disable-k8s --docker-network fit" },
+      config: { nodes: [{ count: 1, version: "8.1.0", services: ["kv"] }] },
+      onClusterExists: "useExisting",
+    },
+    execution,
+  );
+
+  assert.equal(result.allocated, false);
+  assert.equal(result.cluster, undefined);
 });
 
 test("setupDeclarativeCluster falls back to --disable-github when no credentials are given", async () => {
