@@ -46,6 +46,7 @@ import {
 } from "./s3-queue.js";
 
 // The ingest always runs on the instance that hosts the results database.
+// --host/--port let you point at a different one for debugging.
 const RESULTS_DB_HOST = "localhost";
 const RESULTS_DB_PORT = 5432;
 const RESULTS_DB_NAME = "perf";
@@ -203,11 +204,35 @@ async function drainIncoming(
   return { status, outcomes };
 }
 
-async function cmdSituational(argv: string[]): Promise<{ status: ReportStatus; outcomes: RunOutcome[] }> {
-  if (argv.length > 0) {
-    console.error(`Usage: ${runScriptPrefix("ingest")} situational`);
-    process.exit(2);
+function parseSituationalArgs(argv: string[]): { host: string; port: number } {
+  let host = RESULTS_DB_HOST;
+  let port = RESULTS_DB_PORT;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--host") {
+      host = argv[++i];
+      if (!host) throw new Error("--host needs a value.");
+    } else if (arg.startsWith("--host=")) {
+      host = arg.slice("--host=".length);
+    } else if (arg === "--port") {
+      const raw = argv[++i];
+      if (!raw) throw new Error("--port needs a value.");
+      port = Number(raw);
+      if (!Number.isInteger(port)) throw new Error(`--port must be an integer, got: ${raw}`);
+    } else if (arg.startsWith("--port=")) {
+      const raw = arg.slice("--port=".length);
+      port = Number(raw);
+      if (!Number.isInteger(port)) throw new Error(`--port must be an integer, got: ${raw}`);
+    } else {
+      console.error(`Usage: ${runScriptPrefix("ingest")} situational [--host=<host>] [--port=<port>]`);
+      process.exit(2);
+    }
   }
+  return { host, port };
+}
+
+async function cmdSituational(argv: string[]): Promise<{ status: ReportStatus; outcomes: RunOutcome[] }> {
+  const { host, port } = parseSituationalArgs(argv);
 
   let password: string;
   try {
@@ -218,8 +243,8 @@ async function cmdSituational(argv: string[]): Promise<{ status: ReportStatus; o
   }
 
   const sql = postgres({
-    host: RESULTS_DB_HOST,
-    port: RESULTS_DB_PORT,
+    host,
+    port,
     database: RESULTS_DB_NAME,
     username: INGEST_DB_USERNAME,
     password,
@@ -236,7 +261,7 @@ async function cmdSituational(argv: string[]): Promise<{ status: ReportStatus; o
   try {
     reportId = await db.startReport();
   } catch (err) {
-    const line = ingestDbFailureLine(err, { host: RESULTS_DB_HOST, port: RESULTS_DB_PORT });
+    const line = ingestDbFailureLine(err, { host, port });
     if (line) failFast(line);
     throw err;
   }
@@ -250,7 +275,7 @@ function helpText(): string {
   return `Ingest S3 run results into the results database.
 
 Usage:
-  ${p} situational
+  ${p} situational [--host=<host>] [--port=<port>]
   ${p} --help
 
 Subcommands:
@@ -258,9 +283,10 @@ Subcommands:
                directory then moves to processed/ or failed/, and one ingester_runs row
                records what happened. Only a directory holding the uploader's ${DONE_MARKER}
                marker is read, so a run still uploading waits for the next tick.
+               --host, --port override the database host/port, default ${RESULTS_DB_HOST}:${RESULTS_DB_PORT}.
   performance  Not implemented yet.
 
-The database is always ${RESULTS_DB_NAME} on ${RESULTS_DB_HOST}:${RESULTS_DB_PORT} and the user is always
+The database is always ${RESULTS_DB_NAME} and the user is always
 ${INGEST_DB_USERNAME}. The password is read from the AWS Secrets Manager secret
 ${INGEST_SECRET_ID}, using the host's own IAM role. Nothing is read from a file.
 
