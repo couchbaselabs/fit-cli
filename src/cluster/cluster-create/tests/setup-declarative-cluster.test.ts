@@ -66,6 +66,9 @@ test("dockerNetworkFromInitArgs reads --docker-network in both forms", () => {
   assert.equal(dockerNetworkFromInitArgs("--auto --disable-k8s"), undefined);
 });
 
+// This is the pre-cert-fetch default `selectedClusterFor` starts from — it has no
+// execution context to call cbdinocluster, so internal-capella still defaults to
+// insecure here; see the setupDeclarativeCluster tests below for the actual cert fetch.
 test("buildSelectedClusterFromConnstr trusts production Capella's built-in CA instead of connecting insecurely", () => {
   const production = buildSelectedClusterFromConnstr("couchbases://cb.abc123.cloud.couchbase.com");
   assert.equal(production?.flavour, "production-capella");
