@@ -4,10 +4,12 @@
 // as plain presets — `fit preset expand` and `fit run preset` resolve those
 // recursively down to concrete preset names.
 //
-// There are 3 SDK/performer-image families, each with its own clusters:
+// There are 4 SDK/performer-image families, each with its own clusters:
 //   op            (operational SDK): onprem, cng, capella, capella-pe
 //   enterprise-analytics (Enterprise Analytics SDK): enterprise-analytics
 //   columnar      (Columnar SDK): columnar
+//   insights      (Operational Insights SDK): currently borrows the Enterprise Analytics
+//                 cluster, as the Operational Insights server isn't released yet
 // A single `fit run preset <group> --performer <image>` passes ONE performer image
 // to every preset the group expands to, so a group must never mix families —
 // that's why the cross-cluster groups below are `<family>-multi-*`, scoped to one
@@ -58,6 +60,14 @@
   'enterprise-analytics-lite':    { tags: ['enterprise-analytics', 'functional'], order: 25, presets: ['enterprise-analytics-func-lite'] },
   'enterprise-analytics-release': { tags: ['enterprise-analytics', 'functional'], order: 35, presets: ['enterprise-analytics-func-release'] },
 
+  // The Operational Insights server isn't released yet, so these currently build the same
+  // self-managed Enterprise Analytics cluster - see presets/insights-func-lite.json5. Only
+  // level 1 for now: the `-multi-*` levels below exist as the natural home for a second
+  // cluster, and OI has no cluster of its own yet. Add them when it does.
+  'insights-sanity':  { tags: ['insights', 'functional'], order: 15, presets: ['insights-func-sanity'] },
+  'insights-lite':    { tags: ['insights', 'functional'], order: 25, presets: ['insights-func-lite'] },
+  'insights-release': { tags: ['insights', 'functional'], order: 35, presets: ['insights-func-release'] },
+
   'columnar-sanity':  { tags: ['columnar', 'functional'], order: 15, presets: ['columnar-func-sanity'] },
   'columnar-lite':    { tags: ['columnar', 'functional'], order: 25, presets: ['columnar-func-lite'] },
   'columnar-release': { tags: ['columnar', 'functional'], order: 35, presets: ['columnar-func-release'] },
@@ -107,4 +117,15 @@
   // `removalDate` drives the deprecation notice appended to the description and
   // the warning printed wherever this group gets expanded — see generate-preset.ts.
   'qe-set': { description: 'Legacy alias for op-multi-lite, kept for back-compat.', tags: ['deprecated'], order: 10, presets: ['op-multi-lite'], removalDate: '2027-01-10' },
+
+  // Back-compat: the Operational Insights SDK repos wired their nightlies to
+  // `enterprise-insights-*` (extrapolating from `enterprise-analytics-*`) before these
+  // presets existed, so their runs failed with "Unknown preset or preset group". These
+  // aliases make those workflows work as-is; the canonical name is `insights-func-*`,
+  // which matches the SDK values in sdks.ts. `removalDate` prints a warning wherever
+  // they're expanded, to nudge the repos over - it goes to stderr, so it doesn't corrupt
+  // the `--json` stdout the GHA preset matrix parses.
+  'enterprise-insights-func-sanity':  { description: 'Alias for insights-func-sanity, kept so existing OI SDK workflows keep working.',  tags: ['deprecated'], order: 10, presets: ['insights-func-sanity'],  removalDate: '2026-12-31' },
+  'enterprise-insights-func-lite':    { description: 'Alias for insights-func-lite, kept so existing OI SDK workflows keep working.',    tags: ['deprecated'], order: 10, presets: ['insights-func-lite'],    removalDate: '2026-12-31' },
+  'enterprise-insights-func-release': { description: 'Alias for insights-func-release, kept so existing OI SDK workflows keep working.', tags: ['deprecated'], order: 10, presets: ['insights-func-release'], removalDate: '2026-12-31' },
 }

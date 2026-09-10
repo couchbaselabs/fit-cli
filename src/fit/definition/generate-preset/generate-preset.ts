@@ -78,6 +78,9 @@ async function loadPresetMap(): Promise<Record<string, string>> {
     "columnar-func-sanity":              ((await import("../../../../presets/columnar-func-sanity.json5",              { with: { type: "text" } })) as { default: string }).default,
     "columnar-func-lite":                ((await import("../../../../presets/columnar-func-lite.json5",                { with: { type: "text" } })) as { default: string }).default,
     "columnar-func-release":             ((await import("../../../../presets/columnar-func-release.json5",             { with: { type: "text" } })) as { default: string }).default,
+    "insights-func-sanity":              ((await import("../../../../presets/insights-func-sanity.json5",              { with: { type: "text" } })) as { default: string }).default,
+    "insights-func-lite":                ((await import("../../../../presets/insights-func-lite.json5",                { with: { type: "text" } })) as { default: string }).default,
+    "insights-func-release":             ((await import("../../../../presets/insights-func-release.json5",             { with: { type: "text" } })) as { default: string }).default,
   };
 }
 
@@ -174,6 +177,10 @@ const AXIS_PHRASES: Record<string, string> = {
   "op-capella": "a real Capella cluster",
   "enterprise-analytics": "a self-managed Enterprise Analytics cluster",
   columnar: "a Capella Analytics (cloud) cluster",
+  // The Operational Insights server isn't released yet, so its presets currently build
+  // the same self-managed Enterprise Analytics cluster - said plainly here rather than
+  // hidden, since this text is what `fit preset list` shows.
+  insights: "an Operational Insights cluster - currently a self-managed Enterprise Analytics cluster",
 };
 
 /** Capitalizes the first letter — used to make a mid-sentence phrase (like an SDK-family
@@ -202,6 +209,9 @@ const SDK_FAMILY_PHRASES: Record<string, string> = {
   "op-capella": "operational SDK",
   "enterprise-analytics": "Enterprise Analytics SDK",
   columnar: "Columnar SDK",
+  // Matches the SDK values in sdks.ts (insights-java, insights-go, insights-dotnet) and
+  // so the performer image basenames, e.g. insights-dotnet-fit-performer.
+  insights: "Operational Insights SDK",
 };
 
 /**

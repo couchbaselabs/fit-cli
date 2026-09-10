@@ -1,0 +1,87 @@
+// Quick sanity for Operational Insights functional tests — runs a single connection test
+// plus a query test, rather than the whole columnar-test-driver suite. See
+// insights-func-lite for the full run and notes on the cluster and connection.
+//
+// The Operational Insights server is not released yet, so this runs against a
+// self-managed Enterprise Analytics cluster — the same cluster the
+// enterprise-analytics-func-* presets build. **This is the file to edit when the OI
+// server ships**: the cbdinocluster block and the performer connection below are what
+// need repointing (and see presets/tags.json5's `insights` description).
+{
+  preset: {
+    order: 10,
+    tags: ['insights', 'functional'],
+  },
+  version: 1,
+  type: 'fit',
+  instances: [
+    {
+      aws: {},
+      clusters: [
+        {
+          clusterConfig: 'cluster-0',
+          sessions: [
+            {
+              performer: {
+                image: '{{PERFORMER_IMAGE}}',
+                onPortInUse: 'restart',
+              },
+              runs: [
+                {
+                  type: 'analytics-functional',
+                  fitConfig: 'fit-config-0',
+                  tests: {
+                    classes: ['com.couchbase.fit.columnar.tests.query.ClusterConnectionTest', 'com.couchbase.fit.columnar.tests.query.QueryTest'],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ],
+  clusterConfigs: [
+    {
+      id: 'cluster-0',
+      cbdinocluster: {
+        config: {
+          // cbdino wire flag: `columnar: true` builds a self-managed Enterprise
+          // Analytics cluster; the docker deployer fronts it with an nginx load balancer.
+          columnar: true,
+          nodes: [
+            {
+              count: 3,
+              version: '{{environments.defaults.enterpriseAnalyticsVersion}}',
+            },
+          ],
+          docker: {
+            'passive-load-balancer': true,
+            'use-dino-certs': true,
+          },
+        },
+        onClusterExists: 'useExisting',
+      },
+    },
+  ],
+  fitConfigs: [
+    {
+      id: 'fit-config-0',
+      config: {
+        clusterAccess: {
+          // The driver connects classically for admin (filled in by fit-cli); the
+          // SDK/performer reaches Analytics through the load balancer's query port.
+          clusterParams: {
+            loadBalancedCluster: {
+              ports: [8095, 18095],
+            },
+          },
+          performer: {
+            connectionString: 'http://${defaultHostname}:8095',
+            tls: null,
+          },
+        },
+      },
+    },
+  ],
+}

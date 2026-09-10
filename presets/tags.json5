@@ -21,6 +21,11 @@
   capella: { order: 40, description: 'Runs against a real Capella cluster, rather than an on-prem/self-managed one.' },
   pe: { order: 50, description: 'Tests Capella Private Endpoint (PrivateLink) connectivity.' },
   'enterprise-analytics': { order: 60, description: 'Analytics testing against a self-managed Enterprise Analytics cluster, using the Enterprise Analytics SDK.' },
+  // The Operational Insights server is not released yet, so these presets currently build
+  // the same self-managed Enterprise Analytics cluster as the `enterprise-analytics` ones —
+  // what differs today is only the SDK/performer under test. Named `insights` to match the
+  // SDK values in sdks.ts (`insights-java`, `insights-go`, `insights-dotnet`).
+  insights: { order: 65, description: 'Functional testing of the Operational Insights SDKs. The Operational Insights server is not released yet, so these currently run against a self-managed Enterprise Analytics cluster.' },
   columnar: { order: 70, description: 'Analytics testing against a Capella Analytics (cloud) cluster, using the Columnar SDK.' },
   // Legacy aliases kept for back-compat, each carrying its own removal date — see
   // groups.json5's `removalDate` field.
