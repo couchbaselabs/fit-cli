@@ -32,6 +32,7 @@ export const SDKS = [
   { name: ".NET Enterprise Analytics", value: "analytics-dotnet", family: "enterprise-analytics" },
   { name: "Java Columnar", value: "columnar-java", family: "columnar" },
   { name: "Go Operational Insights", value: "insights-go", family: "enterprise-analytics" },
+  { name: ".NET Operational Insights", value: "insights-dotnet", family: "enterprise-analytics" },
 ] as const;
 
 export type Sdk = (typeof SDKS)[number];
