@@ -219,7 +219,7 @@ export async function collectJunitArtifactsFromTarget(
     await run("tar", ["-xzf", archivePath, "-C", destDir]);
   } finally {
     if (remoteArchive !== "") {
-      await target.run("rm", ["-f", remoteArchive], undefined, { quiet: true });
+      await target.runHiddenUntilFailure("rm", ["-f", remoteArchive], undefined, { quiet: true });
     }
   }
 

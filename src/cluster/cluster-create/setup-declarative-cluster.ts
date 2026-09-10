@@ -140,7 +140,7 @@ async function uploadCbdinoclusterConfig(execution: ClusterCommandExecutor, conf
   const localConfigPath = join(cycleDir, "cbdinocluster-init.yaml");
   writeFileSync(localConfigPath, YAML.stringify(config));
   const stagedConfigPath = await execution.stageFile(localConfigPath, execution.targetFilePath(localConfigPath));
-  await execution.run("sh", [
+  await execution.runHiddenUntilFailure("sh", [
     "-lc",
     `cp ${posixQuote(stagedConfigPath)} ${CBDINOCLUSTER_DEFAULT_REMOTE_CONFIG_PATH} && chmod 600 ${CBDINOCLUSTER_DEFAULT_REMOTE_CONFIG_PATH}`,
   ], undefined, { display: `install cbdinocluster config to ${CBDINOCLUSTER_DEFAULT_REMOTE_CONFIG_PATH}` });
@@ -157,7 +157,7 @@ async function ensureDockerNetwork(execution: ClusterCommandExecutor, network: s
     `docker network inspect ${posixQuote(network)} >/dev/null 2>&1 && printf yes || printf no`,
   ], undefined, { quiet: true }).then((out) => out.trim() === "yes").catch(() => false);
   if (!exists) {
-    await execution.run("docker", ["network", "create", network], undefined, {
+    await execution.runHiddenUntilFailure("docker", ["network", "create", network], undefined, {
       display: `docker network create ${network}`,
     });
   }
@@ -177,7 +177,7 @@ async function loginToGhcr(
   writeFileSync(localTokenPath, `${githubCredentials.token}\n`, { mode: 0o600 });
   const targetTokenPath = await execution.stageFile(localTokenPath);
   rmSync(localTokenPath, { force: true });
-  await execution.run(
+  await execution.runHiddenUntilFailure(
     "sh",
     ["-lc", `cat ${posixQuote(targetTokenPath)} | docker login ghcr.io --username x-access-token --password-stdin && rm -f ${posixQuote(targetTokenPath)}`],
     undefined,
@@ -246,7 +246,7 @@ export async function runCbdinoclusterInit(
   // The Capella API key pool survives this. A later group's init finds the run's
   // keys by the pool name prefix and rotates them, so the run keeps one pool and
   // only the final teardown removes it.
-  await execution.run("sh", ["-lc", `rm -f ${CBDINOCLUSTER_DEFAULT_REMOTE_CONFIG_PATH}`], undefined, {
+  await execution.runHiddenUntilFailure("sh", ["-lc", `rm -f ${CBDINOCLUSTER_DEFAULT_REMOTE_CONFIG_PATH}`], undefined, {
     display: `rm -f ${CBDINOCLUSTER_DEFAULT_REMOTE_CONFIG_PATH}`,
   });
   // Run via a login shell so `~/.profile` is sourced and `init --auto` inherits the
@@ -710,7 +710,7 @@ export async function removeCapellaApiKeyPool(
 ): Promise<boolean> {
   console.log(`\nRemoving this run's Capella API key pool...`);
   try {
-    await execution.run(cbdinocluster, ["cloud", "apikeys", "remove"]);
+    await execution.runHiddenUntilFailure(cbdinocluster, ["cloud", "apikeys", "remove"]);
     console.log(`\n✓ Removed this run's Capella API key pool`);
     return true;
   } catch (err) {
@@ -803,7 +803,7 @@ async function allowHostIpOnCapellaCluster(
   const cidr = `${publicIp}/32`;
   console.log(`\n→ setup-cluster: adding ${cidr} to Capella cluster allow list…`);
   try {
-    await execution.run(cbdinocluster, ["allow-list", "add", clusterId, cidr]);
+    await execution.runHiddenUntilFailure(cbdinocluster, ["allow-list", "add", clusterId, cidr]);
     console.log(`  ✓ ${cidr} added to allow list.`);
   } catch (err) {
     console.warn(`\n⚠ setup-cluster: failed to add ${cidr} to allow list: ${(err as Error).message}`);

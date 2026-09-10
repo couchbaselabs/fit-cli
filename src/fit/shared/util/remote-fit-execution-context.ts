@@ -127,7 +127,7 @@ export async function createRemoteFitExecutionContext(
     console.log(`\n→ resume: reusing existing remote FIT workspace on ${target.description} (skipping preparation).`);
   } else {
     console.log(`\nPreparing a remote FIT workspace on ${target.description}...`);
-    await target.run("mkdir", ["-p", rootDir]);
+    await target.runHiddenUntilFailure("mkdir", ["-p", rootDir]);
 
     console.log("\nInstalling the remote FIT dependencies...");
     // Clear stale/corrupt apt lists baked into the AMI before updating — a malformed
@@ -146,17 +146,17 @@ export async function createRemoteFitExecutionContext(
       remoteAptGetCommand("install -y git docker.io lsof openjdk-21-jdk"),
     ], undefined, { display: "apt-get install git docker.io lsof openjdk-21-jdk" });
     // Allow running Docker without sudo
-    await target.run("sudo", ["-n", "usermod", "-aG", "docker", loginUser ?? "ubuntu"]);
-    await target.run("sudo", ["-n", "systemctl", "enable", "--now", "docker"]);
+    await target.runHiddenUntilFailure("sudo", ["-n", "usermod", "-aG", "docker", loginUser ?? "ubuntu"]);
+    await target.runHiddenUntilFailure("sudo", ["-n", "systemctl", "enable", "--now", "docker"]);
 
-    await target.run("mkdir", ["-p", binDir]);
+    await target.runHiddenUntilFailure("mkdir", ["-p", binDir]);
     const internalDir = instanceInternalRunDir(instancePath);
     mkdirSync(internalDir, { recursive: true, mode: 0o700 });
     const localDockerWrapper = join(internalDir, "remote-docker-wrapper.sh");
     writeFileSync(localDockerWrapper, remoteDockerWrapperScript(), { mode: 0o700 });
     const wrapperPath = remoteDockerWrapperPath(rootDir);
     await target.putFile(localDockerWrapper, wrapperPath);
-    await target.run("chmod", ["755", wrapperPath]);
+    await target.runHiddenUntilFailure("chmod", ["755", wrapperPath]);
 
     const githubToken = await resolveGithubTokenFromAws();
     if (githubToken) {
@@ -191,7 +191,7 @@ export async function createRemoteFitExecutionContext(
     writeFileSync(localEnvFile, contents, { mode: 0o600 });
     const remoteEnvFile = join(rootDir, ".fit-driver-env.sh");
     await target.putFile(localEnvFile, remoteEnvFile);
-    await target.run("chmod", ["600", remoteEnvFile]);
+    await target.runHiddenUntilFailure("chmod", ["600", remoteEnvFile]);
     return remoteEnvFile;
   };
 
@@ -227,7 +227,7 @@ export async function createRemoteFitExecutionContext(
     streamToTerminalAndFile: async (command, args, targetPath, cwd) => {
       // The tee target's parent dir may not exist (per-run targets nest under
       // artifacts/instances/.../runs/N), so ensure it first.
-      await target.run("mkdir", ["-p", dirname(targetPath)]);
+      await target.runHiddenUntilFailure("mkdir", ["-p", dirname(targetPath)]);
       return target.run("bash", ["-lc", teeToFileCommand(pathPrefixedCommand(binDir, command, args), targetPath)], cwd, {
         display: commandOn(formatCommandLine(command, args), target.description),
       });
@@ -235,7 +235,7 @@ export async function createRemoteFitExecutionContext(
     streamToArtifactFile: async (command, args, targetPath, cwd, env) => {
       // The redirect (`> targetPath`) won't create parent dirs, and per-run
       // targets now nest under artifacts/instances/.../runs/N — so ensure the dir.
-      await target.run("mkdir", ["-p", dirname(targetPath)]);
+      await target.runHiddenUntilFailure("mkdir", ["-p", dirname(targetPath)]);
       announceArtifactStream({
         logPath: targetPath,
         command: formatCommandLine(command, args),
@@ -261,7 +261,7 @@ export async function createRemoteFitExecutionContext(
       });
     },
     streamToArtifactFileInBackground: async (command, args, targetPath, cwd): Promise<BackgroundStream> => {
-      await target.run("mkdir", ["-p", dirname(targetPath)]);
+      await target.runHiddenUntilFailure("mkdir", ["-p", dirname(targetPath)]);
       const fullCommand = pathPrefixedCommand(binDir, command, args);
       const pid = (await target.capture("bash", ["-lc", backgroundShellCommand(fullCommand, targetPath)], cwd, {
         quiet: true,
@@ -280,7 +280,7 @@ export async function createRemoteFitExecutionContext(
     stageFile: async (localPath, targetPath) => {
       const destination = targetPath ?? join(rootDir, basename(localPath));
       // scp won't create intermediate dirs; per-run targets nest, so ensure the dir.
-      await target.run("mkdir", ["-p", dirname(destination)]);
+      await target.runHiddenUntilFailure("mkdir", ["-p", dirname(destination)]);
       await target.putFile(localPath, destination);
       return destination;
     },
@@ -310,7 +310,7 @@ export async function createRemoteFitExecutionContext(
               `Expand with: gunzip -k ${keptGzPath}`,
           );
         } finally {
-          await target.run("rm", ["-f", remoteGz], undefined, { quiet: true });
+          await target.runHiddenUntilFailure("rm", ["-f", remoteGz], undefined, { quiet: true });
         }
         return keptGzPath;
       }
@@ -320,15 +320,15 @@ export async function createRemoteFitExecutionContext(
         await target.getFile(remoteGz, localGz, compressedBytes);
         await pipeline(createReadStream(localGz), createGunzip(), createWriteStream(localPath, { mode: 0o600 }));
       } finally {
-        await target.run("rm", ["-f", remoteGz], undefined, { quiet: true });
+        await target.runHiddenUntilFailure("rm", ["-f", remoteGz], undefined, { quiet: true });
         rmSync(localGz, { force: true });
       }
       return localPath;
     },
-    removeTree: (path) => target.run("rm", ["-rf", path]),
+    removeTree: (path) => target.runHiddenUntilFailure("rm", ["-rf", path]),
     collectJunitArtifacts: async (sourceDir, path) =>
       await collectJunitArtifactsFromTarget(target, sourceDir, path),
-    pathExists: (path) => target.run("test", ["-e", path], undefined, { quiet: true }).then(() => true).catch(() => false),
+    pathExists: (path) => target.runHiddenUntilFailure("test", ["-e", path], undefined, { quiet: true }).then(() => true).catch(() => false),
     commandAvailable: (command) =>
       target
         .capture("sh", ["-lc", `command -v ${posixQuote(command)} >/dev/null && printf yes || printf no`], undefined, { quiet: true })

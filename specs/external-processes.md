@@ -22,11 +22,12 @@ A caller with its own polling deadline should set this *per attempt*, well below
 
 ## Logging
 For the logged-step models above, stdout/stderr from the process can be either:
-LogType1: Streamed to stdout/stderr of this process.
-LogType2: Hidden as unimportant noise, and only shown on failure.  Also now included in a debug `session.debug.log` artifact version of the log.
+LogType1: (StreamToTerminal) Streamed to stdout/stderr of this process.
+LogType2: (RunHiddenUntilFailure) Hidden as unimportant noise, and only shown on failure.  Though output is included in a `session.debug.log` artifact version of the log.
 LogType3: Sent to a separate artifact, for important but large logs.  For proof-of-life, the last line of the log is output to stdout/stderr every N seconds.
 LogType4: Sent to a separate artifact in the background without blocking.  The process self-terminates when its subject (e.g. a Docker container) exits.  A `BackgroundStream.drain()` handle is returned for the caller to await after stopping the subject.  Used for performer logs so they're available even if the run is interrupted.
 Generally we want those logtypes to behave the same on local or remote runs.  Agents, you will likely need to change both paths. 
+LogType2 is used for commands where we expect it to succeed almost 100% of the time, and where we don't care about the output - things like `mkdir` and installing tools.  It's significantly cheaper as it doesn't need CloudWatch.
 
 ### AWS SSM logging
 Moving to using AWS SSM for running commands brings some odd constraints.  GetCommandInvocation will give only the first 24,000 chars of stdout and 8,000 chars of stderr.

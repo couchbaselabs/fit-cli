@@ -150,11 +150,11 @@ export function remoteGitCredentialsPath(rootDir: string): string {
 }
 
 async function remoteRepoExists(target: ExecutionTarget, rootDir: string, repo: Repo): Promise<boolean> {
-  return target.run("test", ["-d", repoPath(repo, rootDir)], undefined, { quiet: true }).then(() => true).catch(() => false);
+  return target.runHiddenUntilFailure("test", ["-d", repoPath(repo, rootDir)], undefined, { quiet: true }).then(() => true).catch(() => false);
 }
 
 export async function ensureRemoteRepos(target: ExecutionTarget, rootDir: string, repos: readonly Repo[]): Promise<void> {
-  await target.run("mkdir", ["-p", rootDir]);
+  await target.runHiddenUntilFailure("mkdir", ["-p", rootDir]);
   for (const repo of repos) {
     if (await remoteRepoExists(target, rootDir, repo)) {
       console.log(`✓ Found ${repo.name} on ${target.description} at ${repoPath(repo, rootDir)}`);
@@ -192,8 +192,8 @@ export async function configureRemoteGitCredentials(
   const localCredentials = createRunFilePath("git-credentials");
   writeFileSync(localCredentials, gitCredentialsLine(token), { mode: 0o600 });
   await target.putFile(localCredentials, credentialsPath);
-  await target.run("chmod", ["600", credentialsPath]);
-  await target.run("git", ["config", "--global", "credential.helper", `store --file=${credentialsPath}`]);
+  await target.runHiddenUntilFailure("chmod", ["600", credentialsPath]);
+  await target.runHiddenUntilFailure("git", ["config", "--global", "credential.helper", `store --file=${credentialsPath}`]);
   rmSync(localCredentials, { force: true });
 }
 
@@ -214,7 +214,7 @@ export async function stageGerritSshKey(
 ): Promise<string> {
   const remotePath = remoteGerritSshKeyPath(rootDir);
   await target.putFile(localKeyPath, remotePath);
-  await target.run("chmod", ["600", remotePath]);
+  await target.runHiddenUntilFailure("chmod", ["600", remotePath]);
   return remotePath;
 }
 
@@ -277,9 +277,9 @@ export async function uploadRemoteCapellaConfig(
   );
   await target.putFile(localFile, remotePath);
   rmSync(localFile, { force: true });
-  await target.run("chmod", ["600", remotePath]);
+  await target.runHiddenUntilFailure("chmod", ["600", remotePath]);
   // Source from ~/.profile idempotently so every login shell inherits the vars.
-  await target.run(
+  await target.runHiddenUntilFailure(
     "sh",
     ["-lc",
       `grep -qF ${posixQuote(basename(remotePath))} ~/.profile 2>/dev/null` +

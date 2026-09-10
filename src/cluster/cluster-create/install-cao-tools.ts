@@ -59,6 +59,7 @@ const DEFAULT_INSTANCE_USER = "ubuntu";
 export type RunExecutor = {
   readonly description: string;
   run(command: string, args: string[], cwd?: string, opts?: RunOptions): Promise<void>;
+  runHiddenUntilFailure(command: string, args: string[], cwd?: string, opts?: RunOptions): Promise<void>;
 };
 
 /**

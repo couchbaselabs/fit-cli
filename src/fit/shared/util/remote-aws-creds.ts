@@ -229,7 +229,7 @@ export async function uploadRemoteAwsCredentials(
 
   // One round trip to put all three in place and retire the legacy file. The legacy removal
   // comes last so a failure part-way never leaves the box with neither mechanism.
-  await target.run(
+  await target.runHiddenUntilFailure(
     "sh",
     ["-lc", [
       installCommand(jsonTmp, posixQuote(jsonPath), "600"),
@@ -314,7 +314,7 @@ export function startRemoteAwsCredsRefresher(
       const tmpPath = await stageRemoteFile(
         target, REMOTE_AWS_CREDS_JSON_FILENAME, awsCredentialProcessPayload(fresh), jsonPath,
       );
-      await target.run(
+      await target.runHiddenUntilFailure(
         "sh",
         ["-lc", installCommand(tmpPath, posixQuote(jsonPath), "600")],
         undefined,

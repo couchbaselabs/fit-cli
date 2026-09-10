@@ -212,7 +212,7 @@ export async function checkBuildAndRunPerformer(
     console.log(`\n✓ Started the ${sdk.name} performer in container ${containerId}`);
 
     if (dockerNetwork && !(await connectPerformerToClusterNetwork(execution, dockerNetwork, containerId))) {
-      await execution.run(execution.dockerCommand, ["rm", "--force", containerId]).catch(() => {});
+      await execution.runHiddenUntilFailure(execution.dockerCommand, ["rm", "--force", containerId]).catch(() => {});
       return undefined;
     }
 
@@ -249,7 +249,7 @@ export async function checkBuildAndRunPerformer(
         .catch(() => "unknown");
       await logStream.drain();
       const collectedPath = await execution.collectFile(targetLogFile, logFile).catch(() => logFile);
-      await execution.run(execution.dockerCommand, ["rm", containerId]).catch(() => {});
+      await execution.runHiddenUntilFailure(execution.dockerCommand, ["rm", containerId]).catch(() => {});
       console.error(
         `\n✗ The ${sdk.name} performer container exited immediately (exit code ${exitCode}) instead of staying up. See the captured logs:\n  ${collectedPath}`,
       );
@@ -291,7 +291,7 @@ export async function stopManagedPerformer(
   // Stop the container first — this causes docker logs --follow to see EOF and exit.
   console.log(`\nStopping performer container with:\n  docker stop ${performer.containerId}\n`);
   try {
-    await execution.run(execution.dockerCommand, ["stop", performer.containerId]);
+    await execution.runHiddenUntilFailure(execution.dockerCommand, ["stop", performer.containerId]);
     console.log(`\n✓ Stopped performer container ${performer.containerId}`);
   } catch (err) {
     console.error(`\n✗ Failed to stop performer container ${performer.containerId}: ${(err as Error).message}`);
@@ -301,7 +301,7 @@ export async function stopManagedPerformer(
   // sanity checks — see checkBuildAndRunPerformerArgs), so it isn't auto-removed
   // on stop. Clean it up ourselves now that we're done with it.
   try {
-    await execution.run(execution.dockerCommand, ["rm", performer.containerId]);
+    await execution.runHiddenUntilFailure(execution.dockerCommand, ["rm", performer.containerId]);
   } catch (err) {
     console.error(`\n✗ Failed to remove performer container ${performer.containerId}: ${(err as Error).message}`);
   }

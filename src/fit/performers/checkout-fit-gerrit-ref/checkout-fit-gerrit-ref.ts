@@ -149,7 +149,7 @@ export async function checkoutFitGerritRef(
       const sshCmd = gerritSshCommand(sshKeyPath);
       const shScript = `GIT_SSH_COMMAND=${posixQuote(sshCmd)} git ${fetchArgs.map(posixQuote).join(" ")}`;
       console.log(`\nFetching FIT Gerrit ref with:\n  GIT_SSH_COMMAND=${posixQuote(sshCmd)} git ${fetchArgs.join(" ")}\n`);
-      await execution.run("sh", ["-c", shScript], execution.fitPerformerDir, {
+      await execution.runHiddenUntilFailure("sh", ["-c", shScript], execution.fitPerformerDir, {
         display: `GIT_SSH_COMMAND=<gerrit-key> git ${fetchArgs.join(" ")}`,
       });
     } else {
@@ -157,7 +157,7 @@ export async function checkoutFitGerritRef(
         `\nAdding ${FIT_GERRIT_HOST} to known_hosts with:\n  ssh-keyscan -p ${FIT_GERRIT_PORT} ${FIT_GERRIT_HOST} >> ~/.ssh/known_hosts\n`,
       );
       try {
-        await execution.run("sh", [
+        await execution.runHiddenUntilFailure("sh", [
           "-c",
           `mkdir -p ~/.ssh && chmod 700 ~/.ssh && ssh-keyscan -p ${FIT_GERRIT_PORT} ${FIT_GERRIT_HOST} >> ~/.ssh/known_hosts`,
         ]);
@@ -165,11 +165,11 @@ export async function checkoutFitGerritRef(
         console.warn(`Warning: could not pre-seed known_hosts for ${FIT_GERRIT_HOST}: ${(err as Error).message}`);
       }
       console.log(`\nFetching FIT Gerrit ref with:\n  git ${fetchArgs.join(" ")}\n`);
-      await execution.run("git", fetchArgs, execution.fitPerformerDir);
+      await execution.runHiddenUntilFailure("git", fetchArgs, execution.fitPerformerDir);
     }
 
     console.log(`\nChecking out fetched FIT Gerrit ref with:\n  git ${checkoutFetchHeadArgs().join(" ")}\n`);
-    await execution.run("git", checkoutFetchHeadArgs(), execution.fitPerformerDir);
+    await execution.runHiddenUntilFailure("git", checkoutFetchHeadArgs(), execution.fitPerformerDir);
   } catch (err) {
     const message = (err as Error).message;
     const hints: string[] = [];

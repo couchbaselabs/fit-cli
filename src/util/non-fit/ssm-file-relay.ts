@@ -24,7 +24,7 @@ const RELAY_PREFIX = "ssm-relay";
 const PRESIGN_EXPIRY_SECONDS = 900;
 
 /** Anything that can run a shell command on the instance and knows its own id. */
-export type RelayTarget = Pick<ExecutionTarget, "run" | "description"> & { readonly instanceId: string };
+export type RelayTarget = Pick<ExecutionTarget, "runHiddenUntilFailure" | "description"> & { readonly instanceId: string };
 
 function scratchKey(instanceId: string, filename: string): string {
   return `${RELAY_PREFIX}/${instanceId}/${randomUUID()}-${filename}`;
@@ -42,7 +42,7 @@ export async function ssmPutFile(target: RelayTarget, localPath: string, remoteP
   await uploadFileToS3(localPath, `s3://${ARTIFACTS_BUCKET}/${key}`);
   try {
     const url = await getSignedUrl(s3Client, new GetObjectCommand({ Bucket: ARTIFACTS_BUCKET, Key: key }), { expiresIn: PRESIGN_EXPIRY_SECONDS });
-    await target.run("sh", ["-c", `curl -fsSL -o ${posixQuote(remotePath)} ${posixQuote(url)}`], undefined, {
+    await target.runHiddenUntilFailure("sh", ["-c", `curl -fsSL -o ${posixQuote(remotePath)} ${posixQuote(url)}`], undefined, {
       display: `put ${localPath} -> ${target.description}:${remotePath}`,
     });
   } finally {
@@ -56,7 +56,7 @@ export async function ssmGetFile(target: RelayTarget, remotePath: string, localP
   const url = await getSignedUrl(s3Client, new PutObjectCommand({ Bucket: ARTIFACTS_BUCKET, Key: key }), { expiresIn: PRESIGN_EXPIRY_SECONDS });
   const size = sizeBytes !== undefined ? ` (${formatBytes(sizeBytes)})` : "";
   try {
-    await target.run("sh", ["-c", `curl -fsSL -T ${posixQuote(remotePath)} ${posixQuote(url)}`], undefined, {
+    await target.runHiddenUntilFailure("sh", ["-c", `curl -fsSL -T ${posixQuote(remotePath)} ${posixQuote(url)}`], undefined, {
       display: `get ${target.description}:${remotePath}${size} -> ${localPath}`,
     });
     await downloadFileFromS3(`s3://${ARTIFACTS_BUCKET}/${key}`, localPath);
