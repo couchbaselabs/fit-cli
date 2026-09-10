@@ -2,6 +2,7 @@
  * Loader for `environments.json5` (repo root): the non-secret, per-environment
  * settings selected from a definition file, plus global defaults. Sections:
  *   - defaults: global version strings for cbdinocluster (cluster, CNG, Analytics, CAO)
+ *   - externalServices: settings for the services fit-cli starts itself, e.g. the otel stack
  *   - testSets: the test set each preset tier runs (see TestSets)
  *   - capella: control-plane endpoint + org id per Capella environment (dev/stage/…)
  *   - results: the hosted results host per results environment (dev/prod/…), which
@@ -135,6 +136,26 @@ export interface Defaults {
   gcp?: GcpDefaults;
 }
 
+/** Pinned image tags for fit-cli's ephemeral per-box observability stack. */
+export interface OtelDefaults {
+  /** Pinned otel/opentelemetry-collector-contrib image tag. */
+  collectorVersion: string;
+  /**
+   * Pinned jaegertracing/all-in-one image tag — MUST be a 1.x tag. Jaeger 2.x
+   * reorganizes the io.jaegertracing.api_v2 gRPC query API and badger storage
+   * semantics the driver's fetchJaeger depends on; a floating/unpinned tag
+   * would silently roll onto it.
+   */
+  jaegerVersion: string;
+  /** Pinned prom/prometheus image tag. */
+  prometheusVersion: string;
+}
+
+/** Settings for the services fit-cli starts alongside a run (see src/fit/external-services/). */
+export interface ExternalServicesDefaults {
+  otel: OtelDefaults;
+}
+
 /**
  * The test set each preset tier runs, referenced from preset templates as
  * `{{environments.testSets.<NAME>}}`. Values are single selectors: a test-driver class
@@ -153,6 +174,7 @@ export interface TestSets {
 
 export interface EnvironmentsFile {
   defaults: Defaults;
+  externalServices: ExternalServicesDefaults;
   testSets: TestSets;
   capella: Record<string, CapellaEnvironment>;
   results: Record<string, ResultsEnvironment>;
@@ -184,6 +206,7 @@ export function loadEnvironments(path: string = DEFAULT_ENVIRONMENTS_PATH): Envi
     !parsed ||
     typeof parsed !== "object" ||
     typeof parsed.defaults !== "object" ||
+    typeof parsed.externalServices !== "object" ||
     typeof parsed.testSets !== "object" ||
     typeof parsed.capella !== "object" ||
     typeof parsed.results !== "object" ||
@@ -191,7 +214,7 @@ export function loadEnvironments(path: string = DEFAULT_ENVIRONMENTS_PATH): Envi
     typeof parsed.fitCliRole !== "object"
   ) {
     throw new Error(
-      `Environments file at ${path} must define "defaults", "testSets", "capella", "results", "awsTenants", and "fitCliRole" sections.`,
+      `Environments file at ${path} must define "defaults", "externalServices", "testSets", "capella", "results", "awsTenants", and "fitCliRole" sections.`,
     );
   }
   if (path === DEFAULT_ENVIRONMENTS_PATH) cached = parsed;

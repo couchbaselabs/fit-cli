@@ -22,6 +22,7 @@
     "archive": "bun src/fit/archive/archive.ts",
     "ingest": "bun src/fit/ingest/ingest.ts",
     "caps": "bun src/fit/caps/caps.ts",
+    "external-services": "bun src/fit/external-services/external-services-cli.ts",
     "upgrade": "bun src/fit/upgrade/upgrade.ts",
     "maintenance": "bun src/fit/maintenance/maintenance.ts",
     "generate-fit-tests-cache": "bun src/fit/shared/select-fit-tests/generate-fit-tests-cache.ts",

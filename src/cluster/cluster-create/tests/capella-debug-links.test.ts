@@ -20,6 +20,9 @@ const environments: EnvironmentsFile = {
     capellaKeyPool: { enabled: true, size: 10, expiryDays: 1 },
     aws: { region: "us-west-2", vpcId: "vpc-x", subnetId: "subnet-x" },
   },
+  externalServices: {
+    otel: { collectorVersion: "0.135.0", jaegerVersion: "1.62.0", prometheusVersion: "v2.55.0" },
+  },
   testSets: {
     SITUATIONAL_SET_SANITY: "com.couchbase.situational.tests.SanityTest",
     SITUATIONAL_CNG_SET_SANITY: "com.couchbase.situational.tests.CngTest#rebalance3To4NodesDuringMixedKv",

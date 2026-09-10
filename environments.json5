@@ -140,6 +140,19 @@
     },
   },
 
+  // The services fit-cli itself starts alongside a run — see src/fit/external-services/.
+  externalServices: {
+    // Images for fit-cli's ephemeral per-box observability stack (an OTel collector,
+    // Jaeger and Prometheus started for every functional run).
+    otel: {
+      collectorVersion: "0.135.0",
+      // Only 1.x supported: Jaeger 2.x reorganizes the gRPC query API and badger
+      // storage semantics the driver's fetchJaeger depends on.
+      jaegerVersion: "1.62.0",
+      prometheusVersion: "v2.55.0",
+    },
+  },
+
   testSets: {
     // A quick single test proving the basics work.
     SITUATIONAL_SET_SANITY: "com.couchbase.situational.tests.SanityTest",

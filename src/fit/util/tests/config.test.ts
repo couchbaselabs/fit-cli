@@ -214,6 +214,10 @@ const STUB_DEFAULTS = {
   aws: { region: "us-west-2", vpcId: "vpc-stub", subnetId: "subnet-stub" },
 };
 
+const STUB_EXTERNAL_SERVICES = {
+  otel: { collectorVersion: "0.135.0", jaegerVersion: "1.62.0", prometheusVersion: "v2.55.0" },
+};
+
 const STUB_TEST_SETS = {
   SITUATIONAL_SET_SANITY: "com.couchbase.situational.tests.SanityTest",
   SITUATIONAL_CNG_SET_SANITY: "com.couchbase.situational.tests.CngTest#rebalance3To4NodesDuringMixedKv",
@@ -226,6 +230,7 @@ const STUB_TEST_SETS = {
 
 const TEST_ENVIRONMENTS = {
   defaults: STUB_DEFAULTS,
+  externalServices: STUB_EXTERNAL_SERVICES,
   testSets: STUB_TEST_SETS,
   capella: {
     dev: {
@@ -497,6 +502,7 @@ test("resolveCapellaConfig throws for an unprovisioned environment", async () =>
       block: "stage",
       environments: {
         defaults: STUB_DEFAULTS,
+        externalServices: STUB_EXTERNAL_SERVICES,
         testSets: STUB_TEST_SETS,
         capella: { stage: { endpoint: null, oid: null, secretId: "cap/stage" } },
         results: {},
