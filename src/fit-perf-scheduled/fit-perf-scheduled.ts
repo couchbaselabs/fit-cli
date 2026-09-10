@@ -189,8 +189,8 @@ async function main(): Promise<void> {
       undefined,
       { display: "apt-get install git docker.io lsof openjdk-21-jdk maven awscli jq" },
     );
-    await target.run("sudo", ["usermod", "-aG", "docker", FIT_INSTANCE_USER]);
-    await target.run("sudo", ["-n", "systemctl", "enable", "--now", "docker"]);
+    await target.runHiddenUntilFailure("sudo", ["usermod", "-aG", "docker", FIT_INSTANCE_USER]);
+    await target.runHiddenUntilFailure("sudo", ["-n", "systemctl", "enable", "--now", "docker"]);
 
     console.log("\nInstalling cbdinocluster...");
     const cbdinocluster =
@@ -200,10 +200,10 @@ async function main(): Promise<void> {
 
     console.log("\nInitializing cbdinocluster...");
     const initArgs = defaultCbdinoclusterInitArgs(DOCKER_NETWORK).trim().split(/\s+/).filter(Boolean);
-    await target.run("bash", ["-lc", [cbdinocluster, "init", ...initArgs, "--disable-github"].map(posixQuote).join(" ")], undefined, {
+    await target.runHiddenUntilFailure("bash", ["-lc", [cbdinocluster, "init", ...initArgs, "--disable-github"].map(posixQuote).join(" ")], undefined, {
       display: `cbdinocluster init ${initArgs.join(" ")} --disable-github`,
     });
-    await target.run(
+    await target.runHiddenUntilFailure(
       "sh",
       ["-lc", `docker network inspect ${posixQuote(DOCKER_NETWORK)} >/dev/null 2>&1 || docker network create ${posixQuote(DOCKER_NETWORK)}`],
       undefined,
@@ -211,7 +211,7 @@ async function main(): Promise<void> {
     );
 
     console.log("\nCloning repositories...");
-    await target.run("mkdir", ["-p", REMOTE_ROOT_DIR]);
+    await target.runHiddenUntilFailure("mkdir", ["-p", REMOTE_ROOT_DIR]);
     const githubToken = await resolveGithubTokenFromAws();
     if (!githubToken) {
       throw new Error(
@@ -239,13 +239,13 @@ async function main(): Promise<void> {
       const sshCmd = gerritSshCommand(remoteGerritKeyPath);
       const fetchArgs = fitPerformerGerritFetchArgs(transactionsFitPerformerRef, gerritUser);
       const fitPerformerDir = repoPath(FIT_PERFORMER, REMOTE_ROOT_DIR);
-      await target.run(
+      await target.runHiddenUntilFailure(
         "sh",
         ["-c", `GIT_SSH_COMMAND=${posixQuote(sshCmd)} git ${fetchArgs.map(posixQuote).join(" ")}`],
         fitPerformerDir,
         { display: `GIT_SSH_COMMAND=<gerrit-key> git ${fetchArgs.join(" ")}` },
       );
-      await target.run("git", checkoutFetchHeadArgs(), fitPerformerDir);
+      await target.runHiddenUntilFailure("git", checkoutFetchHeadArgs(), fitPerformerDir);
       console.log(`✓ Checked out transactions-fit-performer at Gerrit ref ${transactionsFitPerformerRef}`);
     }
 
@@ -258,14 +258,14 @@ async function main(): Promise<void> {
     writeFileSync(ghcrTokenLocalPath, `${githubToken}\n`, { mode: 0o600 });
     const ghcrTokenRemotePath = `${REMOTE_ROOT_DIR}/.ghcr-token`;
     await target.putFile(ghcrTokenLocalPath, ghcrTokenRemotePath);
-    await target.run("chmod", ["600", ghcrTokenRemotePath]);
-    await target.run(
+    await target.runHiddenUntilFailure("chmod", ["600", ghcrTokenRemotePath]);
+    await target.runHiddenUntilFailure(
       "sh",
       ["-lc", `cat ${posixQuote(ghcrTokenRemotePath)} | docker login ${posixQuote(GHCR_REGISTRY)} --username x-access-token --password-stdin`],
       undefined,
       { display: `docker login ${GHCR_REGISTRY}` },
     );
-    await target.run("rm", ["-f", ghcrTokenRemotePath]);
+    await target.runHiddenUntilFailure("rm", ["-f", ghcrTokenRemotePath]);
 
     console.log("\nForwarding AWS credentials to the instance (so it can fetch the results-DB password itself)...");
     const awsCreds = await checkAwsCredentials();
@@ -303,7 +303,7 @@ async function main(): Promise<void> {
     const jenkinsSdkDir = repoPath(jenkinsSdkRepo(jenkinsSdkBranch), REMOTE_ROOT_DIR);
     const configLocalPath = join(scratchDir, "job-config.yaml");
     writeFileSync(configLocalPath, stringifyYaml(config));
-    await target.run("mkdir", ["-p", `${jenkinsSdkDir}/config`]);
+    await target.runHiddenUntilFailure("mkdir", ["-p", `${jenkinsSdkDir}/config`]);
     await target.putFile(configLocalPath, `${jenkinsSdkDir}/config/job-config.yaml`);
 
     console.log("\nBuilding transactions-fit-performer (mvn clean install -Dmaven.test.skip)...");
@@ -330,7 +330,7 @@ async function main(): Promise<void> {
     // process or over SCP, only through the box's own (encrypted) call to Secrets Manager.
     // `@sh` shell-quotes the value so it's safe to source regardless of its contents.
     const envFileRemote = `${REMOTE_ROOT_DIR}/.fit-perf-driver-env.sh`;
-    await target.run(
+    await target.runHiddenUntilFailure(
       "bash",
       [
         "-lc",
@@ -348,12 +348,12 @@ async function main(): Promise<void> {
     writeFileSync(githubTokenEnvLocalPath, `export GITHUB_TOKEN=${posixQuote(githubToken)}\n`, { mode: 0o600 });
     const githubTokenEnvRemotePath = `${REMOTE_ROOT_DIR}/.github-token-env.sh`;
     await target.putFile(githubTokenEnvLocalPath, githubTokenEnvRemotePath);
-    await target.run("sh", ["-lc", `cat ${posixQuote(githubTokenEnvRemotePath)} >> ${posixQuote(envFileRemote)}`]);
-    await target.run("rm", ["-f", githubTokenEnvRemotePath]);
-    await target.run("chmod", ["600", envFileRemote]);
+    await target.runHiddenUntilFailure("sh", ["-lc", `cat ${posixQuote(githubTokenEnvRemotePath)} >> ${posixQuote(envFileRemote)}`]);
+    await target.runHiddenUntilFailure("rm", ["-f", githubTokenEnvRemotePath]);
+    await target.runHiddenUntilFailure("chmod", ["600", envFileRemote]);
 
     const remoteLogPath = `${jenkinsSdkDir}/logs/jenkins_sdk_run.log`;
-    await target.run("mkdir", ["-p", `${jenkinsSdkDir}/logs`]);
+    await target.runHiddenUntilFailure("mkdir", ["-p", `${jenkinsSdkDir}/logs`]);
     await target.run("bash", ["-lc", teeToFileCommand(`. ${envFileRemote} && java -jar ${jarPath}`, remoteLogPath)], jenkinsSdkDir);
 
     const localLogPath = join(scratchDir, "jenkins_sdk_run.log");

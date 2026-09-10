@@ -40,7 +40,7 @@ async function loginToGhcr(execution: FitExecutionContext, token: string): Promi
   let targetTokenPath: string | undefined;
   try {
     targetTokenPath = await execution.stageFile(localTokenPath);
-    await execution.run("sh", ["-lc", dockerLoginCommand(execution.dockerCommand, targetTokenPath)]);
+    await execution.runHiddenUntilFailure("sh", ["-lc", dockerLoginCommand(execution.dockerCommand, targetTokenPath)]);
   } finally {
     if (targetTokenPath) {
       await execution.removeTree(targetTokenPath);

@@ -53,8 +53,8 @@ export async function collectClusterLogs(
   // an earlier cluster on the same box don't get mixed in.
   const targetDir = execution.targetFilePath(logsDir);
   try {
-    await execution.run("rm", ["-rf", targetDir]);
-    await execution.run("mkdir", ["-p", targetDir]);
+    await execution.runHiddenUntilFailure("rm", ["-rf", targetDir]);
+    await execution.runHiddenUntilFailure("mkdir", ["-p", targetDir]);
     await execution.run(cbdinocluster, collectLogsArgs(id, targetDir));
     const collected = (await execution.capture("ls", ["-1", targetDir]))
       .split(/\r?\n/)

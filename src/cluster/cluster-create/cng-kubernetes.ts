@@ -143,7 +143,7 @@ export async function provisionRemoteK3d(
 
   if (!(await execution.commandAvailable("k3d"))) {
     console.log("→ setup-cluster: installing k3d…");
-    await execution.run(
+    await execution.runHiddenUntilFailure(
       "sh",
       ["-lc", "wget -q -O - https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash"],
       undefined,
@@ -163,11 +163,11 @@ export async function provisionRemoteK3d(
   );
 
   const kubeconfigDir = `${home}/.config/k3d`;
-  await execution.run("sh", ["-lc", `mkdir -p ${posixQuote(kubeconfigDir)}`], undefined, {
+  await execution.runHiddenUntilFailure("sh", ["-lc", `mkdir -p ${posixQuote(kubeconfigDir)}`], undefined, {
     display: `mkdir -p ${kubeconfigDir}`,
   });
   // `k3d kubeconfig write <cluster>` writes ~/.config/k3d/kubeconfig-<cluster>.yaml.
-  await execution.run("sh", ["-lc", `k3d kubeconfig write ${clusterName}`], undefined, {
+  await execution.runHiddenUntilFailure("sh", ["-lc", `k3d kubeconfig write ${clusterName}`], undefined, {
     display: `k3d kubeconfig write ${CNG_K3D_CLUSTER_NAME}`,
   });
 

@@ -62,6 +62,7 @@ const DEFAULT_INSTANCE_USER = "ubuntu";
 export type OpenShiftExecutor = {
   readonly description: string;
   run(command: string, args: string[], cwd?: string, opts?: RunOptions): Promise<void>;
+  runHiddenUntilFailure(command: string, args: string[], cwd?: string, opts?: RunOptions): Promise<void>;
   capture(command: string, args: string[], cwd?: string, opts?: RunOptions): Promise<string>;
 };
 
@@ -142,7 +143,7 @@ export async function installOcRemote(
   version: string = DEFAULT_OC_VERSION,
 ): Promise<void> {
   console.log(`→ setup-cluster: installing oc ${version} on ${execution.description}…`);
-  await execution.run("sh", ["-lc", ocInstallScript(version)], undefined, {
+  await execution.runHiddenUntilFailure("sh", ["-lc", ocInstallScript(version)], undefined, {
     display: `install oc ${version}`,
   });
 }

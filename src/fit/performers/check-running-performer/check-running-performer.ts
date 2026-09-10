@@ -184,7 +184,7 @@ export async function stopProcessesOnPort(execution: FitExecutionContext, port: 
   );
 
   try {
-    await execution.run("kill", killProcessArgs(pids));
+    await execution.runHiddenUntilFailure("kill", killProcessArgs(pids));
     console.log(`\n✓ Asked process${pids.length === 1 ? "" : "es"} ${pids.join(", ")} to stop.`);
     return true;
   } catch (err) {
@@ -358,7 +358,7 @@ export async function stopPerformerContainers(
   );
 
   try {
-    await execution.run(execution.dockerCommand, stopPerformerContainerArgs(containerIds));
+    await execution.runHiddenUntilFailure(execution.dockerCommand, stopPerformerContainerArgs(containerIds));
     console.log(
       `\n✓ Stopped performer container${containerIds.length === 1 ? "" : "s"} ${containerIds.join(", ")}`,
     );
