@@ -61,9 +61,7 @@
   'enterprise-analytics-release': { tags: ['enterprise-analytics', 'functional'], order: 35, presets: ['enterprise-analytics-func-release'] },
 
   // The Operational Insights server isn't released yet, so these currently build the same
-  // self-managed Enterprise Analytics cluster - see presets/insights-func-lite.json5. Only
-  // level 1 for now: the `-multi-*` levels below exist as the natural home for a second
-  // cluster, and OI has no cluster of its own yet. Add them when it does.
+  // self-managed Enterprise Analytics cluster - see presets/insights-func-lite.json5.
   'insights-sanity':  { tags: ['insights', 'functional'], order: 15, presets: ['insights-func-sanity'] },
   'insights-lite':    { tags: ['insights', 'functional'], order: 25, presets: ['insights-func-lite'] },
   'insights-release': { tags: ['insights', 'functional'], order: 35, presets: ['insights-func-release'] },
@@ -84,8 +82,8 @@
   'op-multi-sit-lite':    { tags: ['operational', 'situational'], order: 25, presets: [/* 'op-cng-sit-lite', */ 'op-capella-sit-lite', 'op-capella-pe-sit-lite'] },
   'op-multi-sit-release': { tags: ['operational', 'situational'], order: 35, presets: [/* 'op-cng-sit-release', */ 'op-capella-sit-release', 'op-capella-pe-sit-release'] },
 
-  // enterprise-analytics and columnar each have exactly one cluster today, so their
-  // "-multi-func-*" is a trivial single-member wrapper — kept for naming consistency
+  // enterprise-analytics, columnar and insights each have exactly one cluster today, so
+  // their "-multi-func-*" is a trivial single-member wrapper — kept for naming consistency
   // with the op family, and as the natural place to add a second cluster later. Tagged
   // with their own axis (not `operational`) since they don't actually cross multiple tags.
   'enterprise-analytics-multi-func-sanity':  { tags: ['enterprise-analytics', 'functional'], order: 16, presets: ['enterprise-analytics-func-sanity'] },
@@ -95,6 +93,10 @@
   'columnar-multi-func-sanity':  { tags: ['columnar', 'functional'], order: 16, presets: ['columnar-func-sanity'] },
   'columnar-multi-func-lite':    { tags: ['columnar', 'functional'], order: 26, presets: ['columnar-func-lite'] },
   'columnar-multi-func-release': { tags: ['columnar', 'functional'], order: 36, presets: ['columnar-func-release'] },
+
+  'insights-multi-func-sanity':  { tags: ['insights', 'functional'], order: 16, presets: ['insights-func-sanity'] },
+  'insights-multi-func-lite':    { tags: ['insights', 'functional'], order: 26, presets: ['insights-func-lite'] },
+  'insights-multi-func-release': { tags: ['insights', 'functional'], order: 36, presets: ['insights-func-release'] },
 
   // Level 3: per-family, everything.
   'op-multi-sanity':  { tags: ['operational', 'functional', 'situational'], order: 45, presets: ['op-multi-func-sanity', 'op-multi-sit-sanity'] },
@@ -108,6 +110,10 @@
   'columnar-multi-sanity':  { tags: ['columnar', 'functional'], order: 46, presets: ['columnar-multi-func-sanity'] },
   'columnar-multi-lite':    { tags: ['columnar', 'functional'], order: 56, presets: ['columnar-multi-func-lite'] },
   'columnar-multi-release': { tags: ['columnar', 'functional'], order: 66, presets: ['columnar-multi-func-release'] },
+
+  'insights-multi-sanity':  { tags: ['insights', 'functional'], order: 46, presets: ['insights-multi-func-sanity'] },
+  'insights-multi-lite':    { tags: ['insights', 'functional'], order: 56, presets: ['insights-multi-func-lite'] },
+  'insights-multi-release': { tags: ['insights', 'functional'], order: 66, presets: ['insights-multi-func-release'] },
 
   // Back-compat: `qe-set` was a single preset (on-prem functional + hosted
   // situational) before the axis/tier split. `op-multi-lite` is the closest
