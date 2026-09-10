@@ -27,9 +27,11 @@ resource "aws_iam_role" "fit_cli_role" {
           }
           StringLike = {
             # Both subject forms - see ../shared/trusted-repos for why newer repos send
-            # the immutable one carrying the numeric owner and repo IDs.
+            # the immutable one carrying the numeric owner and repo IDs.  Each repo is
+            # in exactly one of these lists, so the 2048-char policy limit isn't spent
+            # on bare entries that can never match.
             "token.actions.githubusercontent.com:sub" = concat(
-              [for r in module.trusted_repos.repos : "repo:${r}:*"],
+              [for r in module.trusted_repos.legacy_repos : "repo:${r}:*"],
               [for r in module.trusted_repos.immutable_repos : "repo:${r}:*"],
             )
           }
