@@ -1,0 +1,86 @@
+// The Operational Insights server is not released yet, so this runs against a
+// self-managed Enterprise Analytics cluster — the same cluster the
+// enterprise-analytics-func-* presets build, exercised by the Operational Insights
+// SDK performers (insights-java, insights-go, insights-dotnet). **This is the file to
+// edit when the OI server ships**: the cbdinocluster block and the performer
+// connection below are what need repointing.
+//
+// Only one build/topology is currently supported, so this is identical to
+// insights-func-release — kept separate for naming consistency across axes.
+{
+  preset: {
+    order: 20,
+    tags: ['insights', 'functional'],
+  },
+  version: 1,
+  type: 'fit',
+  instances: [
+    {
+      aws: {},
+      clusters: [
+        {
+          clusterConfig: 'cluster-0',
+          sessions: [
+            {
+              performer: {
+                image: '{{PERFORMER_IMAGE}}',
+              },
+              runs: [
+                {
+                  type: 'analytics-functional',
+                  fitConfig: 'fit-config-0',
+                  tests: {
+                    presets: ['all'],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ],
+  clusterConfigs: [
+    {
+      id: 'cluster-0',
+      cbdinocluster: {
+        config: {
+          // cbdino wire flag: `columnar: true` builds a self-managed Enterprise
+          // Analytics cluster; the docker deployer fronts it with an nginx load balancer.
+          columnar: true,
+          nodes: [
+            {
+              count: 3,
+              version: '{{environments.defaults.enterpriseAnalyticsVersion}}',
+            },
+          ],
+          docker: {
+            'passive-load-balancer': true,
+            'use-dino-certs': true,
+          },
+        },
+        onClusterExists: 'useExisting',
+      },
+    },
+  ],
+  fitConfigs: [
+    {
+      id: 'fit-config-0',
+      config: {
+        clusterAccess: {
+          // The driver connects classically for admin (filled in by fit-cli); the
+          // SDK/performer reaches Analytics through the load balancer's query port.
+          clusterParams: {
+            loadBalancedCluster: {
+              ports: [8095, 18095],
+            },
+          },
+          performer: {
+            connectionString: 'http://${defaultHostname}:8095',
+            tls: null,
+          },
+        },
+      },
+    },
+  ],
+}

@@ -1,0 +1,81 @@
+// Only one Operational Insights build/topology is currently supported, so this is
+// identical to insights-func-lite — kept separate for naming consistency across axes,
+// and as the natural place to add situational coverage later.
+//
+// The Operational Insights server is not released yet, so this runs against a
+// self-managed Enterprise Analytics cluster. See insights-func-lite for the full notes;
+// **that is the file to read first when the OI server ships**, and this one needs the
+// same repointing.
+{
+  preset: {
+    order: 30,
+    tags: ['insights', 'functional'],
+  },
+  version: 1,
+  type: 'fit',
+  instances: [
+    {
+      aws: {},
+      clusters: [
+        {
+          clusterConfig: 'cluster-0',
+          sessions: [
+            {
+              performer: {
+                image: '{{PERFORMER_IMAGE}}',
+              },
+              runs: [
+                {
+                  type: 'analytics-functional',
+                  fitConfig: 'fit-config-0',
+                  tests: {
+                    presets: ['all'],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ],
+  clusterConfigs: [
+    {
+      id: 'cluster-0',
+      cbdinocluster: {
+        config: {
+          columnar: true,
+          nodes: [
+            {
+              count: 3,
+              version: '{{environments.defaults.enterpriseAnalyticsVersion}}',
+            },
+          ],
+          docker: {
+            'passive-load-balancer': true,
+            'use-dino-certs': true,
+          },
+        },
+        onClusterExists: 'useExisting',
+      },
+    },
+  ],
+  fitConfigs: [
+    {
+      id: 'fit-config-0',
+      config: {
+        clusterAccess: {
+          clusterParams: {
+            loadBalancedCluster: {
+              ports: [8095, 18095],
+            },
+          },
+          performer: {
+            connectionString: 'http://${defaultHostname}:8095',
+            tls: null,
+          },
+        },
+      },
+    },
+  ],
+}

@@ -145,7 +145,7 @@ export function formatPresetsAndGroupsListing(): string {
     "Naming convention: <SDK type>-<cluster type>[-<modifier>]-<test type>-<test effort>\n" +
     "  Examples: op-onprem-func-lite, op-capella-pe-sit-release\n" +
     '  SDK type      — "op" for operational; may be omitted for some cases, such as Analytics.\n' +
-    '  Cluster type  — "onprem", "capella", "enterprise-analytics", "columnar", and "multi" for multiple types.\n' +
+    '  Cluster type  — "onprem", "capella", "enterprise-analytics", "columnar", "insights", and "multi" for multiple types.\n' +
     '  Modifiers     — optional; e.g. "pe" for Private Endpoint.\n' +
     '  Test type     — "func"tional or "sit"uational.\n' +
     "  Test effort   — lite | release | sanity.\n\n" +
