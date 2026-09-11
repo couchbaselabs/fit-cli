@@ -1,6 +1,19 @@
 // Currently that runs against ROSA OpenShift, but that could change in future.
-// Only one CNG build/version is currently supported, so this is identical to
-// op-cng-func-lite — kept as a separate preset for naming consistency across clusters.
+//
+// Spans two server lines — defaults.cngClusterVersion and
+// defaults.cngPreviousClusterVersion — so release sign-off covers both the line we are
+// heading to and the GA line already in the field. Deliberately fewer than the on-prem
+// release tier's three: the ROSA OpenShift cluster is owned by the CNG team and shared
+// with everyone else testing against it, so extra cluster allocations there are a cost
+// paid by other teams, not just us.
+//
+// Both clusters hang off a single instance rather than one instance each (the on-prem
+// idiom). Execution groups run serially either way, so this does not change how many
+// clusters are live on ROSA at once — it just avoids paying for a second EC2 box and
+// installing the OpenShift/cao tooling twice.
+//
+// op-cng-func-lite runs the previous line only, so what release adds over it is the
+// cngClusterVersion cluster plus the reincluded 'slow' group.
 {
   preset: {
     order: 30,
@@ -13,7 +26,30 @@
       aws: {},
       clusters: [
         {
-          clusterConfig: 'cluster-0',
+          // CNG functional testing, current server line.
+          clusterConfig: 'current',
+          sessions: [
+            {
+              performer: {
+                image: '{{PERFORMER_IMAGE}}',
+              },
+              runs: [
+                {
+                  type: 'functional',
+                  fitConfig: 'fit-config-0',
+                  tests: {
+                    presets: ['{{environments.testSets.FUNCTIONAL_SET_RELEASE}}'],
+                    addToDefaultExcludedGroups: ['protostellarWillWorkLater'],
+                    reincludeDefaultExcludedGroups: ['slow'],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        {
+          // CNG functional testing, previous server line.
+          clusterConfig: 'previous',
           sessions: [
             {
               performer: {
@@ -38,13 +74,32 @@
   ],
   clusterConfigs: [
     {
-      id: 'cluster-0',
+      id: 'current',
       cbdinocluster: {
         config: {
           nodes: [
             {
               count: 3,
               version: '{{environments.defaults.cngClusterVersion}}',
+              services: ['kv', 'n1ql', 'index', 'fts'],
+            },
+          ],
+          cao: {
+            'operator-version': '{{environments.defaults.caoOperatorVersion}}',
+            'gateway-version': '{{environments.defaults.cngVersion}}',
+          },
+        },
+        onClusterExists: 'useExisting',
+      },
+    },
+    {
+      id: 'previous',
+      cbdinocluster: {
+        config: {
+          nodes: [
+            {
+              count: 3,
+              version: '{{environments.defaults.cngPreviousClusterVersion}}',
               services: ['kv', 'n1ql', 'index', 'fts'],
             },
           ],

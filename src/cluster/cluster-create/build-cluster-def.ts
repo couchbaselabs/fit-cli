@@ -14,8 +14,8 @@
  * and, when CNG/Protostellar support is wanted, additionally:
  *
  *   cao:
- *     operator-version: "2.9.2"
- *     gateway-version: "1.1.0-135"
+ *     operator-version: "2.9.3"    # defaults.caoOperatorVersion
+ *     gateway-version: "1.2.1-123" # defaults.cngVersion
  *
  * Run on its own:
  *   bun src/cluster/cluster-create/build-cluster-def.ts

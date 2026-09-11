@@ -1,6 +1,8 @@
 // Currently that runs against ROSA OpenShift, but that could change in future.
-// Only one CNG build/version is currently supported, so this is identical to
-// op-cng-func-release — kept as a separate preset for naming consistency across clusters.
+// Tests one server line only, to keep load on the shared ROSA OpenShift cluster down,
+// and specifically defaults.cngPreviousClusterVersion — the GA line actually in the
+// field — since this is the tier run most often. op-cng-func-release covers that plus
+// defaults.cngClusterVersion.
 {
   preset: {
     order: 20,
@@ -43,7 +45,7 @@
           nodes: [
             {
               count: 3,
-              version: '{{environments.defaults.cngClusterVersion}}',
+              version: '{{environments.defaults.cngPreviousClusterVersion}}',
               services: ['kv', 'n1ql', 'index', 'fts'],
             },
           ],

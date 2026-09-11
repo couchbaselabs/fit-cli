@@ -46,15 +46,33 @@
     // CNG generally uses OpenShift which uses server builds from cb-rhcc (rather than
     // cb-vanilla). The same builds _should_ be available on both, but see:
     // https://couchbase.slack.com/archives/C04DB7P157T/p1781783413258219
-    // Ideally this would track clusterVersion, but that version does not exist on cb-rhcc currently.
-    cngClusterVersion: "8.0.2-5503",
+    // These cannot be cb-alias values like "8.0-stable": cb-alias resolves those to a
+    // cb-vanilla dev build, which cb-rhcc does not carry, leaving the server pod in
+    // ImagePullBackOff. So each CNG version has to be a build hand-picked from
+    // https://github.com/orgs/cb-rhcc/packages/container/package/server
+    cngClusterVersion: "8.5.0-1060",
+
+    // The previous CNG server line — the GA one in the field, and what every CNG
+    // functional preset runs. Only op-cng-func-release additionally spans
+    // cngClusterVersion above; the cheaper tiers stay on one cluster to keep the load
+    // on the shared ROSA OpenShift cluster down. (The CNG situational presets cannot
+    // choose per-preset and always use cngClusterVersion — see run-from-definition.ts.)
+    cngPreviousClusterVersion: "8.0.2-5503",
 
     // Default self-managed Enterprise Analytics build passed to cbdinocluster.
     enterpriseAnalyticsVersion: "2.2.0-1166",
 
     // Default Couchbase Autonomous Operator version for CNG/Protostellar support
-    // (the ROSA/cao deployer).
-    caoOperatorVersion: "2.9.2",
+    // (the ROSA/cao deployer). No build number, so cbdinocluster resolves this to the
+    // released couchbase/operator:<version> on Docker Hub rather than a cb-rhcc build.
+    // 2.9.3 is the newest release. Note its published compatibility matrix still only
+    // claims Couchbase Server 7.2-8.0, so pairing it with an 8.5 cngClusterVersion is
+    // ahead of the docs — but on 2026-09-07, with gateway 1.2.1-123, both
+    // op-cng-func-sanity and op-cng-sit-sanity passed against server 8.5.0-1060 (the
+    // latter a 3->4 node rebalance under mixed KV load, so the operator really was
+    // managing an 8.5 cluster), with no complaint from the admission controller.
+    // https://docs.couchbase.com/operator/current/prerequisite-and-setup.html
+    caoOperatorVersion: "2.9.3",
 
     // The Cloud Native Gateway (Protostellar gateway) version, the cao block's `gateway-version`.
     cngVersion: "1.2.1-123",
