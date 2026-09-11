@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   chooseBlockWithinBudget,
+  ghaNoticeCommand,
   labelForSurefireDir,
   renderRunSummaryBlock,
   STEP_SUMMARY_BUDGET_BYTES,
@@ -174,4 +175,12 @@ test("labelForSurefireDir: falls back to the directory name when the path has no
 
 test("labelForSurefireDir: omits the instance when the path has no instances segment", () => {
   assert.equal(labelForSurefireDir("/tmp/whatever/runs/functional/surefire-reports"), "functional");
+});
+
+test("ghaNoticeCommand: plain title and message", () => {
+  assert.equal(ghaNoticeCommand("CNG run skipped", "aws1 / rust:main / func: skipped."), "::notice title=CNG run skipped::aws1 / rust:main / func: skipped.");
+});
+
+test("ghaNoticeCommand: escapes the title's colons and commas, and newlines and % in both", () => {
+  assert.equal(ghaNoticeCommand("a: b, c%", "50%\nnext"), "::notice title=a%3A b%2C c%25::50%25%0Anext");
 });

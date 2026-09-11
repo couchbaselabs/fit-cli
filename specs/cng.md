@@ -3,6 +3,8 @@ This is a human-written doc.  Targeted, specific, reviewed LLM edits are permitt
 
 We test CNG on a [shared ROSA OpenShift cluster](https://github.com/couchbaselabs/sdkqe-rosa-tf) owned by the CNG team, as this is their recommendation as the only setup that can 100% end-to-end testing with CNG [source](https://couchbase.slack.com/archives/C04DB7P157T/p1781030728929899?thread_ts=1780922194.086169&cid=C04DB7P157T).
 
+Only some SDKs support CNG, marked with `cng: true` in `src/util/sdk/sdks.ts`. This is used to determine if CNG runs should be skipped (e.g. when running a preset that also includes CNG).
+
 CNG is not currently supported on localhost testing, only on clean cloud instances, though it might be possible to get it working.  It has a dependency on at least the OpenShift tooling (`oc`).
 
 # Docker images
