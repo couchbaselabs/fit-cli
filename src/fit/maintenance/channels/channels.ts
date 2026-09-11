@@ -169,7 +169,9 @@ async function buildAndPublish(branch: string, dryRun: boolean): Promise<void> {
   // Fetch from the canonical repo URL rather than a named remote: the remote is
   // "origin" in the GHA checkout but may be named anything (e.g. "couchbaselabs")
   // in a developer's clone. fit-cli is public, so this needs no auth.
-  await run("git", ["fetch", REPO_URL, branch]);
+  // Fully qualified: the channel's own release tag usually has the same name as the
+  // branch, and a bare name would fetch that tag, i.e. the previously built commit.
+  await run("git", ["fetch", REPO_URL, `refs/heads/${branch}`]);
   const sha = (await capture("git", ["rev-parse", "FETCH_HEAD"])).trim();
 
   if (dryRun) {
