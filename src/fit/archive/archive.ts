@@ -13,8 +13,8 @@
  * fetch:      Downloads a .zip from S3 and extracts it locally. Output dir
  *             defaults to /tmp/fetched/<name-without-.zip>.
  */
-import { createReadStream, createWriteStream, existsSync, mkdirSync, statSync } from "node:fs";
-import { basename, dirname, resolve } from "node:path";
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { GetObjectCommand, type S3Client } from "@aws-sdk/client-s3";
@@ -28,7 +28,27 @@ import { isMain, runCli } from "../../util/non-fit/cli.js";
 import { fitCliWarn, runScriptPrefix } from "../../util/non-fit/fit-cli-log.js";
 import { run } from "../../util/non-fit/proc.js";
 import { retryWhole } from "../../util/non-fit/retry.js";
+import { SITUATIONAL_RESULTS_DIR_NAME } from "../situational/configuration/build-situational-configuration.js";
 import { ARTIFACTS_BUCKET, ARTIFACTS_PREFIX } from "../util/aws/upload-run-artifacts.js";
+
+/**
+ * uploadCollectedResults (run-from-definition.ts) deletes the extracted results/
+ * directory after a remote run uploads it, keeping only results.tar in the
+ * archive to avoid duplicating every result file in it. Re-extract those tars
+ * here instead, so a locally fetched archive is as easy to read as a local run's.
+ */
+function findResultsTars(dir: string): string[] {
+  const found: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      found.push(...findResultsTars(full));
+    } else if (entry.name === "results.tar") {
+      found.push(full);
+    }
+  }
+  return found;
+}
 
 function helpText(): string {
   const p = runScriptPrefix("archive");
@@ -318,6 +338,16 @@ async function cmdFetch(argv: string[]): Promise<void> {
   console.log(`Extracting ${zipPath} → ${outputDir} ...`);
   await run("unzip", ["-o", zipPath, "-d", outputDir]);
   console.log(`✓ Extracted to ${outputDir}`);
+
+  const resultsTars = findResultsTars(outputDir);
+  for (const tarPath of resultsTars) {
+    const destDir = join(dirname(tarPath), SITUATIONAL_RESULTS_DIR_NAME);
+    mkdirSync(destDir, { recursive: true });
+    await run("tar", ["-xf", tarPath, "-C", destDir]);
+  }
+  if (resultsTars.length > 0) {
+    console.log(`✓ Extracted ${resultsTars.length} results.tar archive(s) into ${SITUATIONAL_RESULTS_DIR_NAME}/`);
+  }
 }
 
 export function runArchiveMain(): void {
