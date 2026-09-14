@@ -737,6 +737,19 @@ export function streamToFileInBackground(
   console.log(`Streaming performer logs to:\n  ${logFile}`);
 
   const child = spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+  // A background stream is meant to outlive whatever's convenient for the
+  // caller — including the caller's own process exiting while the subject
+  // (e.g. a long-lived Docker container) keeps running. child.unref() alone
+  // isn't enough: the piped stdout/stderr each hold their own handle that
+  // independently keeps the event loop alive once they have a "data" listener,
+  // so they need to be unref'd too, or the process never exits on its own even
+  // after this step's own work is done.
+  child.unref();
+  // child.stdout/stderr are typed as plain Readable, but for `stdio: "pipe"`
+  // they're actually net.Socket-backed pipes and do support unref() at
+  // runtime — Node's ChildProcess type just doesn't expose it.
+  (child.stdout as unknown as { unref: () => void }).unref();
+  (child.stderr as unknown as { unref: () => void }).unref();
   child.stdout.on("data", (chunk: Buffer) => log.write(chunk));
   child.stderr.on("data", (chunk: Buffer) => log.write(chunk));
 

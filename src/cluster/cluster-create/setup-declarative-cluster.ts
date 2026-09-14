@@ -146,7 +146,7 @@ async function uploadCbdinoclusterConfig(execution: ClusterCommandExecutor, conf
   ], undefined, { display: `install cbdinocluster config to ${CBDINOCLUSTER_DEFAULT_REMOTE_CONFIG_PATH}` });
 }
 
-async function ensureDockerNetwork(execution: ClusterCommandExecutor, network: string): Promise<void> {
+export async function ensureDockerNetwork(execution: ClusterCommandExecutor, network: string): Promise<void> {
   if (["bridge", "host", "none"].includes(network)) {
     return;
   }

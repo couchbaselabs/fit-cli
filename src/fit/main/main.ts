@@ -22,6 +22,7 @@ import { runPresetWizard } from "../definition/preset-wizard/preset-wizard.js";
 import { runArchiveMain } from "../archive/archive.js";
 import { runCapsMain } from "../caps/caps.js";
 import { runIngestMain } from "../ingest/ingest.js";
+import { runExternalServicesMain } from "../external-services/external-services-cli.js";
 import { runConfigMain } from "../config/config.js";
 import { runEditWorkflow } from "../config/edit.js";
 import { defaultFitCliConfigPath } from "../util/config.js";
@@ -227,6 +228,7 @@ const COMMANDS: Record<string, { fn: () => void; description: string; hidden?: b
   "cloud-instances": { fn: runCloudInstancesMain,  description: "Manage cloud (EC2) instances" },
   "performer":       { fn: runPerformerMain,        description: "Build FIT performer images from an SDK repo ref" },
   "caps":            { fn: runCapsMain,             description: "Show the FIT capabilities each SDK's performer reports" },
+  "external-services": { fn: runExternalServicesMain, description: "Manage fit-cli's per-box ephemeral external services (otel: collector, Jaeger, Prometheus)" },
   "secrets":         { fn: runSecretsMain,          description: "Manage AWS secrets", hidden: true },
   "slack":           { fn: runSlackMain,             description: "Post a combined Slack summary", hidden: true },
   "maintenance":     { fn: runMaintenanceMain,       description: "Repo & release maintenance (branch channels)", hidden: true },
