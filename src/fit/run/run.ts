@@ -555,12 +555,32 @@ export async function runDispatch(argv: string[]): Promise<RunOutput | void> {
             failureCount: 1,
           });
         }
+        // Flushed after every preset, not just once at the end of the loop: a group runs
+        // its presets sequentially in one process inside a single (6h-capped, see
+        // specs/timers-and-lifetimes.md) GHA job, so a later preset that hangs or overruns
+        // and gets force-killed would otherwise take an earlier preset's already-good
+        // result down with it, leaving only the stale write-placeholder row on disk.
+        if (slackResultFile) {
+          writeFileSync(
+            slackResultFile,
+            JSON.stringify({ passed: groupSlackResults.every((r) => r.ok), results: groupSlackResults }),
+            "utf8",
+          );
+        }
       } else if (slackResultFile) {
         // A single already-expanded preset (the shape a GHA matrix job runs) still
         // needs to defer rather than post live when a result file was requested, so
         // the final aggregation job can combine it with the group's other presets.
+        // Also passed straight through as slackResultFile: groupSlackResults is
+        // guaranteed empty at this point (there's only one preset in this group), so
+        // runFromDefinition's own per-instance flushing (see its slackResultFile doc)
+        // safely reflects this preset's full progress at every point — including a
+        // definition with several instances that run sequentially in one process (e.g.
+        // testing two Capella versions), where a later instance hanging and getting
+        // force-cancelled would otherwise take an earlier instance's already-good
+        // result down with it.
         const slackResultsBefore = groupSlackResults.length;
-        const output = await runFromDefinition(definitionPath, { ...runOpts, deferSlackTo: groupSlackResults });
+        const output = await runFromDefinition(definitionPath, { ...runOpts, deferSlackTo: groupSlackResults, slackResultFile });
         if (output) outputs.push(output);
         if (output?.worstFailure && groupSlackResults.length === slackResultsBefore) {
           groupSlackResults.push(noResultsRow());

@@ -31,7 +31,7 @@
  * run state so `--resume-at` can pick it back up.
  */
 import { randomUUID } from "node:crypto";
-import { copyFileSync, cpSync, mkdirSync, rmSync } from "node:fs";
+import { copyFileSync, cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   artifactFromPath,
@@ -1962,6 +1962,14 @@ export interface RunFromDefinitionOptions {
    * finishes, instead of one message per preset.
    */
   deferSlackTo?: SlackRunResult[];
+  /**
+   * Path to flush accumulated Slack result rows to after every completed run, not just
+   * once at the end. A definition can carry several instances that run sequentially in
+   * one process (e.g. testing two Capella versions) inside a single, hard-time-capped CI
+   * job — if a later instance hangs and gets force-cancelled, this ensures an earlier
+   * instance's already-good result was already on disk rather than lost along with it.
+   */
+  slackResultFile?: string;
 }
 
 /** Run FIT functional tests as described by the definition file at `definitionPath`. */
@@ -1970,7 +1978,7 @@ export async function runFromDefinition(
   options: RunFromDefinitionOptions = {},
 ): Promise<RunOutput> {
   const tracker = new RunFailureTracker();
-  const { resumeAt, resumeSelector = {}, cbcollect = false, slackThread, promptScope, stopOnFailure = false, deferSlackTo } = options;
+  const { resumeAt, resumeSelector = {}, cbcollect = false, slackThread, promptScope, stopOnFailure = false, deferSlackTo, slackResultFile } = options;
   const phases = phasesForResumePoint(resumeAt);
   const definition = loadDefinition(definitionPath);
   const resolved = resolveDefinition(definition);
@@ -2146,6 +2154,18 @@ export async function runFromDefinition(
     }
     // appendRunSummaryToGhaSummary is synchronous and catches its own errors internally.
     appendRunSummaryToGhaSummary(result);
+    // Flushed after every run, not just once at the end of the whole definition: this
+    // definition's instances run sequentially in one process inside a single, hard-time-
+    // capped CI job, so an instance that hangs and gets force-cancelled would otherwise
+    // take an already-good earlier instance's result down with it.
+    if (slackResultFile) {
+      const resultsSoFar = buildSlackRunResults(runResults);
+      writeFileSync(
+        slackResultFile,
+        JSON.stringify({ passed: resultsSoFar.every((r) => r.ok), results: resultsSoFar }),
+        "utf8",
+      );
+    }
   };
 
   const runDir = ensureRunDir();
