@@ -56,6 +56,14 @@
   'op-capella-pe-lite':    { tags: ['pe', 'functional', 'situational'], order: 25, presets: ['op-capella-pe-func-lite', 'op-capella-pe-sit-lite'] },
   'op-capella-pe-release': { tags: ['pe', 'functional', 'situational'], order: 35, presets: ['op-capella-pe-func-release', 'op-capella-pe-sit-release'] },
 
+  // Unlike its func/sit siblings above, op-capella-pe-sit-release is itself a group, not a
+  // raw preset: each Capella version's PE rebalance suite alone can take ~2-3h, so the two
+  // versions need separate GHA jobs (each with its own 6h budget, specs/timers-and-lifetimes.md)
+  // rather than running sequentially in one job as before. Resolved recursively wherever it's
+  // referenced above (op-capella-pe-release) and below (op-multi-sit-release), same as any
+  // other group member.
+  'op-capella-pe-sit-release': { tags: ['pe', 'situational'], order: 30, presets: ['op-capella-pe-sit-release-current', 'op-capella-pe-sit-release-previous'] },
+
   'enterprise-analytics-sanity':  { tags: ['enterprise-analytics', 'functional'], order: 15, presets: ['enterprise-analytics-func-sanity'] },
   'enterprise-analytics-lite':    { tags: ['enterprise-analytics', 'functional'], order: 25, presets: ['enterprise-analytics-func-lite'] },
   'enterprise-analytics-release': { tags: ['enterprise-analytics', 'functional'], order: 35, presets: ['enterprise-analytics-func-release'] },

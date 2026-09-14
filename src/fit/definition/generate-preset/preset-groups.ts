@@ -143,7 +143,7 @@ export function formatPresetsAndGroupsListing(): string {
   return (
     `\nAvailable presets and preset groups:\n\n` +
     "Naming convention: <SDK type>-<cluster type>[-<modifier>]-<test type>-<test effort>\n" +
-    "  Examples: op-onprem-func-lite, op-capella-pe-sit-release\n" +
+    "  Examples: op-onprem-func-lite, op-capella-pe-func-release\n" +
     '  SDK type      — "op" for operational; may be omitted for some cases, such as Analytics.\n' +
     '  Cluster type  — "onprem", "capella", "enterprise-analytics", "columnar", "insights", and "multi" for multiple types.\n' +
     '  Modifiers     — optional; e.g. "pe" for Private Endpoint.\n' +

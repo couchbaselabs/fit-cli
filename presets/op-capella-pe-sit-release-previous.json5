@@ -14,40 +14,15 @@
       },
     },
   },
+  // Tests capellaPreviousClusterVersion — split into its own preset (see
+  // op-capella-pe-sit-release-current) so each Capella version gets its own GHA job and
+  // 6h time budget (specs/timers-and-lifetimes.md), instead of running both sequentially
+  // in one job: each version's rebalance suite alone can take ~2-3h, so back-to-back the
+  // pair risked exceeding the ceiling.
+  // Temporary: it also used to be the one block on GCP (PSC rather than PrivateLink), but
+  // GCP has proved too unstable to run release sign-off on. Restore `gcp: {` once it is
+  // reliable.
   instances: [
-    {
-      aws: {
-        privateEndpoint: {},
-      },
-      clusters: [],
-      clusterlessSessions: [
-        {
-          performer: {
-            image: '{{PERFORMER_IMAGE}}',
-            onPortInUse: 'restart',
-          },
-          runs: [
-            {
-              type: 'situational',
-              tests: {
-                presets: ['{{environments.testSets.SITUATIONAL_SET_RELEASE}}'],
-              },
-              situational: {
-                database: {
-                  mode: 'files',
-                },
-                privateEndpoint: {},
-              },
-              versions: ['{{environments.defaults.capellaClusterVersion}}'],
-            },
-          ],
-        },
-      ],
-    },
-    // Next block tests capellaPreviousClusterVersion.
-    // Temporary: it also used to be the one block on GCP (PSC rather than PrivateLink), but
-    // GCP has proved too unstable to run release sign-off on. Restore `gcp: {` once it is
-    // reliable.
     {
       aws: {
         privateEndpoint: {},
