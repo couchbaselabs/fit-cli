@@ -126,7 +126,6 @@
   "java/com/couchbase/transactions/ForwardCompatibilityTest.java",
   "java/com/couchbase/transactions/GettingDocumentsTest.java",
   "java/com/couchbase/transactions/IssuesTest.java",
-  "java/com/couchbase/transactions/LargeTransactionsTest.java",
   "java/com/couchbase/transactions/MultiThreadedTransactionRunsTest.java",
   "java/com/couchbase/transactions/MultipleBucketsTest.java",
   "java/com/couchbase/transactions/MultipleCollectionsTest.java",
