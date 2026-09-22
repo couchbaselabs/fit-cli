@@ -22,8 +22,14 @@ export const SDKS = [
   //     https://github.com/couchbase/couchbase-jvm-clients/pkgs/container/analytics-java-fit-performer
   //   - analytics-dotnet (family "enterprise-analytics"), from couchbase/analytics-dotnet-client:
   //     https://github.com/orgs/couchbase/packages/container/package/analytics-dotnet-fit-performer
-  // The Go/Node/Python columnar+analytics performers in transactions-fit-performer are
-  // not published. Add entries here as more images ship.
+  //   - insights-python (family "enterprise-analytics"), from
+  //     couchbaselabs/operational-insights-python-client:
+  //     https://github.com/couchbaselabs/operational-insights-python-client/pkgs/container/insights-python-fit-performer
+  //   - insights-node (family "enterprise-analytics"), from
+  //     couchbaselabs/operational-insights-nodejs-client:
+  //     https://github.com/couchbaselabs/operational-insights-nodejs-client/pkgs/container/insights-node-fit-performer
+  // The Go/Node/Python columnar+analytics performers still in transactions-fit-performer
+  // are not published. Add entries here as more images ship.
   // Enterprise Analytics SDK first — it's the standard/recommended choice for the
   // (self-managed Enterprise Analytics) clusters fit-cli allocates; the Columnar SDK
   // is mainly for Capella Analytics or the odd cross-combination.
@@ -33,6 +39,8 @@ export const SDKS = [
   { name: "Java Columnar", value: "columnar-java", family: "columnar" },
   { name: "Go Operational Insights", value: "insights-go", family: "enterprise-analytics" },
   { name: ".NET Operational Insights", value: "insights-dotnet", family: "enterprise-analytics" },
+  { name: "Python Operational Insights", value: "insights-python", family: "enterprise-analytics" },
+  { name: "Node.js Operational Insights", value: "insights-node", family: "enterprise-analytics" },
 ] as const;
 
 export type Sdk = (typeof SDKS)[number];

@@ -210,8 +210,8 @@ const SDK_FAMILY_PHRASES: Record<string, string> = {
   "op-capella": "operational SDK",
   "enterprise-analytics": "Enterprise Analytics SDK",
   columnar: "Columnar SDK",
-  // Matches the SDK values in sdks.ts (insights-java, insights-go, insights-dotnet) and
-  // so the performer image basenames, e.g. insights-dotnet-fit-performer.
+  // Matches the SDK values in sdks.ts (the insights-* entries) and so the performer
+  // image basenames, e.g. insights-python-fit-performer.
   insights: "Operational Insights SDK",
 };
 
