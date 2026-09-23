@@ -24,7 +24,8 @@
   // The Operational Insights server is not released yet, so these presets currently build
   // the same self-managed Enterprise Analytics cluster as the `enterprise-analytics` ones —
   // what differs today is only the SDK/performer under test. Named `insights` to match the
-  // SDK values in sdks.ts (`insights-java`, `insights-go`, `insights-dotnet`).
+  // SDK values in sdks.ts (the `insights-*` entries, e.g. `insights-java`,
+  // `insights-python`).
   insights: { order: 65, description: 'Functional testing of the Operational Insights SDKs. The Operational Insights server is not released yet, so these currently run against a self-managed Enterprise Analytics cluster.' },
   columnar: { order: 70, description: 'Analytics testing against a Capella Analytics (cloud) cluster, using the Columnar SDK.' },
   // Legacy aliases kept for back-compat, each carrying its own removal date — see
