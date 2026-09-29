@@ -1,0 +1,587 @@
+<meta charset="utf-8">
+<!-- Published on a public Pages site: reachable by link, kept out of search results. -->
+<meta name="robots" content="noindex">
+<title>__SDK_NAME__ FIT Health</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap">
+<style>
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --ink: #161a20;
+  --ink-2: #454d5a;
+  --muted: #6b7380;
+  --rule: #dde1e7;
+  --rule-strong: #c4cad3;
+  --cell-pass: #9fd4a4;
+  --cell-fail: #d03b3b;
+  --cell-unknown: #b9c0ca;
+  --cell-gap: transparent;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --good: #0a8a0a;
+  --bad: #c23232;
+  --warn-bg: #fdf3e1;
+  --warn-ink: #7a4a00;
+  --chip-bg: #eef1f5;
+  --shadow: 0 1px 2px rgba(22, 26, 32, .06);
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #101317;
+    --surface: #171b20;
+    --ink: #e9ecf0;
+    --ink-2: #b8bfca;
+    --muted: #8d95a2;
+    --rule: #2a3038;
+    --rule-strong: #3a414b;
+    --cell-pass: #2f6b3a;
+    --cell-fail: #e66767;
+    --cell-unknown: #4a525e;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --good: #3cc23c;
+    --bad: #ef7a7a;
+    --warn-bg: #2f2616;
+    --warn-ink: #f0c67a;
+    --chip-bg: #232931;
+    --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #101317;
+  --surface: #171b20;
+  --ink: #e9ecf0;
+  --ink-2: #b8bfca;
+  --muted: #8d95a2;
+  --rule: #2a3038;
+  --rule-strong: #3a414b;
+  --cell-pass: #2f6b3a;
+  --cell-fail: #e66767;
+  --cell-unknown: #4a525e;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --good: #3cc23c;
+  --bad: #ef7a7a;
+  --warn-bg: #2f2616;
+  --warn-ink: #f0c67a;
+  --chip-bg: #232931;
+  --shadow: none;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.55 var(--sans);
+  padding-inline: 16px;
+  padding-block: 0 64px;
+}
+.wrap { max-width: 1080px; margin: 0 auto; display: flex; flex-direction: column; gap: 44px; }
+h1, h2, h3 { text-wrap: balance; margin: 0; }
+h1 { font-size: 34px; line-height: 1.15; font-weight: 700; letter-spacing: -.015em; }
+h2 { font-size: 21px; font-weight: 600; letter-spacing: -.005em; }
+h3 { font-size: 15px; font-weight: 600; }
+p { margin: 0; }
+.prose { max-width: 68ch; color: var(--ink-2); }
+.eyebrow { font: 500 12px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+code, .mono { font-family: var(--mono); font-size: .92em; }
+.num { font-variant-numeric: tabular-nums; }
+a { color: var(--series-1); }
+
+header { padding-top: 40px; display: flex; flex-direction: column; gap: 14px; }
+.lede { font-size: 17px; max-width: 64ch; color: var(--ink-2); }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--muted); font-size: 13px; }
+
+section { display: flex; flex-direction: column; gap: 16px; }
+.sec-head { display: flex; flex-direction: column; gap: 6px; }
+
+/* Summary: one table-like block, not a row of cards */
+.summary {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; box-shadow: var(--shadow);
+}
+.stat { padding: 18px 20px; display: flex; flex-direction: column; gap: 6px; }
+.stat + .stat { border-left: 1px solid var(--rule); }
+.stat .label { font-size: 13px; color: var(--muted); font-weight: 500; }
+.stat .big { font-size: 32px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
+.stat .split { font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.stat .big.bad { color: var(--bad); }
+.stat .big.good { color: var(--good); }
+@media (max-width: 760px) {
+  .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat:nth-child(3) { border-left: 0; }
+  .stat:nth-child(n+3) { border-top: 1px solid var(--rule); }
+}
+
+/* What changed */
+.changes { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 20px; }
+@media (max-width: 860px) { .changes { grid-template-columns: 1fr; } }
+.changes-col { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.panel { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; box-shadow: var(--shadow); }
+.panel h3 { display: flex; align-items: center; gap: 8px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.items li { padding: 11px 0; border-top: 1px solid var(--rule); display: flex; flex-direction: column; gap: 5px; }
+.items li:first-child { border-top: 0; padding-top: 0; }
+.tname { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; }
+.tname b { font-weight: 500; }
+.tname .m { color: var(--ink-2); }
+.sub { font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+.chip { font: 500 11.5px/1 var(--sans); padding: 4px 7px; border-radius: 5px; background: var(--chip-bg); color: var(--ink-2); white-space: nowrap; }
+.chip.shared { background: var(--warn-bg); color: var(--warn-ink); }
+.chip.only { background: var(--chip-bg); color: var(--ink); }
+.callout { font-size: 13.5px; color: var(--ink-2); border-left: 2px solid var(--rule-strong); padding-left: 12px; }
+
+/* Chart */
+.chart-card { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 18px 20px 12px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 10px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.legend i { width: 16px; height: 2px; border-radius: 1px; display: inline-block; }
+.legend i.band { height: 10px; width: 12px; background: var(--cell-unknown); opacity: .35; border-radius: 2px; }
+.chart-box { position: relative; width: 100%; }
+.chart-box svg { display: block; width: 100%; height: auto; overflow: visible; }
+.axis text { fill: var(--muted); font: 11px var(--sans); font-variant-numeric: tabular-nums; }
+.axis line { stroke: var(--rule); }
+.grid line { stroke: var(--rule); stroke-dasharray: 2 3; }
+
+/* Timelines */
+.tl-card { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; box-shadow: var(--shadow); overflow: hidden; }
+.tl-head { padding: 16px 20px 12px; display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; justify-content: space-between; border-bottom: 1px solid var(--rule); }
+.tl-head .preset { font: 12px var(--mono); color: var(--muted); }
+.tl-scroll { overflow-x: auto; }
+.tl { display: grid; grid-template-columns: minmax(300px, 1fr) auto; min-width: max-content; }
+.tl .row { display: contents; }
+.tl .name { padding: 7px 16px 7px 20px; display: flex; flex-direction: column; gap: 3px; border-top: 1px solid var(--rule); min-width: 0; max-width: 420px; }
+.tl .cells { padding: 9px 20px 9px 0; border-top: 1px solid var(--rule); display: flex; align-items: center; }
+.tl .row:first-of-type .name, .tl .row:first-of-type .cells { border-top: 0; }
+.tl .group { grid-column: 1 / -1; padding: 12px 20px 6px; font: 600 12px var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--muted); border-top: 1px solid var(--rule); background: var(--bg); }
+.tl .axisrow .name { border-top: 0; padding-top: 10px; padding-bottom: 4px; }
+.tl .axisrow .cells { border-top: 0; padding-top: 10px; padding-bottom: 4px; align-items: flex-end; }
+.strip { display: grid; grid-auto-flow: column; grid-auto-columns: 6px; gap: 1px; height: 16px; }
+.strip i { display: block; border-radius: 1.5px; }
+.s-p { background: var(--cell-pass); }
+.s-f { background: var(--cell-fail); }
+.s-u { background: transparent; position: relative; }
+/* Unusable is told apart by SHAPE, not colour: a short dark tick where a full cell would be. */
+.s-u::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 4px; margin-top: -2px; border-radius: 1px; background: var(--ink-2); }
+/* Errored is a failure: the same colour, with a notch so the tooltip's "errored" has a shape too. */
+.s-e { background: var(--cell-fail); position: relative; }
+.s-e::after { content: ""; position: absolute; left: 1px; right: 1px; top: 50%; height: 2px; margin-top: -1px; background: var(--surface); }
+/* Not run: a low baseline where the cell would be - present, but nothing to judge. */
+.s-n { background: transparent; position: relative; }
+.s-n::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; border-radius: 1px; background: var(--muted); }
+.s-g { background: transparent; box-shadow: inset 0 0 0 1px var(--rule); }
+.s-v { background: transparent; }
+.months { display: grid; grid-auto-flow: column; grid-auto-columns: 6px; gap: 1px; height: 14px; position: relative; }
+.months span { font: 11px var(--sans); color: var(--muted); white-space: nowrap; }
+.rate { font: 12px var(--sans); color: var(--muted); font-variant-numeric: tabular-nums; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.pill { font: 600 10.5px/1 var(--sans); letter-spacing: .03em; text-transform: uppercase; padding: 3px 6px; border-radius: 4px; }
+.p-always { background: var(--cell-fail); color: #fff; }
+.p-failing { background: color-mix(in srgb, var(--cell-fail) 18%, transparent); color: var(--bad); }
+.p-new { background: var(--warn-bg); color: var(--warn-ink); }
+.p-intermittent { background: var(--chip-bg); color: var(--ink); box-shadow: inset 0 0 0 1px var(--rule-strong); }
+.p-recovered { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); }
+.p-oneoff, .p-dormant { background: var(--chip-bg); color: var(--muted); }
+.p-stopped { background: transparent; color: var(--ink-2); box-shadow: inset 0 0 0 1px var(--rule-strong); }
+.hist { font-size: 11.5px; color: var(--muted); }
+.classkey { display: grid; grid-template-columns: max-content 1fr; gap: 8px 14px; align-items: baseline; font-size: 13px; color: var(--ink-2); }
+.classkey .pill { justify-self: start; }
+details.dormant { border-top: 1px solid var(--rule); }
+details.dormant summary { padding: 12px 20px; cursor: pointer; font-size: 13.5px; color: var(--ink-2); }
+details.dormant summary:focus-visible { outline: 2px solid var(--series-1); outline-offset: -2px; }
+.cells-key { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: var(--muted); padding: 12px 20px; border-top: 1px solid var(--rule); }
+.cells-key span { display: inline-flex; align-items: center; gap: 6px; }
+.cells-key i { width: 6px; height: 14px; border-radius: 1.5px; display: inline-block; }
+.cells-key i.s-u, .cells-key i.s-e, .cells-key i.s-n { position: relative; }
+
+/* Situational: presets differ by run parameters, so each gets its own card + a comparison */
+.sit { display: flex; flex-direction: column; gap: 16px; margin-top: 12px; }
+.sit-head { display: flex; flex-direction: column; gap: 6px; }
+.params { display: flex; flex-wrap: wrap; gap: 6px; }
+.param { font: 500 11.5px/1 var(--sans); padding: 5px 8px; border-radius: 5px; border: 1px solid var(--rule-strong); color: var(--ink-2); background: var(--surface); white-space: nowrap; }
+.param b { font-weight: 600; color: var(--ink); }
+.param.on { border-color: var(--series-1); color: var(--series-1); }
+.param.on b { color: var(--series-1); }
+.cmp { width: 100%; border-collapse: collapse; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+.cmp th { text-align: left; font: 600 12px var(--sans); color: var(--muted); padding: 0 12px 8px 0; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+.cmp td { padding: 8px 12px 8px 0; border-bottom: 1px solid var(--rule); vertical-align: middle; }
+.cmp tr:last-child td { border-bottom: 0; }
+.cmp td.n { white-space: nowrap; width: 1%; }
+.cmp .barcell { width: 26%; min-width: 110px; }
+.cmp td.tname { white-space: nowrap; overflow-wrap: normal; }
+.bar { height: 8px; border-radius: 4px; background: var(--cell-pass); position: relative; overflow: hidden; }
+.bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--cell-fail); border-radius: 4px; }
+.cmp-scroll { overflow-x: auto; }
+
+/* Tooltip */
+.tip { position: fixed; z-index: 10; pointer-events: none; background: var(--ink); color: var(--bg); font: 12.5px/1.45 var(--sans); padding: 8px 10px; border-radius: 6px; max-width: 320px; box-shadow: 0 4px 14px rgba(0,0,0,.18); font-variant-numeric: tabular-nums; }
+.tip b { font-weight: 600; }
+.tip .k { opacity: .75; }
+
+/* Limits */
+.limits { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 12px; }
+.limits li { display: grid; grid-template-columns: 22px 1fr; gap: 8px; font-size: 14px; color: var(--ink-2); }
+.limits li::before { content: "–"; color: var(--muted); text-align: center; }
+.limits b { color: var(--ink); font-weight: 600; }
+.tag { font: 500 11px/1 var(--mono); color: var(--muted); margin-left: 6px; }
+footer { color: var(--muted); font-size: 12.5px; border-top: 1px solid var(--rule); padding-top: 16px; display: flex; flex-direction: column; gap: 6px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Couchbase __SDK_NAME__ SDK · FIT nightly</div>
+    <h1>__SDK_NAME__ FIT Health</h1>
+    <p class="lede" id="lede"></p>
+    <div class="meta" id="meta"></div>
+  </header>
+
+  <section aria-labelledby="h-now">
+    <div class="sec-head">
+      <h2 id="h-now">Where things stand</h2>
+      <p class="prose">Functional presets only. Counts are distinct tests: one test failing under several APIs counts once.</p>
+    </div>
+    <div class="summary" id="summary"></div>
+  </section>
+
+  <section aria-labelledby="h-changed" id="sec-changed">
+    <div class="sec-head">
+      <h2 id="h-changed">What changed in the last two weeks</h2>
+    </div>
+    <div class="changes">
+      <div class="panel">
+        <h3><span class="dot" style="background:var(--cell-fail)"></span>Started failing</h3>
+        <ul class="items" id="new"></ul>
+        <p class="callout" id="new-callout"></p>
+      </div>
+      <div class="changes-col">
+        <div class="panel">
+          <h3><span class="dot" style="background:var(--good)"></span>Stopped failing</h3>
+          <ul class="items" id="fixed"></ul>
+        </div>
+        <div class="panel" id="panel-stopped-running">
+          <h3><span class="dot" style="background:var(--muted)"></span>Stopped running</h3>
+          <ul class="items" id="stopped-running"></ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-trend">
+    <div class="sec-head">
+      <h2 id="h-trend">Failing tests per night</h2>
+      <p class="prose" id="trend-prose"></p>
+    </div>
+    <div class="chart-card">
+      <div class="legend" id="legend"></div>
+      <div class="chart-box" id="chart"></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-tests">
+    <div class="sec-head">
+      <h2 id="h-tests">Every test that failed recently, night by night</h2>
+      <p class="prose">Each column is one night, oldest on the left. Each test is classed by the <em>shape</em> of its last 30 days, not just how often it failed: one unbroken run of failures means it broke; several separate runs means it's flaky. Tests with no failure in that window are folded away under each suite.</p>
+      <div class="panel"><div class="classkey" id="classkey"></div></div>
+    </div>
+    <div id="timelines" style="display:flex;flex-direction:column;gap:20px"></div>
+  </section>
+
+  <section aria-labelledby="h-next" id="sec-next">
+    <div class="sec-head">
+      <h2 id="h-next">What this report can't tell you</h2>
+    </div>
+    <div class="panel">
+      <ul class="limits">
+        <li id="limit-source"></li>
+        <li><span><b>History is perishable.</b> GitHub deletes Actions logs after 90 days and S3 run archives expire after 180, so nights older than that survive only in the fit health store.</span></li>
+        <li><span><b>Log formats change.</b> A night whose CI log is in a format the parser doesn't recognise has no results; those runs are listed at the foot of the page.</span></li>
+        <li><span><b>One SDK only.</b> This report sees only this SDK's nightlies, so it can't tell a flaky test from a flaky SDK.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <footer id="footer"></footer>
+</div>
+<div class="tip" id="tip" hidden></div>
+
+<script>
+const D = /*__DATA__*/null;
+const $ = (id) => document.getElementById(id);
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+// Tolerates a missing date - a series can be active with no results (only recent aborts) - so
+// one empty series can't stop the whole page from rendering.
+const fmt = (d) => { if (!d) return '—'; const [, m, dd] = d.split('-'); return `${+dd} ${MONTHS[+m - 1]}`; };
+const fmtY = (d) => `${fmt(d)} ${d.slice(0, 4)}`;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// A bare class name is a class-level error: the class failed before any of its tests ran.
+const splitName = (t) => { const i = t.indexOf('.'); return i < 0 ? [t, ' (whole class)'] : [t.slice(0, i), t.slice(i)]; };
+const nameHtml = (t) => { const [c, m] = splitName(t); return `<b>${esc(c)}</b><span class="m">${esc(m)}</span>`; };
+const WIN = D.classes.windowDays;
+const FUNC = D.series.filter((s) => s.kind === 'functional' && s.active);
+const SIT = D.series.filter((s) => s.kind === 'situational' && s.active);
+const OLD = D.series.filter((s) => !s.active);
+const COLORS = ['var(--series-1)', 'var(--series-2)', 'var(--series-3, var(--muted))'];
+const byId = Object.fromEntries(D.series.map((s) => [s.id, s]));
+
+// ----- header
+// A night is red if any active functional series named a failure; usable if any had a total.
+const usableNights = D.dates.filter((d) => FUNC.some((s) => s.perNight[d] != null));
+const redNights = usableNights.filter((d) => FUNC.some((s) => s.perNight[d] > 0));
+const nightsText = `<b class="num">${redNights.length}</b> of the <b class="num">${usableNights.length}</b> nights with usable results`;
+$('lede').innerHTML = !usableNights.length
+  ? 'There are no usable functional results in this window yet.'
+  : !redNights.length
+    ? `The nightly FIT run was green on all <b class="num">${usableNights.length}</b> nights with usable results.`
+    : redNights.length === usableNights.length
+      ? `The nightly FIT run was red on all <b class="num">${usableNights.length}</b> nights with usable results, so "did it pass?" says nothing. What matters is <em>which</em> tests fail, whether that set is shrinking, and whether a failure is ours at all.`
+      : `The nightly FIT run was red on ${nightsText}. What matters is <em>which</em> tests fail, whether that set is shrinking, and whether a failure is ours at all.`;
+$('trend-prose').textContent = redNights.length && redNights.length === usableNights.length
+  ? 'A green nightly would be zero. Every usable night in this window was red, so the useful signal is the size of this set and which way it moves.'
+  : 'A green nightly would be zero. The size of this set, and which way it moves, is the signal.';
+const clusterText = (s) => s.clusters.length > 1
+  ? s.clusters.map((c, i) => i === 0 ? `${c.cluster} until ${fmt(c.to)}` : `${c.cluster} from ${fmt(c.from)}`).join(', ')
+  : (s.clusters[0] ? s.clusters[0].cluster : '');
+$('meta').innerHTML = [
+  `<span>${fmtY(D.start)} → ${fmtY(D.end)}</span>`,
+  `<span>${[`${D.source.records} run records`, D.source.emitted && `${D.source.emitted} emitted by fit-cli`, D.source.archive && `${D.source.archive} from full JUnit results`, D.source.scraped && `${D.source.scraped} from CI logs`].filter(Boolean).join(' · ')}</span>`,
+  ...FUNC.filter((s) => s.clusters.length > 1).map((s) => `<span>${esc(s.short)}: ${esc(clusterText(s))}</span>`),
+].join('');
+
+// ----- summary
+const cnt = (s, ...c) => c.reduce((a, k) => a + s.counts[k], 0);
+const sum = (f) => FUNC.reduce((a, s) => a + f(s), 0);
+const split = (f) => FUNC.map((s) => `${f(s)} ${esc(s.short)}`).join(' · ');
+$('summary').innerHTML = [
+  ['Failing now', sum((s) => cnt(s, 'always', 'failing')), 'bad', split((s) => cnt(s, 'always', 'failing'))],
+  ['Started failing, last 14 days', sum((s) => s.started.length), 'bad', split((s) => s.started.length)],
+  ['Stopped failing, last 14 days', sum((s) => s.stopped.length), 'good', split((s) => s.stopped.length)],
+  ['Intermittent', sum((s) => cnt(s, 'intermittent')), '', split((s) => cnt(s, 'intermittent'))],
+].map(([l, n, c, s]) => `<div class="stat"><span class="label">${l}</span><span class="big ${c}">${n}</span><span class="split">${s}</span></div>`).join('');
+
+// ----- what changed
+const newItems = FUNC.flatMap((s) => s.started.map((n) => ({ ...n, suite: s.short })));
+const groups = [];
+newItems.forEach((n) => {
+  const [cls] = splitName(n.test);
+  const g = groups.find((g) => g.cls === cls && g.since === n.since && g.suite === n.suite);
+  if (g) g.tests.push(n.test); else groups.push({ cls, since: n.since, suite: n.suite, nights: n.nights, tests: [n.test] });
+});
+groups.sort((a, b) => b.since.localeCompare(a.since));
+const sameCommit = (d) => {
+  const i = D.dates.indexOf(d); if (i < 1) return false;
+  return D.commits[d] && D.commits[d] === D.commits[D.dates[i - 1]];
+};
+$('new').innerHTML = groups.map((g) => {
+  const names = g.tests.map((t) => `<div class="tname">${nameHtml(t)}</div>`).join('');
+  const commit = sameCommit(g.since) ? `<span>no SDK change that night (<code>${D.commits[g.since]}</code> both nights)</span>` : '';
+  return `<li>${names}<div class="sub"><span class="num">since ${fmt(g.since)} · ${g.nights} nights</span><span>${esc(g.suite)}</span>${commit}</div></li>`;
+}).join('') || '<li class="sub">Nothing started failing in the last 14 days.</li>';
+const unchanged = groups.filter((g) => sameCommit(g.since)).length;
+$('new-callout').innerHTML = unchanged ? `${unchanged} of these groups began on a night with no SDK commit since the night before.` : '';
+if (!$('new-callout').innerHTML) $('new-callout').hidden = true;
+
+const fixedItems = FUNC.flatMap((s) => s.stopped.map((f) => ({ ...f, suite: s.short })));
+$('fixed').innerHTML = fixedItems.map((f) => `<li><div class="tname">${nameHtml(f.test)}</div>
+  <div class="sub"><span class="num">last failed ${fmt(f.last)} after ${f.run} straight nights · clean ${f.clean} nights</span><span>${esc(f.suite)}</span>${f.fix && f.fix.ticket ? `<span class="chip">${esc(f.fix.ticket)}</span>` : ''}</div>
+  ${f.fix ? `<div class="sub">${esc(f.fix.text)}</div>` : ''}</li>`).join('') || '<li class="sub">Nothing stopped failing in the last 14 days.</li>';
+
+// Tests that failed, then stopped running (skipped, or gone from the results): not fixed, just unwatched.
+const RESULT = { p: 'passed', f: 'failed', e: 'errored' };
+const stoppedRunningItems = FUNC.flatMap((s) => (s.stoppedRunning || []).map((t) => ({ ...t, suite: s.short })));
+$('stopped-running').innerHTML = stoppedRunningItems.map((t) => `<li><div class="tname">${nameHtml(t.test)}</div>
+  <div class="sub"><span class="num">last ran ${fmt(t.lastRan)} (${RESULT[t.lastResult]}) · not run since ${fmt(t.since)}</span><span>${esc(t.suite)}</span></div></li>`).join('');
+// .panel sets display, which would override the hidden attribute: remove the empty panel instead.
+if (!stoppedRunningItems.length) $('panel-stopped-running').remove();
+
+// ----- tooltip
+const tip = $('tip');
+function showTip(html, x, y) {
+  tip.innerHTML = html; tip.hidden = false;
+  const r = tip.getBoundingClientRect();
+  let left = x + 14, top = y + 14;
+  if (left + r.width > innerWidth - 8) left = x - r.width - 14;
+  if (top + r.height > innerHeight - 8) top = y - r.height - 14;
+  tip.style.left = Math.max(8, left) + 'px'; tip.style.top = Math.max(8, top) + 'px';
+}
+const hideTip = () => { tip.hidden = true; };
+
+// ----- chart
+(function chart() {
+  const W = 1040, H = 260, m = { l: 34, r: 84, t: 14, b: 26 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const N = D.dates.length;
+  const x = (i) => m.l + (N > 1 ? (i / (N - 1)) * iw : iw / 2);
+  const vals = FUNC.map((s) => D.dates.map((d) => (d in s.perNight ? s.perNight[d] : null)));
+  // The band is for nights with no usable functional results at all; a night only one preset
+  // couldn't use shows as a break in that preset's line, not as a shaded night.
+  const bad = new Set(D.blackout);
+  const max = Math.max(1, ...vals.flat().filter((v) => v != null));
+  const top = Math.ceil((max + 1) / 5) * 5;
+  const y = (v) => m.t + ih - (v / top) * ih;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Distinct failing tests per night, per functional preset">`;
+  [...bad].forEach((d) => { const i = D.dates.indexOf(d); if (i < 0) return; const w = iw / Math.max(1, N - 1);
+    svg += `<rect x="${x(i) - w / 2}" y="${m.t}" width="${w}" height="${ih}" fill="var(--cell-unknown)" opacity=".28"/>`; });
+  svg += `<g class="grid">`; for (let v = 0; v <= top; v += 5) svg += `<line x1="${m.l}" x2="${m.l + iw}" y1="${y(v)}" y2="${y(v)}"/>`; svg += `</g>`;
+  svg += `<g class="axis">`; for (let v = 0; v <= top; v += 5) svg += `<text x="${m.l - 8}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
+  D.dates.forEach((d, i) => { if (d.endsWith('-01')) svg += `<text x="${x(i)}" y="${H - 6}" text-anchor="middle">${fmt(d)}</text>`; });
+  svg += `<line x1="${m.l}" x2="${m.l + iw}" y1="${y(0)}" y2="${y(0)}" style="stroke:var(--rule-strong)"/></g>`;
+  // cluster (server version) changes, per series
+  FUNC.forEach((s) => s.clusters.slice(1).forEach((c) => {
+    const i = D.dates.indexOf(c.from); if (i < 0) return;
+    svg += `<line x1="${x(i)}" x2="${x(i)}" y1="${m.t}" y2="${m.t + ih}" stroke="var(--muted)" stroke-dasharray="3 3"/>
+      <text x="${x(i) - 5}" y="${m.t + 10}" text-anchor="end" style="fill:var(--muted);font:11px var(--sans)">${esc(s.short)} → ${esc(c.cluster)}</text>`;
+  }));
+  const ends = [];
+  vals.forEach((vs, si) => {
+    let d = '', pen = false;
+    vs.forEach((v, i) => { if (v == null) { pen = false; return; } d += `${pen ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`; pen = true; });
+    svg += `<path d="${d}" fill="none" stroke="${COLORS[si % COLORS.length]}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    const li = vs.length - 1 - [...vs].reverse().findIndex((v) => v != null);
+    if (li >= vs.length || vs[li] == null) return;
+    svg += `<circle cx="${x(li)}" cy="${y(vs[li])}" r="4" fill="${COLORS[si % COLORS.length]}" stroke="var(--surface)" stroke-width="2"/>`;
+    ends.push({ x: x(li) + 9, y: y(vs[li]) + 4, text: `${FUNC[si].short} ${vs[li]}` });
+  });
+  // keep end labels apart
+  ends.sort((a, b) => a.y - b.y).forEach((e, i, all) => { if (i && e.y - all[i - 1].y < 14) e.y = all[i - 1].y + 14; });
+  ends.forEach((e) => { svg += `<text x="${e.x}" y="${e.y}" style="fill:var(--ink-2);font:12px var(--sans)">${esc(e.text)}</text>`; });
+  svg += `<line id="xh" x1="0" x2="0" y1="${m.t}" y2="${m.t + ih}" stroke="var(--ink-2)" stroke-width="1" opacity="0"/>`;
+  svg += `<rect id="hit" x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent"/></svg>`;
+  $('chart').innerHTML = svg;
+  $('legend').innerHTML = FUNC.map((s, i) => `<span><i style="background:${COLORS[i % COLORS.length]}"></i>${esc(s.label)}</span>`).join('') + `<span><i class="band"></i>No usable results that night</span>`;
+  const el = $('chart').querySelector('svg'), hit = el.querySelector('#hit'), xh = el.querySelector('#xh');
+  hit.addEventListener('mousemove', (e) => {
+    const r = el.getBoundingClientRect();
+    const px = ((e.clientX - r.left) / r.width) * W;
+    const i = Math.max(0, Math.min(N - 1, Math.round(((px - m.l) / iw) * (N - 1))));
+    const d = D.dates[i];
+    xh.setAttribute('x1', x(i)); xh.setAttribute('x2', x(i)); xh.setAttribute('opacity', '.5');
+    const rows = FUNC.map((s, si) => vals[si][i] == null ? `<span class="k">${esc(s.short)}:</span> no results` : `<span class="k">${esc(s.short)}:</span> <b>${vals[si][i]}</b> failing`).join('<br>');
+    showTip(`<b>${fmt(d)}</b><br>${rows}${D.commits[d] ? `<br><span class="k">commit</span> ${D.commits[d]}` : ''}`, e.clientX, e.clientY);
+  });
+  hit.addEventListener('mouseleave', () => { xh.setAttribute('opacity', '0'); hideTip(); });
+})();
+
+// ----- timelines
+const LABEL = D.classes.labels;
+const PASS_STATE = (s) => s.passesKnown ? 'passed' : 'passed (inferred: not named in the log)';
+const STATE = { f: 'failed', e: 'errored', n: 'not run: skipped, or not in the results', u: "unknown: the suite errored in bulk, or the CI log hid this package's failures", g: 'no results: the suite did not report', v: 'suite not running yet' };
+function strip(s, t) {
+  const map = {}; s.ran.forEach((d, i) => { map[d] = t.seq[i]; });
+  return `<div class="strip" data-test="${esc(t.test)}" data-series="${esc(s.id)}">` + D.dates.map((d) =>
+    `<i class="s-${d < s.ran[0] ? 'v' : (map[d] || 'g')}" data-d="${d}"></i>`).join('') + `</div>`;
+}
+function months() {
+  return `<div class="months">` + D.dates.map((d) => `<span>${d.endsWith('-01') ? MONTHS[+d.split('-')[1] - 1] : ''}</span>`).join('') + `</div>`;
+}
+function row(s, t) {
+  const since = t.cls === 'failing' && t.since ? ` ${fmt(t.since)}` : '';
+  const extra = [];
+  if (t.cls === 'failing' && !t.streak && t.cleanTail) extra.push(`passed the last ${t.cleanTail} night${t.cleanTail > 1 ? 's' : ''}`);
+  if (t.flakyBefore) extra.push(`failed ${t.flakyBefore}× before the ${WIN}-day window`);
+  if (t.cls === 'stopped') extra.push(`last ran ${fmt(t.lastRan)} (${RESULT[t.lastResult]}) · not run since ${fmt(t.notRunSince)}`);
+  return `<div class="row"><div class="name"><div class="tname">${nameHtml(t.test)}</div>
+    <div class="rate"><span class="pill p-${t.cls}" title="${esc(D.classes.blurbs[t.cls])}">${LABEL[t.cls]}${since}</span><span>${t.windowFails}/${t.windowRuns} in ${WIN} days · ${t.fails}/${t.runs} overall</span></div>
+    ${extra.length ? `<div class="hist">${extra.join(' · ')}</div>` : ''}</div>
+    <div class="cells">${strip(s, t)}</div></div>`;
+}
+const grid = (s, ts) => `<div class="tl-scroll"><div class="tl"><div class="row axisrow"><div class="name"></div><div class="cells">${months()}</div></div>${ts.map((t) => row(s, t)).join('')}</div></div>`;
+function lastSeen(s) {
+  const last = s.ran[s.ran.length - 1];
+  const days = last ? Math.round((Date.parse(D.end) - Date.parse(last)) / 86400000) : Infinity;
+  if (!last) return 'No results yet: every run in the window aborted.';
+  return days > 7 ? `Not run since ${fmt(last)}.` : '';
+}
+function suite(s) {
+  const live = s.tests.filter((t) => t.cls !== 'dormant');
+  const dormant = s.tests.filter((t) => t.cls === 'dormant');
+  const note = [clusterText(s) && `cluster ${clusterText(s)}`, s.ran.length ? `first reported ${fmt(s.ran[0])}` : 'no results yet: every run in the window aborted'].filter(Boolean).join(' · ');
+  return `<div class="tl-card">
+    <div class="tl-head"><h3>${esc(s.label)}</h3><span class="preset">${esc(s.preset)} · ${s.ran.length} nights reported · ${esc(note)}</span></div>
+    ${live.length ? grid(s, live) : `<p class="sub" style="padding:14px 20px">No failures in the last ${WIN} days.</p>`}
+    ${dormant.length ? `<details class="dormant"><summary>${dormant.length} more tests failed earlier but not in the last ${WIN} days</summary>${grid(s, dormant)}</details>` : ''}
+  </div>`;
+}
+function paramChips(s) {
+  const p = s.params || {}, out = [];
+  s.clusters.forEach((c) => out.push(`<span class="param">Cluster <b>${esc(c.cluster.replace(':', ' '))}</b></span>`));
+  if (p.deployer) out.push(`<span class="param">Deployer <b>${esc(p.deployer)}</b></span>`);
+  if (typeof p.privateEndpoint === 'boolean') out.push(`<span class="param${p.privateEndpoint ? ' on' : ''}">Private endpoint <b>${p.privateEndpoint ? 'on' : 'off'}</b></span>`);
+  if (p.gateway) out.push(`<span class="param">Gateway <b>${esc(p.gateway)}</b></span>`);
+  out.push(`<span class="param">Preset <b>${esc(s.preset)}</b></span>`);
+  if (s.ran.length) out.push(`<span class="param">Ran <b>${fmt(s.ran[0])} → ${fmt(s.ran[s.ran.length - 1])}</b> · ${s.ran.length} nights</span>`);
+  return `<div class="params">${out.join('')}</div>`;
+}
+function sitCard(s) {
+  const live = s.tests.filter((t) => t.cls !== 'dormant');
+  const dormant = s.tests.filter((t) => t.cls === 'dormant');
+  const note = lastSeen(s);
+  return `<div class="tl-card">
+    <div class="tl-head" style="flex-direction:column;align-items:stretch;gap:10px"><h3>${esc(s.label.replace('Situational · ', ''))}</h3>${paramChips(s)}${note ? `<p class="sub">${note}</p>` : ''}</div>
+    ${live.length ? grid(s, live) : `<p class="sub" style="padding:14px 20px">${s.tests.length ? `No failures in the last ${WIN} days.` : `No scenario failed on any of its ${s.ran.length} nights.`}</p>`}
+    ${dormant.length ? `<details class="dormant"><summary>${dormant.length} ${dormant.length === 1 ? 'scenario' : 'scenarios'} failed earlier but not in the last ${WIN} days</summary>${grid(s, dormant)}</details>` : ''}
+  </div>`;
+}
+const PARAM_NAMES = { privateEndpoint: 'private endpoint' };
+function comparison(c) {
+  const a = byId[c.a], b = byId[c.b];
+  const pn = PARAM_NAMES[c.param] || c.param;
+  const short = (t) => t.replace(/^[A-Za-z]+Test\./, '');
+  const bar = (x) => `<div class="bar" role="img" aria-label="${x.f} of ${x.n} nights"><i style="width:${x.n ? (100 * x.f / x.n) : 0}%"></i></div>`;
+  const head = (s) => esc(s.short.replace(/^.* · /, ''));
+  return `<div class="panel">
+    <h3>${esc(a.short.split(' · ')[0])}: ${head(a)} vs ${head(b)}</h3>
+    <p class="sub">Same scenarios and cluster. The only difference is the <code>${esc(c.param)}</code> run parameter. Compared over the <b>${c.nights}</b> nights both ran${c.first ? ` (from ${fmt(c.first)})` : ''}.</p>
+    <div class="cmp-scroll"><table class="cmp">
+      <thead><tr><th>Scenario</th><th>${head(a)}</th><th></th><th>${head(b)}</th><th></th></tr></thead>
+      <tbody>
+        <tr><td><b>Nights with any failure</b></td><td class="n">${c.aRed}/${c.nights}</td><td class="barcell">${bar({ f: c.aRed, n: c.nights })}</td><td class="n">${c.bRed}/${c.nights}</td><td class="barcell">${bar({ f: c.bRed, n: c.nights })}</td></tr>
+        ${c.rows.map((r) => `<tr><td class="tname">${esc(short(r.test))}</td><td class="n">${r.a.f}/${r.a.n}</td><td class="barcell">${bar(r.a)}</td><td class="n">${r.b.f}/${r.b.n}</td><td class="barcell">${bar(r.b)}</td></tr>`).join('')}
+      </tbody></table></div>
+    <p class="callout">Both were red on ${c.bothRed} of the same nights: those point at the shared environment. Failures on only one side point at what ${esc(pn)} changes.</p>
+  </div>`;
+}
+function situational() {
+  if (!SIT.length) return '';
+  return `<div class="sit">
+    <div class="sit-head"><h3 style="font-size:17px">Situational runs, one card per preset</h3>
+    <p class="prose">Situational presets run the same scored scenarios with different run parameters, so they're never merged: a failure that only happens with one parameter is a different problem from one that happens everywhere. They're pass/fail on a handful of scenarios, so they're kept out of the headline numbers above.</p></div>
+    ${D.comparisons.map(comparison).join('')}
+    ${SIT.map(sitCard).join('')}
+  </div>`;
+}
+$('classkey').innerHTML = D.classes.order.map((c) => `<span class="pill p-${c}">${esc(LABEL[c])}</span><span>${esc(D.classes.blurbs[c])}</span>`).join('');
+$('timelines').innerHTML =
+  FUNC.map(suite).join('') +
+  situational() +
+  `<div class="cells-key"><span><i class="s-f"></i>failed</span><span><i class="s-e"></i>errored</span><span><i class="s-p"></i>${D.source.scraped ? 'passed (inferred on nights read from the CI log)' : 'passed'}</span><span><i class="s-n"></i>not run (skipped)</span><span><i class="s-u"></i>unknown (suite errored in bulk, or failures hidden in the log)</span><span><i class="s-g"></i>no results</span></div>`;
+
+document.addEventListener('mouseover', (e) => {
+  const c = e.target.closest('.strip i'); if (!c) return;
+  const t = c.parentElement.dataset.test, d = c.dataset.d, s = byId[c.parentElement.dataset.series];
+  const st = [...c.classList].find((k) => k.startsWith('s-')).slice(2);
+  const text = st === 'p' ? PASS_STATE(s) : STATE[st];
+  c.onmousemove = (ev) => showTip(`<b>${fmt(d)}</b> · ${text}<br><span class="k">${esc(t)}</span>`, ev.clientX, ev.clientY);
+  c.onmouseleave = hideTip;
+});
+
+// The "what this can't tell you" section describes backfilled data; hide it once every record is emitted.
+if (D.source.emitted && !D.source.scraped && !D.source.archive) $('sec-next').hidden = true;
+$('limit-source').innerHTML = D.source.scraped
+  ? `<span><b>Some nights come only from CI logs.</b> ${D.source.archive ? `${D.source.archive} of ${D.source.records} run records are rebuilt from the full JUnit results in each run's S3 archive; the other ${D.source.scraped} are read from the CI log, which` : 'Every record is read from the CI log, which'} names only failing tests, and at most 3 per Java package. On those nights a pass is inferred, and an unnamed test in a package with hidden failures is marked unknown.</span>`
+  : `<span><b>Records are rebuilt after the fact.</b> Every result comes from the JUnit reports in the runs' S3 archives, not from fit-cli at run time, so a run whose archive has expired can't be recovered.</span>`;
+
+$('footer').innerHTML = [
+  `<span>Generated by <code>fit health report ${esc(D.sdk)}</code> on ${fmtY(D.generatedAt.slice(0, 10))}, from ${D.source.records} run records over ${D.dates.length} nights.</span>`,
+  D.blackout.length ? `<span>Nights with no usable functional results: ${D.blackout.map(fmt).join(', ')}.</span>` : '',
+  (() => { const n = FUNC.reduce((a, s) => a + (s.stoppedRunningEarlier || 0), 0); return n ? `<span>${n} test${n > 1 ? 's' : ''} that failed and then stopped running more than 14 days ago ${n > 1 ? 'are' : 'is'} no longer shown.</span>` : ''; })(),
+  OLD.length ? `<span>Older series not shown (no runs in the last ${WIN} days): ${OLD.map((s) => `${esc(s.label)} (${s.ran.length ? `${fmt(s.ran[0])}–${fmt(s.ran[s.ran.length - 1])}` : 'no results'})`).join('; ')}.</span>` : '',
+  D.source.unreadableRuns.length ? `<span>Runs with no usable log: ${D.source.unreadableRuns.map((r) => `${fmt(r.date)} (${esc(r.status)})`).join(', ')}.</span>` : '',
+].filter(Boolean).join('');
+</script>
