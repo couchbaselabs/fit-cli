@@ -38,6 +38,8 @@ import {
   type RunOutput,
 } from "../../../util/non-fit/artifacts.js";
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
+import { activeRepoDirOverrideNames } from "../../util/repo-dir-overrides.js";
+import { checkLocalCapellaEndpointReachable } from "../util/check-local-capella-control-plane.js";
 import { clearLogContext, fitCliError, fitCliWarn, popLogContext, runScriptPrefix, setLogContext } from "../../../util/non-fit/fit-cli-log.js";
 import { run as runLocalCommand } from "../../../util/non-fit/proc.js";
 import {
@@ -1898,6 +1900,33 @@ export interface RunFromDefinitionOptions {
   slackResultFile?: string;
 }
 
+/**
+ * `--repo-dir` only affects localhost execution (it's read via
+ * `resolveFitPerformerDir`) — a remote (AWS or GCP) instance always clones
+ * transactions-fit-performer fresh from GitHub (`ensureRemoteRepos`) and
+ * silently ignores it. True when that mismatch is present, so the caller can
+ * fast-fail instead of letting the override look like it worked.
+ *
+ * Takes the *resolved* `executionOverride` rather than each group's raw
+ * `instance:` setting, since an interactive run can override the definition's
+ * declared destination (e.g. force everything onto localhost) — this must
+ * reflect where execution actually ends up, not just what the definition
+ * file says, or `--interactive` runs would fast-fail before the user even
+ * gets a chance to pick localhost. Mirrors the same override precedence as
+ * `resolveExecutionGroupTarget` (existing/aws override -> always remote;
+ * localhost override -> never remote; definition -> per-group instance kind).
+ */
+export function repoDirOverrideConflictsWithRemote(
+  repoDirOverrides: readonly string[],
+  executionOverride: ExecutionOverride,
+  groups: readonly ResolvedExecutionGroup[],
+): boolean {
+  if (repoDirOverrides.length === 0) return false;
+  if (executionOverride.kind === "localhost") return false;
+  if (executionOverride.kind === "aws" || executionOverride.kind === "existing") return true;
+  return groups.some((g) => g.instance.kind === "aws" || g.instance.kind === "gcp");
+}
+
 /** Run FIT functional tests as described by the definition file at `definitionPath`. */
 export async function runFromDefinition(
   definitionPath: string,
@@ -1914,6 +1943,7 @@ export async function runFromDefinition(
   }
 
   const preconditionCtx: FailureContext = { instanceIndex: 0 };
+  const repoDirOverrides = activeRepoDirOverrideNames();
   // Comma-separated presets are separate calls, so they get separate ids by design.
   const situationalRunId = options.situationalRunId ?? randomUUID();
 
@@ -1935,6 +1965,22 @@ export async function runFromDefinition(
     !forceLocalhost &&
     executionOverride.kind === "definition" &&
     executionGroups.some((g) => g.instance.kind === "gcp");
+
+  // Checked here, now that the interactive execution-override choice (if any) is known,
+  // rather than against the definition's raw declared destination — otherwise an
+  // --interactive run combined with --repo-dir would fast-fail before the user even got
+  // a chance to pick "everything on localhost" and sidestep the conflict entirely.
+  if (repoDirOverrideConflictsWithRemote(repoDirOverrides, executionOverride, executionGroups)) {
+    fitCliError(
+      { classification: "FatalToAll" },
+      `\n--repo-dir ${repoDirOverrides.join(", ")}: this run executes on a remote (AWS or GCP) instance. ` +
+        "A remote instance always clones transactions-fit-performer fresh from GitHub " +
+        "(see ensureRemoteRepos) and silently ignores --repo-dir, which only affects localhost " +
+        "execution. Run against a localhost instance instead, or drop --repo-dir.",
+    );
+    tracker.record("FatalToAll", "--repo-dir was combined with a remote instance", preconditionCtx);
+    return finalizeRunFromDefinition([], [], undefined, tracker.worst, tracker.failureCount);
+  }
 
   // AWS is needed for EC2 execution groups AND for situational cbdinocluster cloud-deployer
   // runs (even on localhost's own machine, credentials get forwarded to the remote box).
@@ -2382,6 +2428,16 @@ export async function runFromDefinition(
                 `situational tests can't allocate clusters (they would fail later with "no deployers"). ` +
                 `Check that the "${capellaEnvironment}" Capella settings were picked up by the init step above.`,
             );
+          }
+          // Local counterpart: this machine's own ~/.cbdinocluster is used as-is, so check
+          // its Capella endpoint is actually reachable before `allocate --deployer cloud`
+          // runs — otherwise the failure only surfaces after several retries, deep inside
+          // the JVM test.
+          if (execution.kind !== "remote") {
+            const localCheck = await checkLocalCapellaEndpointReachable();
+            if (localCheck.checked && !localCheck.ok) {
+              throwFatalToCluster(localCheck.message);
+            }
           }
         }
 

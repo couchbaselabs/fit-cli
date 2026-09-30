@@ -44,6 +44,7 @@ import { postSlackRunResults } from "../slack/post-run-summary.js";
 import type { SlackRunResult } from "../slack/util/slack-results.js";
 import { extractFailureTail, likelyCauseLine } from "../util/gha.js";
 import { getCurrentSessionTail } from "../../util/non-fit/proc.js";
+import { recordRepoDirOverride } from "../util/repo-dir-overrides.js";
 
 /** Maps a `--repo-dir` key (a {@link Repo.name}) to the env var {@link resolveFitPerformerDir} reads it from. */
 const REPO_DIR_ENV_VARS: Record<string, string> = {
@@ -232,6 +233,7 @@ function extractRepoDirs(argv: readonly string[]): { repoDirs: Record<string, st
 function applyRepoDirs(repoDirs: Record<string, string>): void {
   for (const [name, dir] of Object.entries(repoDirs)) {
     process.env[REPO_DIR_ENV_VARS[name]] = dir;
+    recordRepoDirOverride(name);
   }
 }
 

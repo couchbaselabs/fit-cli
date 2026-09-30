@@ -6,7 +6,8 @@ import { test } from "node:test";
 import { sdkByValue } from "../../../../util/sdk/sdks.js";
 import type { ClusterCommandExecutor } from "../../../../cluster/cluster-create/allocate-cluster.js";
 import type { SelectedCluster } from "../../../../cluster/cluster-select/cluster-select.js";
-import type { ResolvedFunctionalExecutionGroup, ResolvedSituationalExecutionRun } from "../../../shared/definition/resolve-definition.js";
+import type { ResolvedExecutionGroup, ResolvedFunctionalExecutionGroup, ResolvedSituationalExecutionRun } from "../../../shared/definition/resolve-definition.js";
+import type { ExecutionOverride } from "../../select-execution-target/select-execution-target.js";
 import type { FitExecutionContext } from "../../../shared/util/remote-fit-run.js";
 import type { OtelContainerHandle, OtelStackHandle } from "../../../external-services/otel/start/start-otel-stack.js";
 import {
@@ -14,6 +15,7 @@ import {
   finalizeRunFromDefinition,
   runLabelParts,
   runTests,
+  repoDirOverrideConflictsWithRemote,
   scopedPromptId,
   setupCluster,
   situationalCbdinoSettings,
@@ -156,6 +158,7 @@ function fitExecutionContext(): FitExecutionContext {
     removeTree: () => Promise.resolve(),
     runArtifactsDir: () => "/tmp/root/artifacts/run",
     collectJunitArtifacts: () => Promise.resolve([]),
+    collectResultsDir: () => Promise.resolve(undefined),
     pathExists: () => Promise.resolve(true),
     commandAvailable: () => Promise.resolve(true),
     performerRunArgs: () => [],
@@ -324,6 +327,61 @@ test("runTests leaves resourceCreation off for a CNG cbdinocluster run (no Docke
   }, "7.6.0");
 
   assert.equal(receivedFitConfig?.config?.resourceCreation, undefined);
+});
+
+function groupWithKind(kind: "aws" | "gcp" | "localhost"): ResolvedExecutionGroup {
+  return { instance: { kind } } as unknown as ResolvedExecutionGroup;
+}
+
+const DEFINITION_OVERRIDE: ExecutionOverride = { kind: "definition" };
+const LOCALHOST_OVERRIDE: ExecutionOverride = { kind: "localhost" };
+const AWS_OVERRIDE: ExecutionOverride = { kind: "aws" };
+const EXISTING_OVERRIDE: ExecutionOverride = { kind: "existing", existing: { instanceId: "i-0123456789abcdef0" } };
+
+test("repoDirOverrideConflictsWithRemote is true when the definition puts an AWS group on it and the override honours the definition", () => {
+  assert.equal(
+    repoDirOverrideConflictsWithRemote(["transactions-fit-performer"], DEFINITION_OVERRIDE, [groupWithKind("aws")]),
+    true,
+  );
+});
+
+test("repoDirOverrideConflictsWithRemote is true for a GCP group too", () => {
+  assert.equal(
+    repoDirOverrideConflictsWithRemote(["transactions-fit-performer"], DEFINITION_OVERRIDE, [groupWithKind("gcp")]),
+    true,
+  );
+});
+
+test("repoDirOverrideConflictsWithRemote is false with no active overrides, even against an AWS instance", () => {
+  assert.equal(repoDirOverrideConflictsWithRemote([], DEFINITION_OVERRIDE, [groupWithKind("aws")]), false);
+});
+
+test("repoDirOverrideConflictsWithRemote is false when every group's declared instance is localhost", () => {
+  assert.equal(
+    repoDirOverrideConflictsWithRemote(["transactions-fit-performer"], DEFINITION_OVERRIDE, [groupWithKind("localhost")]),
+    false,
+  );
+});
+
+test("repoDirOverrideConflictsWithRemote is false when an interactive run overrides an AWS-declared group onto localhost", () => {
+  assert.equal(
+    repoDirOverrideConflictsWithRemote(["transactions-fit-performer"], LOCALHOST_OVERRIDE, [groupWithKind("aws")]),
+    false,
+  );
+});
+
+test("repoDirOverrideConflictsWithRemote is true when an interactive run forces a fresh EC2 instance, even if every group is declared localhost", () => {
+  assert.equal(
+    repoDirOverrideConflictsWithRemote(["transactions-fit-performer"], AWS_OVERRIDE, [groupWithKind("localhost")]),
+    true,
+  );
+});
+
+test("repoDirOverrideConflictsWithRemote is true when an interactive run forces an existing EC2 instance", () => {
+  assert.equal(
+    repoDirOverrideConflictsWithRemote(["transactions-fit-performer"], EXISTING_OVERRIDE, [groupWithKind("localhost")]),
+    true,
+  );
 });
 
 test("scopedPromptId leaves ids unscoped for single-preset runs", () => {
