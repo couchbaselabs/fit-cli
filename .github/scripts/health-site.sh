@@ -8,7 +8,8 @@
 #                     health/index.html        one line per SDK, linking its report
 #                     health/sdks.json         the SDKs on the site, for the next run
 #                     health/<sdk>/index.html  the SDK's report page
-#                     health/<sdk>/report.json the report data
+#                     health/<sdk>/report.json the report data (the page's drawing data)
+#                     health/<sdk>/triage.json the triage report (a versioned contract for tools)
 #   [live-site-url] the site as currently published. A Pages deploy replaces the whole site,
 #                   so an SDK with no report this run (a failed job, or a dispatch for one
 #                   SDK) keeps its published page instead of vanishing. The page shows its
@@ -34,6 +35,7 @@ for dir in "$reports"/health-report-*/; do
   mkdir -p "$site/health/$sdk"
   cp "$dir/health-report.html" "$site/health/$sdk/index.html"
   [ -f "$dir/health-report.json" ] && cp "$dir/health-report.json" "$site/health/$sdk/report.json"
+  [ -f "$dir/triage.json" ] && cp "$dir/triage.json" "$site/health/$sdk/triage.json"
   sdks+=("$sdk")
 done
 
@@ -45,6 +47,7 @@ if [ -n "$live" ]; then
       mkdir -p "$site/health/$sdk"
       if curl -fsSL "$live/health/$sdk/" -o "$site/health/$sdk/index.html"; then
         curl -fsSL "$live/health/$sdk/report.json" -o "$site/health/$sdk/report.json" || rm -f "$site/health/$sdk/report.json"
+        curl -fsSL "$live/health/$sdk/triage.json" -o "$site/health/$sdk/triage.json" || rm -f "$site/health/$sdk/triage.json"
         echo "::notice::$sdk had no report this run; keeping its published one"
         sdks+=("$sdk")
       else

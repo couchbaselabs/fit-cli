@@ -41,6 +41,13 @@ Steps:
 
 Backfill needs `gh` access to the SDK's repo, and AWS access to `s3://fit-cli/runs/` and the store. In CI the workflow assumes `fit-cli-role` through OIDC and uses the org GitHub token; run locally, a command uses your own `gh` login and AWS credentials.
 
+## Triage report (`triage.json`)
+A JSON contract for tools that act on the report, such as a triage agent. `report` writes it next to the page, and the workflow publishes it at `/health/<sdk>/triage.json`. Unlike `health-report.json` (the page's own drawing data, which changes with the page), its shape is versioned: `schema` is `fit-health-triage/<n>`, fields are only added within a version, and anything else bumps it.
+
+- Header: `sdk`, `generatedAt`, `window` (`start`, `end`, `nights`, `classificationDays`, `recentDays`), `coverage` (records from JUnit vs the CI log), `blackout` nights, `unreadableRuns`.
+- `series[]`: one per preset and test type: `id`, `preset`, `kind`, `where`, `label`, `params`, `clusters`, `nights`, `degraded`, `aborted`, `active`.
+- `findings[]`: one per test that isn't dormant, in an active series. `test` is the exact id (`Class.method`, or `Class` with `method: null` for a whole class that errored); `classification` (`class`, `since`, `streak`, `episodes`, window counts, `lastFail`, `lastPass`, `lastRan`, `notRunSince`); `history[]` of `{date, outcome}`, outcome one of `passed`, `failed`, `errored`, `not_run`, `unknown`; `evidence` - the `lastGood`, `firstFailing` (of the latest unbroken failure run) and `latestFailing` nights, each with its CI run URL, SDK commit, S3 archive and member, and cluster, plus `sdkChange` (the SDK commits of `lastGood` and `firstFailing`, and a compare URL when they differ); `notes`. `driverChanges` and `crossSdk` are `null` until they are computed.
+
 ## Slack
 If an SDK's opt-in has a `slack` block, `fit health report` posts a digest: a headline in the channel and the detail in its thread. It posts automatically only in CI; a local run needs `--slack`. `--slack-dry-run` prints it instead.
 

@@ -20,6 +20,7 @@ import type { RunRecord } from "../record/run-record.js";
 import { defaultHealthStoreRoot } from "../store/health-store.js";
 import { openStore } from "../store/s3-store.js";
 import { HISTORY_DAYS, buildHealthReport, type ReportNotes } from "./build-report.js";
+import { buildTriageReport } from "./triage.js";
 import { renderHtml } from "./render/render-html.js";
 import { renderTerminal } from "./render/render-terminal.js";
 import { renderSlackDigest } from "./render/render-slack.js";
@@ -113,7 +114,9 @@ export async function runReportCommand(argv: string[], prefix: string): Promise<
   const jsonPath = join(runDir, "health-report.json");
   const htmlPath = join(runDir, "health-report.html");
   const digestPath = join(runDir, "slack-digest.txt");
+  const triagePath = join(runDir, "triage.json");
   writeFileSync(jsonPath, JSON.stringify(report, null, 1) + "\n");
+  writeFileSync(triagePath, JSON.stringify(buildTriageReport(report, records, notes), null, 1) + "\n");
   writeFileSync(htmlPath, await renderHtml(report, sdkName));
 
   // In GitHub Actions, the job summary shows the result on the workflow run page.
@@ -125,7 +128,7 @@ export async function runReportCommand(argv: string[], prefix: string): Promise<
   const out = opt("out");
   if (out) {
     mkdirSync(out, { recursive: true });
-    for (const p of [jsonPath, htmlPath, digestPath]) copyFileSync(p, join(out, basename(p)));
+    for (const p of [jsonPath, htmlPath, digestPath, triagePath]) copyFileSync(p, join(out, basename(p)));
   }
   const details = [{ label: "Open", value: `open ${htmlPath}` }];
   const decision = slackDecision(argv, slack?.channel, process.env);
@@ -154,6 +157,7 @@ export async function runReportCommand(argv: string[], prefix: string): Promise<
       artifactFromPath(jsonPath, "The health report (derived from the run records; regenerate at will)", runDir),
       artifactFromPath(htmlPath, "The health report as a page", runDir),
       artifactFromPath(digestPath, "The Slack digest (headline, then the thread reply)", runDir),
+      artifactFromPath(triagePath, "The triage report: findings and evidence, for tools (schema in specs/health.md)", runDir),
     ],
     details,
   };
