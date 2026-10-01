@@ -8,20 +8,19 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  CLEANUP_ALL_EXPIRED_TIMEOUT,
-  cleanupAllExpiredArgs,
+  CLEANUP_TIMEOUT,
+  cleanupArgs,
   destroyFailedAnnotation,
+  destroyFailedClusters,
   expiredClusters,
   formatClustersTable,
   parseCloudClusters,
-  planSweep,
   type CbdinoclusterListItem,
 } from "../capella-clusters.js";
 
 const NOW = Date.parse("2026-06-15T12:00:00Z");
 const PAST = "2026-06-15T10:00:00Z";
 const FUTURE = "2026-06-15T14:00:00Z";
-const HOUR_MS = 60 * 60 * 1000;
 const OURS = "fitcli-20260615-090000-ab12-someone";
 
 function cluster(overrides: Partial<CbdinoclusterListItem> & { id: string }): CbdinoclusterListItem {
@@ -69,95 +68,17 @@ test("expiredClusters treats a missing or unparseable expiry as live", () => {
   assert.deepEqual(expiredClusters(clusters, NOW), []);
 });
 
-test("planSweep removes only fit-cli's own expired clusters", () => {
+test("destroyFailedClusters picks only the clusters Capella failed to destroy", () => {
   const clusters = [
-    cluster({ id: "ours-expired", purpose: OURS, expiry: PAST }),
-    cluster({ id: "ours-live", purpose: OURS, expiry: FUTURE }),
-    cluster({ id: "theirs-expired", purpose: "tf_acc_test_project_common", expiry: PAST }),
-    cluster({ id: "unlabelled-expired", expiry: PAST }),
+    cluster({ id: "stuck", purpose: OURS, expiry: PAST, state: "destroyFailed" }),
+    cluster({ id: "stuck-theirs", expiry: FUTURE, state: "destroyFailed" }),
+    cluster({ id: "expired", purpose: OURS, expiry: PAST }),
+    cluster({ id: "corrupted", expiry: PAST, state: "corrupted" }),
   ];
-  const plan = planSweep(clusters, { now: NOW });
   assert.deepEqual(
-    plan.remove.map((c) => c.id),
-    ["ours-expired"],
+    destroyFailedClusters(clusters).map((c) => c.id),
+    ["stuck", "stuck-theirs"],
   );
-  // Everything left alone is accounted for, so a quiet run can't hide a decision.
-  assert.deepEqual(
-    plan.skipped.flatMap(({ clusters: group }) => group.map((c) => c.id)).sort(),
-    ["theirs-expired", "unlabelled-expired", "ours-live"].sort(),
-  );
-});
-
-test("planSweep also takes expired empty and corrupted projects that carry our stamp", () => {
-  // A failed allocate leaves an empty project reported as `provisioning`, a
-  // half-deleted one as `corrupted`. Both are removable through `rm` now.
-  const clusters = [
-    cluster({ id: "empty-project", purpose: OURS, expiry: PAST, state: "provisioning" }),
-    cluster({ id: "corrupted-project", purpose: OURS, expiry: PAST, state: "corrupted" }),
-    cluster({ id: "empty-not-ours", expiry: PAST, state: "provisioning" }),
-    cluster({ id: "empty-live", purpose: OURS, expiry: FUTURE, state: "provisioning" }),
-  ];
-  const plan = planSweep(clusters, { now: NOW });
-  assert.deepEqual(
-    plan.remove.map((c) => c.id).sort(),
-    ["corrupted-project", "empty-project"].sort(),
-  );
-});
-
-test("planSweep leaves a cluster Capella failed to destroy for a human, flagged loudly", () => {
-  const clusters = [cluster({ id: "stuck", purpose: OURS, expiry: PAST, state: "destroyFailed" })];
-  const plan = planSweep(clusters, { now: NOW });
-  assert.deepEqual(plan.remove, []);
-  assert.equal(plan.skipped.length, 1);
-  assert.match(plan.skipped[0].reason, /destroyFailed/);
-  assert.equal(plan.skipped[0].warn, true);
-});
-
-test("planSweep --older-than requires the expiry to have passed at least that long ago", () => {
-  // PAST is two hours before NOW.
-  const clusters = [
-    cluster({ id: "expired-2h-ago", purpose: OURS, expiry: PAST }),
-    cluster({ id: "expired-just-now", purpose: OURS, expiry: new Date(NOW - 1000).toISOString() }),
-  ];
-  const plan = planSweep(clusters, { now: NOW, olderThanMs: HOUR_MS });
-  assert.deepEqual(
-    plan.remove.map((c) => c.id),
-    ["expired-2h-ago"],
-  );
-  assert.equal(plan.skipped.length, 1);
-  assert.match(plan.skipped[0].reason, /--older-than/);
-  assert.deepEqual(
-    plan.skipped[0].clusters.map((c) => c.id),
-    ["expired-just-now"],
-  );
-});
-
-test("planSweep leaves a cluster with no purpose to the all-expired pass", () => {
-  const clusters = [
-    cluster({ id: "unlabelled-expired", expiry: PAST }),
-    cluster({ id: "unlabelled-live", expiry: FUTURE }),
-  ];
-  const plan = planSweep(clusters, { now: NOW });
-  assert.deepEqual(plan.remove, []);
-  assert.equal(plan.skipped.length, 1);
-  assert.match(plan.skipped[0].reason, /all-expired pass/);
-  assert.deepEqual(
-    plan.skipped[0].clusters.map((c) => c.id).sort(),
-    ["unlabelled-expired", "unlabelled-live"].sort(),
-  );
-});
-
-test("planSweep never removes a labelled cluster that is not fit-cli's", () => {
-  const clusters = [
-    cluster({ id: "theirs-expired", purpose: "tf_acc_test_project_common", expiry: PAST }),
-    // The pre-stamp fit-cli shape is deliberately not ours either. Nothing proves
-    // this fit-cli created it, only that some fit-cli user did, once.
-    cluster({ id: "old-shape-expired", purpose: "fit-cli-someone", expiry: PAST }),
-  ];
-  const plan = planSweep(clusters, { now: NOW });
-  assert.deepEqual(plan.remove, []);
-  assert.equal(plan.skipped.length, 1);
-  assert.match(plan.skipped[0].reason, /other than fit-cli/);
 });
 
 test("destroyFailedAnnotation names the cluster, its purpose and the environment", () => {
@@ -170,9 +91,13 @@ test("destroyFailedAnnotation reports a missing purpose as none", () => {
   assert.equal(line, "::warning title=Capella destroyFailed needs a human::stuck purpose none in dev organization");
 });
 
-test("cleanupAllExpiredArgs bounds the real pass and asks cbdinocluster for the dry run", () => {
-  assert.deepEqual(cleanupAllExpiredArgs(false), ["cleanup", "cloud", "--timeout", CLEANUP_ALL_EXPIRED_TIMEOUT]);
-  assert.deepEqual(cleanupAllExpiredArgs(true), ["cleanup", "cloud", "--dry-run"]);
+test("cleanupArgs bounds a real cleanup by the timeout", () => {
+  assert.deepEqual(cleanupArgs(false), ["cleanup", "cloud", "--timeout", CLEANUP_TIMEOUT]);
+  assert.equal(CLEANUP_TIMEOUT, "90m");
+});
+
+test("cleanupArgs asks cbdinocluster for a dry run with no timeout", () => {
+  assert.deepEqual(cleanupArgs(true), ["cleanup", "cloud", "--dry-run"]);
 });
 
 test("formatClustersTable shows the purpose and marks the expired clusters", () => {

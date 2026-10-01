@@ -5,24 +5,17 @@
 # bill until someone notices. This reaps them, in both the dev and prod Capella
 # organizations.
 #
-# The first pass only removes a cluster when fit-cli's purpose is stamped on it and
-# its expiry has already passed. That reaches neither someone else's project nor a
-# live run, which is why the default needs no extra age window and can run hourly.
+# It runs `cbdinocluster cleanup cloud`, which removes every expired cbdinocluster
+# project in the organization, whoever made it. An expiry means the owner is done
+# with it. Live clusters are never touched, so this can run hourly.
 #
-# The second pass (--all-expired, on by default) then removes every expired
-# cbdinocluster project in the organization, whoever made it. The organization is
-# shared and other teams leave expired projects behind. The FIT test driver used to
-# clear them by accident after every test, and that call is gone, so this job owns
-# the duty now. Only expired projects are taken, so no live run is at risk.
+# Clusters Capella itself failed to destroy are left. They are flagged loudly in
+# the log and raised as a warning annotation on the run page. Only Capella support
+# can clear those.
 #
-# Left alone, and named in the summary. Clusters Capella itself failed to destroy.
-# They need a human, so they are flagged loudly and also raised as a warning
-# annotation on the run page. Only Capella support can clear those.
-#
-# Manual run (e.g. to preview without deleting):
+# Manual run, e.g. to preview without deleting.
 #   gh workflow run cleanup-capella-clusters.yaml --field dryRun=true --repo couchbaselabs/fit-cli
-#   gh workflow run cleanup-capella-clusters.yaml --field olderThan=2h --repo couchbaselabs/fit-cli
-#   gh workflow run cleanup-capella-clusters.yaml --field allExpired=false --repo couchbaselabs/fit-cli
+
 name: Cleanup old Capella clusters
 
 on:
@@ -31,14 +24,6 @@ on:
     - cron: "30 * * * *"
   workflow_dispatch:
     inputs:
-      olderThan:
-        description: Only reap clusters whose expiry passed at least this long ago, e.g. 2h, 1d. Expiry alone already means a run is done with the cluster, so the default adds no extra wait.
-        type: string
-        default: 0h
-      allExpired:
-        description: Also remove every expired cbdinocluster project in the organization, not only fit-cli's.
-        type: boolean
-        default: true
       dryRun:
         description: Report which clusters would be removed without removing anything.
         type: boolean
@@ -63,10 +48,9 @@ jobs:
         capellaEnv: [dev, prod]
     name: cleanup-capella-clusters (${{ matrix.capellaEnv }})
     runs-on: [ubuntu-latest]
-    # Deletes are sequential and each waits on Capella, so a big backlog is slow.
-    # Cap it rather than let one run sit for the 6h default. The all-expired pass
-    # is bounded at 90m inside the command, so it gives up before this cap and the
-    # summary is still written.
+    # Each delete waits on Capella, so a big backlog is slow. Cap it rather than
+    # let one run sit for the 6h default. The cleanup is bounded at 90m inside the
+    # command, so it gives up before this cap and the summary is still written.
     timeout-minutes: 120
     steps:
       - name: Checkout fit-cli
@@ -95,17 +79,10 @@ jobs:
         env:
           # schedule events carry no inputs, so fall back to the defaults below.
           CAPELLA_ENV: ${{ matrix.capellaEnv }}
-          OLDER_THAN: ${{ inputs.olderThan || '0h' }}
           DRY_RUN: ${{ inputs.dryRun || false }}
-          # `inputs.allExpired || true` cannot express a default of true, false || true
-          # is true, so the schedule case is picked out by the event name instead.
-          ALL_EXPIRED: ${{ github.event_name == 'schedule' && 'true' || inputs.allExpired }}
         run: |
           set -o pipefail
-          ARGS=(cleanup --env "$CAPELLA_ENV" --older-than "$OLDER_THAN")
-          if [ "$ALL_EXPIRED" = "true" ]; then
-            ARGS+=(--all-expired)
-          fi
+          ARGS=(cleanup --env "$CAPELLA_ENV")
           if [ "$DRY_RUN" = "true" ]; then
             ARGS+=(--dry-run)
           fi
@@ -118,8 +95,6 @@ jobs:
           {
             echo "## Capella cluster cleanup (${{ matrix.capellaEnv }})"
             echo ""
-            echo "- **Older than:** ${{ inputs.olderThan || '0h' }}"
-            echo "- **All expired:** ${{ github.event_name == 'schedule' && 'true' || inputs.allExpired }}"
             echo "- **Dry run:** ${{ inputs.dryRun || false }}"
             echo ""
             echo '```'
