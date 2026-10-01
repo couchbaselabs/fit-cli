@@ -110,7 +110,7 @@
   "java/com/couchbase/client/search/vector/VectorSearchUnsupportedTest.java",
   "java/com/couchbase/client/util/GenericQueryTest.java",
   "java/com/couchbase/client/util/GenericTest.java",
-  "java/com/couchbase/client/util/ProxyRewriteUsingTest.java",
+  "java/com/couchbase/client/util/ProxyUsingTest.java",
   "java/com/couchbase/transactions/ATRDeletedTest.java",
   "java/com/couchbase/transactions/AmbiguousErrorHandlingTest.java",
   "java/com/couchbase/transactions/AppDoesNotPropagateExceptionsTest.java",
