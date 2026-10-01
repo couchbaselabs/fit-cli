@@ -12,8 +12,9 @@ name: FIT health
 
 on:
   schedule:
-    # 09:00 UTC: after the last SDK nightly of the day has finished (Node starts at 05:40).
-    - cron: "0 9 * * *"
+    # 12:00 UTC: after the last SDK nightly of the day has finished. Kotlin's starts at 05:00
+    # and has run as long as six hours (to 11:14); the rest are done by about 06:00.
+    - cron: "0 12 * * *"
   workflow_dispatch:
     inputs:
       sdk:
