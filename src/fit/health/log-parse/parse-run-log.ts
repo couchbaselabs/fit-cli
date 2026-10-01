@@ -36,7 +36,7 @@ import {
 } from "../record/run-record.js";
 
 /** Bump when a parser change could alter what an already-parsed log yields. */
-export const LOG_PARSER_VERSION = "log-6";
+export const LOG_PARSER_VERSION = "log-8";
 
 /**
  * Before this date fit-cli printed a second copy of the functional summary under the
@@ -47,6 +47,15 @@ export const SITUATIONAL_TRUSTED_FROM = "2026-07-11";
 // eslint-disable-next-line no-control-regex
 const ANSI = /(?:\x1b|\^\[)\[[0-9;]*m/g;
 const TAG = /^\S+Z \[([^\]]*)\]\s*/;
+/** fit-cli's remote clone: "Cloning transactions-fit-performer (branch x) onto i-0abc...". */
+const DRIVER_CLONE = /^(\S+Z) .*Cloning transactions-fit-performer(?: \(branch ([^)]+)\))? onto /;
+/**
+ * A preset can pin the driver to a Gerrit change (presets/*.json5 `gerritRef`); fit-cli then
+ * prints "FIT Gerrit ref: refs/changes/15/252815/3" and checks that patchset out over the clone.
+ */
+const DRIVER_GERRIT = /FIT Gerrit ref: (refs\/changes\/[\d/]+)/;
+/** The pulled performer image's labels, as fit-cli prints them: "  Revision     06cc170b0a50…". */
+const PERFORMER_REVISION = /\bRevision\s+([0-9a-f]{40})\b/;
 const RAWTAG = /^\S+Z \[[^\]]*\] ?/;
 const FAIL = /(❌|💥)\s+(\S+)/u;
 // eslint-disable-next-line no-control-regex
@@ -96,8 +105,34 @@ export interface PresetAbort {
   reason: string;
 }
 
+/**
+ * How a CI job got the FIT driver (transactions-fit-performer): it clones it fresh onto the box.
+ * The commit it got isn't logged, but the time it cloned is, and that pins it down on the
+ * default branch - unless a branch or a Gerrit change was asked for instead.
+ */
+export interface DriverCheckout {
+  /** GitHub's timestamp on the "Cloning transactions-fit-performer" line (ISO, UTC). */
+  clonedAt: string;
+  /** A branch other than the default, when the clone named one. */
+  branch?: string;
+  /**
+   * A Gerrit patchset checked out over the clone (a preset's `gerritRef` pin), e.g.
+   * refs/changes/15/252815/3. Then that patchset, not the default branch, is the driver.
+   */
+  gerritRef?: string;
+}
+
 export interface ParsedLog {
   runs: ParsedRun[];
+  /** Per CI job: how it got the driver (the first clone in the job). */
+  driver: Record<string, DriverCheckout>;
+  /**
+   * Per CI job: the commit its performer image was built from (the image's Revision label,
+   * printed when fit-cli pulls it). That is the SDK code under test - not necessarily the
+   * commit the nightly workflow checked out, since an image built the evening before can miss
+   * a later merge.
+   */
+  performerRevision: Record<string, string>;
   /** The most severe fit-cli fatal error seen per preset. */
   aborts: Record<string, PresetAbort>;
   /** Presets named by banners or job names, whether or not they produced any tagged line. */
@@ -126,12 +161,21 @@ export function parseRunLog(text: string): ParsedLog {
     return p;
   };
 
+  const driver: Record<string, DriverCheckout> = {};
+  const performerRevision: Record<string, string> = {};
   for (const line of text.split("\n")) {
     const parts = line.replace(/\r$/, "").split("\t");
     if (parts.length < 3) continue;
     const job = parts[0];
     const rawMsg = parts.slice(2).join("\t");
     const msg = stripAnsi(rawMsg);
+
+    const dc = DRIVER_CLONE.exec(msg);
+    if (dc && !driver[job]) driver[job] = { clonedAt: new Date(dc[1]).toISOString(), ...(dc[2] ? { branch: dc[2] } : {}) };
+    const dg = DRIVER_GERRIT.exec(msg);
+    if (dg && driver[job]) driver[job].gerritRef = dg[1];
+    const pr = PERFORMER_REVISION.exec(msg);
+    if (pr && !performerRevision[job]) performerRevision[job] = pr[1];
 
     const jobPreset = JOB_PRESET.exec(job)?.[1];
     if (jobPreset) presetsSeen.add(jobPreset);
@@ -228,7 +272,7 @@ export function parseRunLog(text: string): ParsedLog {
     if (run.kind !== "situational") delete run.params.privateEndpoint;
     if (run.suite.includes(":cng")) run.params.gateway = "cng";
   }
-  return { runs: [...runs.values()], aborts, presetsSeen: [...presetsSeen].sort(), sawAnyTag };
+  return { runs: [...runs.values()], driver, performerRevision, aborts, presetsSeen: [...presetsSeen].sort(), sawAnyTag };
 }
 
 export interface RecordBuildResult {

@@ -41,7 +41,8 @@ export function ingestLog(store: LocalHealthStore, meta: RunMeta, text: string, 
   if (opts.keepRaw ?? true) store.write(rawLogKey(meta.sdk, meta.ci.runId, meta.ci.runAttempt), gzipSync(text));
 
   const previous = store.readManifest(meta.sdk, meta.ci.runId, meta.ci.runAttempt);
-  const result = buildRecords(parseRunLog(text), meta);
+  const parsed = parseRunLog(text);
+  const result = buildRecords(parsed, meta);
   // A record already upgraded from the run's JUnit archive is better than anything the log
   // can say, so a reparse keeps it rather than overwriting it with the scraped version -
   // as long as the new parse still produces its key.
@@ -66,6 +67,8 @@ export function ingestLog(store: LocalHealthStore, meta: RunMeta, text: string, 
     records: keys,
     ...(result.warnings.length ? { warnings: result.warnings } : {}),
     ...(archive ? { archive } : {}),
+    ...(Object.keys(parsed.driver).length ? { driver: parsed.driver } : {}),
+    ...(Object.keys(parsed.performerRevision).length ? { performerRevision: parsed.performerRevision } : {}),
   };
   store.writeManifest(manifest);
   return manifest;

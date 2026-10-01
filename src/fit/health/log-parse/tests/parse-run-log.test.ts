@@ -191,3 +191,31 @@ test("a single-preset night counts its preset as seen, so dying early is never a
   const group = parseRunLog(`${job}\tRun\t2026-08-05T00:27:00.0Z fit run preset "op-multi-lite" --performer-image-name "x"\n${job}\tRun\t2026-08-05T00:27:18.0Z [00:27:18] === Running preset 1/5: op-onprem-func-lite ===`);
   assert.deepEqual(group.presetsSeen, ["op-onprem-func-lite"]);
 });
+
+test("each job records when it cloned the driver, and any Gerrit patchset its preset pinned", () => {
+  const ts = (t: string) => `2026-09-29T${t}.1234567Z`;
+  const log = [
+    `fit / op-onprem-func-lite\tUNKNOWN STEP\t${ts("00:20:45")} [00:20:45·aws1] Cloning transactions-fit-performer onto i-0ad9b7af0e5e...`,
+    `fit / op-capella-sit-lite\tUNKNOWN STEP\t${ts("00:20:50")} [00:20:50·aws1] Cloning transactions-fit-performer onto i-033203d123b9...`,
+    `fit / op-capella-sit-lite\tUNKNOWN STEP\t${ts("00:22:27")} [00:22:27·1/1·aws1·Capella:8.0·dotnet:main·situational:standard-qe]   FIT Gerrit ref: refs/changes/15/252815/3`,
+    `fit / op-onprem-func-lite\tUNKNOWN STEP\t${ts("00:30:00")} [00:30:00·aws2] Cloning transactions-fit-performer (branch dk/x) onto i-0second...`,
+  ].join("\n");
+  assert.deepEqual(parseRunLog(log).driver, {
+    "fit / op-onprem-func-lite": { clonedAt: "2026-09-29T00:20:45.123Z" },
+    "fit / op-capella-sit-lite": { clonedAt: "2026-09-29T00:20:50.123Z", gerritRef: "refs/changes/15/252815/3" },
+  });
+  const branch = parseRunLog(`fit / x\tRun\t${ts("00:30:00")} [00:30:00·aws1] Cloning transactions-fit-performer (branch dk/x) onto i-0abc...`).driver;
+  assert.deepEqual(branch, { "fit / x": { clonedAt: "2026-09-29T00:30:00.123Z", branch: "dk/x" } });
+});
+
+test("each job records the commit its performer image was built from", () => {
+  const log = [
+    "fit / op-onprem-func-lite\tUNKNOWN STEP\t2026-10-01T00:24:00.1Z [00:24:00·1/1·aws1·8.5-stable·dotnet:main·functional]   Revision     06cc170b0a50da4ec7df269b7b76f3434eed0fe8",
+    "fit / op-cng-func-lite\tUNKNOWN STEP\t2026-10-01T00:24:01.1Z [00:24:01·1/1·aws1·8.0.2-5503·dotnet:main·functional:cng]   Revision     06cc170b0a50da4ec7df269b7b76f3434eed0fe8",
+    "fit / op-onprem-func-lite\tUNKNOWN STEP\t2026-10-01T00:30:00.1Z [00:30:00·1/1·aws1·8.5-stable·dotnet:main·functional] INFO topology (revision 1.1922 -> 1.1925)",
+  ].join("\n");
+  assert.deepEqual(parseRunLog(log).performerRevision, {
+    "fit / op-onprem-func-lite": "06cc170b0a50da4ec7df269b7b76f3434eed0fe8",
+    "fit / op-cng-func-lite": "06cc170b0a50da4ec7df269b7b76f3434eed0fe8",
+  });
+});

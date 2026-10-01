@@ -4,6 +4,7 @@
  * recorded result and is not retried every time - only when the parser version changes.
  */
 
+import type { DriverCheckout } from "../log-parse/parse-run-log.js";
 import type { CiContext } from "./run-record.js";
 
 export const MANIFEST_SCHEMA = 1 as const;
@@ -36,6 +37,23 @@ export interface RunManifest {
   warnings?: string[];
   /** Whether the run's records were upgraded from the JUnit in its S3 archive; see archive-junit.ts. */
   archive?: ArchiveUpgrade;
+  /**
+   * Per CI job: how it got the FIT driver (clone time, and any branch or pinned Gerrit
+   * patchset), read from the log. Kept here, not on the records, so that a reparse fills it in
+   * for every run - records rebuilt from JUnit aren't rewritten by one.
+   */
+  driver?: Record<string, DriverCheckout>;
+  /**
+   * Per CI job: the commit its performer image was built from - the SDK code under test, which
+   * can differ from `ci.sha` (the commit the workflow checked out). From the log, like `driver`.
+   */
+  performerRevision?: Record<string, string>;
+}
+
+/** The SDK commit a record's run actually tested: its performer image's revision, else the workflow's commit. */
+export function sdkCommitOf(record: { ci: CiContext }, manifest: RunManifest | undefined): { sha?: string; fromImage: boolean } {
+  const rev = manifest?.performerRevision && (record.ci.job ? manifest.performerRevision[record.ci.job] : undefined);
+  return rev ? { sha: rev, fromImage: true } : { sha: record.ci.sha, fromImage: false };
 }
 
 /**

@@ -11,9 +11,11 @@
  * the night it changed.
  */
 import type { RunRecord } from "../record/run-record.js";
+import { sdkCommitOf, type RunManifest } from "../record/run-manifest.js";
 import { RECENT_DAYS, type HealthReport, type ReportNotes, type ReportSeries, type ReportTest } from "./build-report.js";
 import { CLASS_LABELS, WINDOW_DAYS, isFailure, type NightOutcome, type TestClass } from "./classify.js";
 import { buildSeries, type Series } from "./series.js";
+import type { ChangeAnalysis, Commit, DriverChanges } from "./changes.js";
 
 export const TRIAGE_SCHEMA = "fit-health-triage/1" as const;
 
@@ -27,8 +29,14 @@ export interface TriageNight {
   outcome: TriageOutcome;
   /** The CI run that produced it. */
   run: { url: string; repo: string; runId: number; attempt: number; job?: string };
-  /** The SDK commit the nightly built. */
+  /**
+   * The SDK commit under test: the performer image's revision when the log shows it (then
+   * `sdkCommitFrom: "performer-image"`), else the commit the nightly workflow checked out.
+   */
   sdkCommit?: string;
+  sdkCommitFrom?: "performer-image" | "workflow";
+  /** The commit the workflow checked out, when it differs from `sdkCommit`. */
+  workflowCommit?: string;
   /** The S3 run archive and the surefire tarball in it, when the record came from JUnit. */
   archive?: { uri: string; member: string };
   cluster?: string;
@@ -68,12 +76,20 @@ export interface TriageFinding {
     latestFailing?: TriageNight;
     /** The last passing night before `firstFailing`. */
     lastGood?: TriageNight;
-    /** The SDK commits of `lastGood` and `firstFailing`, when both are known. */
-    sdkChange?: { from: string; to: string; changed: boolean; compareUrl?: string };
+    /** When there is no `lastGood` (the test only just started running): the night before `firstFailing`. */
+    previousNight?: TriageNight;
+    /**
+     * The SDK commits of the baseline (`lastGood`, else `previousNight`) and `firstFailing`.
+     * `changed`: this SDK's own code or its shared core changed between them - path-aware in a
+     * repo holding several SDKs. The commit lists are filled in when the changes are looked up.
+     */
+    sdkChange?: { from: string; to: string; changed: boolean; compareUrl?: string; commits?: Commit[]; sharedCoreCommits?: Commit[]; sharedHarnessCommits?: Commit[] };
   };
   notes?: { ticket?: string; text: string };
-  /** Driver (transactions-fit-performer) commits around the change. Null until computed. */
-  driverChanges: null;
+  /** FIT driver (transactions-fit-performer) commits between the same two nights. Null until computed. */
+  driverChanges: DriverChanges | null;
+  /** The likely cause, from the SDK and driver changes. Absent until they are computed. */
+  changeAnalysis?: ChangeAnalysis;
   /** The same test on other opted-in SDKs. Null until computed. */
   crossSdk: null;
 }
@@ -128,21 +144,25 @@ export function latestFailureRun(seq: string): { first: number; last: number } |
   return { first, last };
 }
 
-function night(s: Series, date: string, outcome: NightOutcome): TriageNight | undefined {
+type Manifests = ReadonlyMap<string, RunManifest>;
+
+function night(s: Series, date: string, outcome: NightOutcome, manifests: Manifests): TriageNight | undefined {
   const r = s.nights.find((n) => n.date === date)?.record;
   if (!r) return undefined;
+  const sdk = sdkCommitOf(r, manifests.get(`${r.ci.runId}-${r.ci.runAttempt}`));
   return {
     date,
     outcome: OUTCOME[outcome],
     run: { url: runUrl(r.ci), repo: r.ci.repo, runId: r.ci.runId, attempt: r.ci.runAttempt, ...(r.ci.job ? { job: r.ci.job } : {}) },
-    ...(r.ci.sha ? { sdkCommit: r.ci.sha } : {}),
+    ...(sdk.sha ? { sdkCommit: sdk.sha, sdkCommitFrom: sdk.fromImage ? ("performer-image" as const) : ("workflow" as const) } : {}),
+    ...(sdk.fromImage && r.ci.sha && r.ci.sha !== sdk.sha ? { workflowCommit: r.ci.sha } : {}),
     ...(r.archive ? { archive: r.archive } : {}),
     ...(r.cluster ? { cluster: r.cluster } : {}),
     source: r.source,
   };
 }
 
-function finding(rs: ReportSeries, s: Series, t: ReportTest, notes: ReportNotes): TriageFinding {
+function finding(rs: ReportSeries, s: Series, t: ReportTest, notes: ReportNotes, manifests: Manifests): TriageFinding {
   const seq = t.seq;
   const at = (i: number) => seq[i] as NightOutcome;
   const run = latestFailureRun(seq);
@@ -153,10 +173,11 @@ function finding(rs: ReportSeries, s: Series, t: ReportTest, notes: ReportNotes)
   let lastRanIndex = -1;
   for (let i = seq.length - 1; i >= 0; i--) if (at(i) === "p" || isFailure(at(i))) { lastRanIndex = i; break; }
 
-  const firstFailing = run ? night(s, rs.ran[run.first], at(run.first)) : undefined;
-  const latestFailing = run ? night(s, rs.ran[run.last], at(run.last)) : undefined;
-  const lastGood = lastGoodIndex >= 0 ? night(s, rs.ran[lastGoodIndex], "p") : undefined;
-  const from = lastGood?.sdkCommit;
+  const firstFailing = run ? night(s, rs.ran[run.first], at(run.first), manifests) : undefined;
+  const latestFailing = run ? night(s, rs.ran[run.last], at(run.last), manifests) : undefined;
+  const lastGood = lastGoodIndex >= 0 ? night(s, rs.ran[lastGoodIndex], "p", manifests) : undefined;
+  const previousNight = run && !lastGood && run.first > 0 ? night(s, rs.ran[run.first - 1], at(run.first - 1), manifests) : undefined;
+  const from = (lastGood ?? previousNight)?.sdkCommit;
   const to = firstFailing?.sdkCommit;
   const repo = (firstFailing ?? lastGood)?.run.repo;
   const sdkChange = from && to
@@ -188,6 +209,7 @@ function finding(rs: ReportSeries, s: Series, t: ReportTest, notes: ReportNotes)
       ...(firstFailing ? { firstFailing } : {}),
       ...(latestFailing ? { latestFailing } : {}),
       ...(lastGood ? { lastGood } : {}),
+      ...(previousNight ? { previousNight } : {}),
       ...(sdkChange ? { sdkChange } : {}),
     },
     ...(fix ? { notes: fix } : {}),
@@ -200,14 +222,15 @@ function finding(rs: ReportSeries, s: Series, t: ReportTest, notes: ReportNotes)
  * The triage report for `report`. `records` and `notes` are what it was built from; only the
  * records in the report's window are used, so the series - and their ids - are the report's own.
  */
-export function buildTriageReport(report: HealthReport, records: RunRecord[], notes: ReportNotes = {}): TriageReport {
+export function buildTriageReport(report: HealthReport, records: RunRecord[], notes: ReportNotes = {}, manifests: RunManifest[] = []): TriageReport {
+  const manifestOf: Manifests = new Map(manifests.map((m) => [`${m.runId}-${m.runAttempt}`, m]));
   const inWindow = records.filter((r) => r.date >= report.start && r.date <= report.end);
   const built = new Map(buildSeries(inWindow).map((s) => [s.id, s]));
   const findings: TriageFinding[] = [];
   for (const rs of report.series) {
     const s = built.get(rs.id);
     if (!rs.active || !s) continue;
-    for (const t of rs.tests) if (t.cls !== "dormant") findings.push(finding(rs, s, t, notes));
+    for (const t of rs.tests) if (t.cls !== "dormant") findings.push(finding(rs, s, t, notes, manifestOf));
   }
   return {
     schema: TRIAGE_SCHEMA,

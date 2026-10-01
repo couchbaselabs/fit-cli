@@ -31,6 +31,25 @@ export interface HealthOptIn {
    * --slack. Leave it out and nothing is ever posted.
    */
   slack?: HealthSlackConfig;
+  /**
+   * For a repo that holds more than one SDK (couchbase-jvm-clients): the folders that are this
+   * SDK and its performer, e.g. ["kotlin-client/", "kotlin-fit-performer/"]. A commit is a
+   * change to this SDK only if it touches one of these or a shared path. Leave it out and every
+   * commit to the repo counts.
+   */
+  paths?: string[];
+  /**
+   * Folders shared with sibling SDKs that ship in this SDK, e.g. ["core-io/"]: a change here
+   * is a change to every SDK listing it.
+   */
+  sharedCorePaths?: string[];
+  /**
+   * Shared test-harness folders, e.g. ["core-fit-performer/"]: a change here can make every
+   * sibling SDK fail without being an SDK bug, so it is shown but never counted as an SDK change.
+   */
+  sharedHarnessPaths?: string[];
+  /** SDKs built on a common core share a family (e.g. "jvm"), for comparing across SDKs. */
+  family?: string;
 }
 
 export interface HealthSlackConfig {
@@ -66,6 +85,35 @@ export function validateOptIn(sdk: string, o: unknown): string[] {
     }
     if (e.slack?.reportUrl !== undefined && !/^https:\/\//.test(e.slack.reportUrl)) problems.push("slack.reportUrl must be an https:// URL");
   }
+  for (const field of ["paths", "sharedCorePaths", "sharedHarnessPaths"] as const) {
+    const v = e[field];
+    if (v === undefined) continue;
+    if (!Array.isArray(v) || v.length === 0 || !v.every((p) => typeof p === "string" && /^[\w.-][\w./-]*$/.test(p) && !p.includes(".."))) {
+      problems.push(`${field}, when given, must be a non-empty list of repo-relative paths (folders end in /)`);
+    }
+  }
+  if ((e.sharedCorePaths || e.sharedHarnessPaths) && !e.paths) problems.push("sharedCorePaths and sharedHarnessPaths need paths too");
+  if (e.family !== undefined && (typeof e.family !== "string" || !/^[a-z][a-z0-9-]*$/.test(e.family))) problems.push("family, when given, must be a lower-case name like jvm");
+  return problems;
+}
+
+/** Problems across entries: SDKs that share a repo must not share a workflow, or own the same paths. */
+export function validateOptInSet(entries: Record<string, HealthOptIn>): string[] {
+  const problems: string[] = [];
+  const list = Object.entries(entries);
+  for (const [i, [a, ea]] of list.entries()) {
+    for (const [b, eb] of list.slice(i + 1)) {
+      if (ea.repo !== eb.repo) continue;
+      const wf = ea.workflows.filter((w) => eb.workflows.includes(w));
+      if (wf.length) problems.push(`${a} and ${b} both claim ${wf.join(", ")} in ${ea.repo}: each nightly workflow must run one SDK`);
+      if (!ea.paths || !eb.paths) {
+        problems.push(`${a} and ${b} share ${ea.repo}, so each needs paths saying which part of it is that SDK`);
+        continue;
+      }
+      const overlap = ea.paths.filter((p) => eb.paths!.some((q) => p.startsWith(q) || q.startsWith(p)));
+      if (overlap.length) problems.push(`${a} and ${b} both own ${overlap.join(", ")}: shared code belongs in sharedCorePaths`);
+    }
+  }
   return problems;
 }
 
@@ -82,6 +130,8 @@ export function loadOptIns(env: NodeJS.ProcessEnv = process.env): Record<string,
     const problems = validateOptIn(sdk, entry);
     if (problems.length) throw new Error(`Invalid fit health opt-in for ${sdk}${entry.local ? ` (from ${file})` : ""}: ${problems.join("; ")}`);
   }
+  const across = validateOptInSet(out);
+  if (across.length) throw new Error(`Invalid fit health opt-ins: ${across.join("; ")}`);
   return out;
 }
 

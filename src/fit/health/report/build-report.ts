@@ -7,7 +7,8 @@
  * the HTML page renders exactly this. It is derived and disposable: change a rule in
  * classify.ts and regenerate it.
  */
-import type { RunManifest } from "../record/run-manifest.js";
+import type { ChangeSummary } from "./changes.js";
+import { sdkCommitOf, type RunManifest } from "../record/run-manifest.js";
 import type { RunRecord } from "../record/run-record.js";
 import {
   CLASS_BLURBS,
@@ -101,6 +102,8 @@ export interface HealthReport {
   classes: { order: readonly TestClass[]; labels: Record<TestClass, string>; blurbs: Record<TestClass, string>; windowDays: number };
   series: ReportSeries[];
   comparisons: ParamComparison[];
+  /** What changed around each finding's change point, when it was looked up (see changes.ts). */
+  changes?: Record<string, Record<string, ChangeSummary>>;
   source: { records: number; scraped: number; archive: number; emitted: number; unreadableRuns: { date: string; runId: number; status: string; reason?: string }[] };
 }
 
@@ -304,8 +307,13 @@ export function buildHealthReport(
     .map((s) => reportSeries(s, end, notes))
     .sort((a, b) => rank(a) - rank(b) || a.id.localeCompare(b.id));
 
+  // The SDK commit each night tested: its performer image's revision where the log has it.
+  const manifestOf = new Map(manifests.map((m) => [`${m.runId}-${m.runAttempt}`, m]));
   const commits: Record<string, string> = {};
-  for (const r of inRange) if (r.ci.sha) commits[r.date] = r.ci.sha.slice(0, 9);
+  for (const r of inRange) {
+    const sha = sdkCommitOf(r, manifestOf.get(`${r.ci.runId}-${r.ci.runAttempt}`)).sha;
+    if (sha) commits[r.date] = sha.slice(0, 9);
+  }
   const functional = series.filter((s) => s.kind === "functional");
   const blackout = dates.filter((d) => !functional.some((s) => s.ran.includes(d)));
 

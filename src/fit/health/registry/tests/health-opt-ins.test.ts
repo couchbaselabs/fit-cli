@@ -36,3 +36,25 @@ test("an invalid local entry is refused, naming the file", () => {
   assert.throws(() => loadOptIns({ [HEALTH_OPT_INS_ENV_VAR]: join(FIXTURES, "bad-opt-ins.json5") }), /Invalid fit health opt-in for klingon \(from .*bad-opt-ins\.json5\)/);
   assert.throws(() => loadOptIns({ [HEALTH_OPT_INS_ENV_VAR]: join(FIXTURES, "missing.json5") }), /does not exist/);
 });
+
+test("SDKs sharing a repo each need their own workflow and their own paths; shared code is declared as shared", async () => {
+  const { validateOptInSet } = await import("../health-opt-ins.js");
+  const jvm = (workflow: string, paths: string[]) => ({
+    repo: "couchbase/couchbase-jvm-clients",
+    workflows: [workflow],
+    paths,
+    sharedCorePaths: ["core-io/", "core-io-deps/"],
+    sharedHarnessPaths: ["core-fit-performer/"],
+    family: "jvm",
+  });
+  assert.deepEqual(validateOptIn("kotlin", jvm("fit-testing-kotlin.yml", ["kotlin-client/", "kotlin-fit-performer/"])), []);
+  const ok = { java: jvm("fit-testing-java.yml", ["java-client/"]), kotlin: jvm("fit-testing-kotlin.yml", ["kotlin-client/"]) };
+  assert.deepEqual(validateOptInSet(ok), []);
+  assert.match(validateOptInSet({ ...ok, scala: jvm("fit-testing-java.yml", ["scala-client/"]) }).join(), /both claim fit-testing-java.yml/);
+  assert.match(validateOptInSet({ ...ok, scala: jvm("fit-testing-scala.yml", ["java-client/x/"]) }).join(), /java and scala both own java-client\//);
+  const noPaths = { repo: "couchbase/couchbase-jvm-clients", workflows: ["fit-testing-scala.yml"] };
+  assert.match(validateOptInSet({ ...ok, scala: noPaths }).join(), /each needs paths/);
+  assert.match(validateOptIn("scala", { ...noPaths, sharedCorePaths: ["core-io/"] }).join(), /need paths too/);
+  assert.match(validateOptIn("scala", { ...noPaths, paths: ["../escape/"] }).join(), /repo-relative paths/);
+  assert.match(validateOptIn("scala", { ...noPaths, family: "JVM" }).join(), /lower-case/);
+});

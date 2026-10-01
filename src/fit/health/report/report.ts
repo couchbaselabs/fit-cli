@@ -21,6 +21,8 @@ import { defaultHealthStoreRoot } from "../store/health-store.js";
 import { openStore } from "../store/s3-store.js";
 import { HISTORY_DAYS, buildHealthReport, type ReportNotes } from "./build-report.js";
 import { buildTriageReport } from "./triage.js";
+import { analyseChanges, summariseChanges } from "./changes.js";
+import { githubChanges } from "./github-changes.js";
 import { renderHtml } from "./render/render-html.js";
 import { renderTerminal } from "./render/render-terminal.js";
 import { renderSlackDigest } from "./render/render-slack.js";
@@ -40,6 +42,7 @@ Usage:
   --end            Report as of this date (default: the latest night in the store).
   --days           How many calendar days, ending at --end, the report looks at (default: ${HISTORY_DAYS}).
                    The store keeps every night; this only bounds the report.
+  --no-changes     Don't look up the SDK and FIT driver commits around each change (needs GitHub).
   --store          Store: a directory, or s3://bucket/prefix/ (default: ${defaultHealthStoreRoot()}, or $FIT_HEALTH_STORE).
   --notes          Read hand-written notes ({fixes}) from this file instead of the store (see fit health notes).
   --out            Also write health-report.json, .html and slack-digest.txt into this directory.
@@ -115,8 +118,16 @@ export async function runReportCommand(argv: string[], prefix: string): Promise<
   const htmlPath = join(runDir, "health-report.html");
   const digestPath = join(runDir, "slack-digest.txt");
   const triagePath = join(runDir, "triage.json");
+  const triage = buildTriageReport(report, records, notes, manifests);
+  // What changed around each change point, in the SDK and in the FIT driver: needs GitHub.
+  const optIn = healthOptIn(sdk);
+  if (optIn && !argv.includes("--no-changes")) {
+    const r = await analyseChanges(triage, { manifests, optIn, source: githubChanges });
+    fitCliInfo(`Changes: looked up the SDK and driver commits for ${r.analysed} findings${r.failed ? ` (${r.failed} couldn't be: see triage.json)` : ""}.`);
+    report.changes = summariseChanges(triage);
+  }
   writeFileSync(jsonPath, JSON.stringify(report, null, 1) + "\n");
-  writeFileSync(triagePath, JSON.stringify(buildTriageReport(report, records, notes), null, 1) + "\n");
+  writeFileSync(triagePath, JSON.stringify(triage, null, 1) + "\n");
   writeFileSync(htmlPath, await renderHtml(report, sdkName));
 
   // In GitHub Actions, the job summary shows the result on the workflow run page.

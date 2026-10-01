@@ -77,3 +77,21 @@ test("a whole-class error has no method, and a not-run night says so", () => {
   assert.equal(f.history[3].outcome, "not_run");
   assert.equal(f.history[4].outcome, "errored");
 });
+
+test("the SDK commit under test is the performer image's revision, not the workflow's checkout", () => {
+  // 1 Oct: the workflow checked out a newer commit than the image, which was built the evening before.
+  const rs = days(4).map((d, i) => junit(d, [["A.x", i < 2 ? "p" : "f"]], i < 3 ? "old" : "merged-after-image"));
+  const manifests = rs.map((r) => ({
+    schema: 1 as const, sdk: "dotnet", runId: r.ci.runId, runAttempt: 1, date: r.date, status: "ok" as const, records: [],
+    performerRevision: { "fit / op-onprem-func-lite": "image" },
+  }));
+  const t = buildTriageReport(buildHealthReport("dotnet", rs, manifests, { end: "2026-09-04" }), rs, {}, manifests);
+  const f = t.findings[0];
+  assert.equal(f.evidence.latestFailing?.sdkCommit, "image");
+  assert.equal(f.evidence.latestFailing?.sdkCommitFrom, "performer-image");
+  assert.equal(f.evidence.latestFailing?.workflowCommit, "merged-after-image");
+  assert.deepEqual(f.evidence.sdkChange, { from: "image", to: "image", changed: false });
+  // Without the revision (older logs), the workflow's commit is used and says so.
+  const plain = buildTriageReport(buildHealthReport("dotnet", rs, [], { end: "2026-09-04" }), rs).findings[0];
+  assert.equal(plain.evidence.firstFailing?.sdkCommitFrom, "workflow");
+});

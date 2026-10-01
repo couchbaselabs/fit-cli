@@ -140,6 +140,8 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           SDK: ${{ matrix.sdk }}
+          # Reads the SDK's and the FIT driver's commits around each change (best-effort).
+          GH_TOKEN: ${{ steps.gh-secret.outputs.token }}
           # An expression's '' is falsy, so choose between two non-empty flags. In CI a
           # configured channel posts anyway; --slack just says so explicitly.
           SLACK_FLAG: ${{ (github.event_name == 'schedule' || inputs.slack) && '--slack' || '--no-slack' }}
