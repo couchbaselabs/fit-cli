@@ -77,7 +77,7 @@ export async function collectClusterLogs(
  * `couchbaseClusterUuid` set) first checks whether the cluster's Capella environment
  * actually has cbcollect support configured (see `capellaLogCollectionAvailable`) —
  * cbdinocluster's internal-support API fails outright without an internal support
- * token, which the Capella team can currently only issue for "dev". Skips with an
+ * token, which the Capella team currently issues only for "dev" and the sandbox. Skips with an
  * explanatory message instead of attempting and failing when it's not configured.
  * Docker/CNG clusters (no `couchbaseClusterUuid`) are unaffected and always attempt
  * collection, as before.
@@ -103,7 +103,7 @@ export async function collectClusterLogsIfSupported(
     if (!(await checkAvailable(capellaEnvironment))) {
       console.log(
         `\nSkipping cluster diagnostics for ${clusterId}: Capella environment "${capellaEnvironment}" has no ` +
-          `internal support token configured (only "dev" does) — cbdinocluster can't collect logs from a ` +
+          `internal support token configured (only "dev" and "sandbox" do) — cbdinocluster can't collect logs from a ` +
           `Capella cluster without one.`,
       );
       return false;

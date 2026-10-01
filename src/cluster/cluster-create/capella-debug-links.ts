@@ -22,15 +22,15 @@
  *   bun src/cluster/cluster-create/capella-debug-links.ts dev b0652a58-45d4-4cf7-afff-343ca735c6c6
  */
 import { isMain, runCli } from "../../util/non-fit/cli.js";
-import { loadEnvironments, type EnvironmentsFile } from "../../fit/util/environments.js";
+import { capellaLabelledOrigin, loadEnvironments, type EnvironmentsFile } from "../../fit/util/environments.js";
 
 export interface CapellaDebugLinks {
   /** The org's databases list in the Capella UI — absent if the environment has no oid configured. */
   capellaUiUrl?: string;
   /** Best-guess Fleet Manager cluster page — see the caveat above. */
   fleetManagerUrl: string;
-  /** DataDog logs, filtered by env and clusterId. */
-  datadogLogsUrl: string;
+  /** DataDog logs, filtered by env and clusterId. Absent for a sandbox (its real env tag isn't known). */
+  datadogLogsUrl?: string;
 }
 
 /**
@@ -47,7 +47,12 @@ export function capellaUiUrl(
   if (!capellaEnv?.endpoint || !capellaEnv.oid) {
     return undefined;
   }
-  const uiHost = capellaEnv.endpoint.replace(/^https:\/\/api\./, "https://");
+  if (capellaEnv.sandbox === true) {
+    // A sandbox serves its UI on a ui. host; no link if its endpoint carries no ui./api./cloudapi. label.
+    const parts = capellaLabelledOrigin(capellaEnv.endpoint);
+    return parts ? `${parts.scheme}ui.${parts.host}/databases?oid=${capellaEnv.oid}` : undefined;
+  }
+  const uiHost = capellaEnv.endpoint.replace(/^https:\/\/api\./i, "https://");
   return `${uiHost}/databases?oid=${capellaEnv.oid}`;
 }
 
@@ -61,17 +66,22 @@ export function capellaDebugLinks(
   couchbaseClusterUuid: string,
   environments: EnvironmentsFile = loadEnvironments(),
 ): CapellaDebugLinks | undefined {
-  const endpoint = environments.capella[environment]?.endpoint;
+  const capellaEnv = environments.capella[environment];
+  const endpoint = capellaEnv?.endpoint;
   if (!endpoint) {
     return undefined;
   }
-  const fleetManagerHost = endpoint.replace(/^https:\/\/api\./, "https://fm.");
-  const datadogQuery = `env:${environment} @clusterId:${couchbaseClusterUuid}`;
+  const fleetManagerHost = endpoint.replace(/^https:\/\/api\./i, "https://fm.");
   const uiUrl = capellaUiUrl(environment, environments);
+  // A sandbox's DataDog logs are tagged with its real deployment env, not its registry key ("sandbox"),
+  // and we don't know that tag — so omit the link rather than emit `env:sandbox`, which matches nothing.
+  const datadogLogsUrl = capellaEnv.sandbox === true
+    ? undefined
+    : `https://app.datadoghq.com/logs?query=${encodeURIComponent(`env:${environment} @clusterId:${couchbaseClusterUuid}`)}`;
   return {
     ...(uiUrl ? { capellaUiUrl: uiUrl } : {}),
     fleetManagerUrl: `${fleetManagerHost}/clusters/${couchbaseClusterUuid}`,
-    datadogLogsUrl: `https://app.datadoghq.com/logs?query=${encodeURIComponent(datadogQuery)}`,
+    ...(datadogLogsUrl ? { datadogLogsUrl } : {}),
   };
 }
 
@@ -87,15 +97,15 @@ export function printCapellaDebugLinks(environment: string, couchbaseClusterUuid
   console.log(
     `  Fleet Manager (needs VPN): ${links.fleetManagerUrl}`,
   );
-  console.log(`  DataDog logs: ${links.datadogLogsUrl}`);
+  if (links.datadogLogsUrl) {
+    console.log(`  DataDog logs: ${links.datadogLogsUrl}`);
+  }
 }
 
 /**
- * Print what's already known about the Capella environment before calling
- * `allocate` — environment name, org id, endpoint, and the org UI link. There's
- * no cluster UUID yet at this point (the cluster doesn't exist), but the org
- * UI link alone is enough to find it later if allocation fails outright before
- * cbdinocluster logs anything cluster-specific (e.g. a project-quota error).
+ * Print what's known about the Capella environment up front — name, org id, endpoints, and the org UI
+ * link — before allocation. There's no cluster UUID yet, but the org UI link alone lets you find the
+ * cluster if allocation fails before cbdinocluster logs anything cluster-specific (e.g. a quota error).
  */
 export function printCapellaPreflightInfo(
   environment: string,
@@ -111,6 +121,9 @@ export function printCapellaPreflightInfo(
   }
   if (capellaEnv.endpoint) {
     console.log(`  Capella endpoint: ${capellaEnv.endpoint}`);
+  }
+  if (capellaEnv.v4Endpoint) {
+    console.log(`  Capella v4 endpoint: ${capellaEnv.v4Endpoint}`);
   }
   const uiUrl = capellaUiUrl(environment, environments);
   if (uiUrl) {

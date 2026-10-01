@@ -21,6 +21,12 @@
       //   gerritRef: 'refs/changes/29/246329/1',
       // },
     },
+    // Only for a sandbox Capella environment (`sandbox: true` in environments.json5): its per-run
+    // control plane, keyed by the `capellaEnvironment` name. Credentials come from the CAPELLA_* env
+    // vars, not this file.
+    // capellaEnvironments: {
+    //   sandbox: { endpoint: 'https://api.sbx-25.sandbox...', v4Endpoint: 'https://cloudapi.sbx-25.sandbox...', oid: '...' },
+    // },
   },
 
   // A definition is a list of instances. Each instance owns one execution
