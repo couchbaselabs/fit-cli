@@ -18,6 +18,7 @@ import { runImportLogsCommand } from "./backfill/import-logs.js";
 import { runReparseCommand } from "./backfill/reparse.js";
 import { runReportCommand } from "./report/report.js";
 import { runNotesCommand } from "./report/notes.js";
+import { runSettingsCommand } from "./report/settings.js";
 import { HEALTH_OPT_INS } from "./registry/health-opt-ins.js";
 
 function helpText(): string {
@@ -30,6 +31,7 @@ Usage:
   ${p} backfill <sdk> [--limit N] [--store <dir>] [--dry-run]
   ${p} import-logs <sdk> --dir <logs dir> --runs <runs.json> [--store <dir>]
   ${p} notes <sdk> [--set <file>] [--store <dir>]
+  ${p} settings <sdk> [--slack-channel <id> | --no-slack] [--report-url <url>] [--store <dir>]
   ${p} check <sdk> [--store <dir>] [--nights N]
   ${p} reparse <sdk> [--all] [--store <dir>]
   ${p} --help
@@ -42,6 +44,7 @@ Subcommands:
                 for an opted-in SDK. Safe to rerun: only missing runs are fetched.
   import-logs   Import whole-run logs already on disk, e.g. an archive older than 90 days.
   notes         Show or set an SDK's hand-written report notes (known fixes), kept in the store.
+  settings      Show or set where an SDK's output goes (its Slack channel), kept in the store.
   check         Check an SDK's records can be trusted: runs name the right SDK, how much
                 comes from full JUnit, and JUnit agrees with the log on recent nights.
                 Backfill runs this at the end.
@@ -64,6 +67,9 @@ export function runHealthMain(): void {
     }
     case "notes":
       runCli(() => runNotesCommand(rest, `${p} notes`));
+      return;
+    case "settings":
+      runCli(() => runSettingsCommand(rest, `${p} settings`));
       return;
     case "report":
       runCli(() => runReportCommand(rest, `${p} report`));

@@ -1,5 +1,5 @@
 // A local opt-in file, as used to test an opt-in before committing it.
 {
-  java: { repo: "couchbase/couchbase-jvm-clients", workflows: ["fit-testing-java.yml"], slack: { channel: "U0123456789" } },
+  java: { repo: "couchbase/couchbase-jvm-clients", workflows: ["fit-testing-java.yml"] },
   dotnet: { repo: "couchbase/couchbase-net-client", workflows: ["fit-testing-dotnet.yml"], branch: "release-3.9" },
 }

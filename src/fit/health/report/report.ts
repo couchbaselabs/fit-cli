@@ -27,6 +27,7 @@ import { renderHtml } from "./render/render-html.js";
 import { renderTerminal } from "./render/render-terminal.js";
 import { renderSlackDigest } from "./render/render-slack.js";
 import { readNotes } from "./notes.js";
+import { readSettings, reportUrlFor, type HealthSettings } from "./settings.js";
 import { renderMarkdown } from "./render/render-markdown.js";
 import { appendFileSync } from "node:fs";
 import { postDigest } from "./post-digest.js";
@@ -94,7 +95,7 @@ export async function runReportCommand(argv: string[], prefix: string): Promise<
   if (!sdk) throw new Error(reportHelp(prefix));
   // Everything the report needs is read up front, so the store is closed straight after.
   const { store, location, close } = await openStore(opt("store") ?? process.env.FIT_HEALTH_STORE, sdk, { skipRawLogs: true });
-  let records: RunRecord[], manifests: RunManifest[], notes: ReportNotes;
+  let records: RunRecord[], manifests: RunManifest[], notes: ReportNotes, settings: HealthSettings;
   try {
     records = store.readRecords(sdk);
     if (records.length === 0) throw new Error(`No run records for ${sdk} in ${location}. Run \`fit health backfill ${sdk}\` first.`);
@@ -102,6 +103,8 @@ export async function runReportCommand(argv: string[], prefix: string): Promise<
     // Notes live in the store (fit health notes); --notes reads a file instead, for trying them out.
     const notesFile = opt("notes");
     notes = notesFile ? (JSON.parse(readFileSync(notesFile, "utf8")) as ReportNotes) : readNotes(store, sdk);
+    // Where the output goes (fit health settings), from the same store.
+    settings = readSettings(store, sdk);
   } finally {
     close();
   }
@@ -133,8 +136,8 @@ export async function runReportCommand(argv: string[], prefix: string): Promise<
   // In GitHub Actions, the job summary shows the result on the workflow run page.
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, renderMarkdown(report, sdkName));
 
-  const slack = healthOptIn(sdk)?.slack;
-  const digest = renderSlackDigest(report, sdkName, slack?.reportUrl);
+  const slack = settings.slack;
+  const digest = renderSlackDigest(report, sdkName, reportUrlFor(sdk, settings));
   writeFileSync(digestPath, `${digest.headline}\n\n--- thread ---\n${digest.thread}\n`);
   const out = opt("out");
   if (out) {

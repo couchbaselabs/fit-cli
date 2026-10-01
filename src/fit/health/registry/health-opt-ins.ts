@@ -26,12 +26,6 @@ export interface HealthOptIn {
   /** Only runs on this branch count towards the trend. Default: the repo's default branch. */
   branch?: string;
   /**
-   * Optional. When set, `fit health report` also posts a digest to Slack - a headline in the
-   * channel and the detail in its thread - automatically in CI, and on a local run only with
-   * --slack. Leave it out and nothing is ever posted.
-   */
-  slack?: HealthSlackConfig;
-  /**
    * For a repo that holds more than one SDK (couchbase-jvm-clients): the folders that are this
    * SDK and its performer, e.g. ["kotlin-client/", "kotlin-fit-performer/"]. A commit is a
    * change to this SDK only if it touches one of these or a shared path. Leave it out and every
@@ -52,19 +46,12 @@ export interface HealthOptIn {
   family?: string;
 }
 
-export interface HealthSlackConfig {
-  /** Channel ID (C0123…), or a user ID (U0123…) to post to that person's FIT Bot conversation. The bot must be in a channel. */
-  channel: string;
-  /** Where the full HTML report is published, linked from the digest. */
-  reportUrl?: string;
-}
 
 export const HEALTH_OPT_INS: Partial<Record<SdkValue, HealthOptIn>> = {
   dotnet: {
     repo: "couchbase/couchbase-net-client",
     workflows: ["fit-testing-dotnet.yml"],
     branch: "master",
-    slack: { channel: "CCFM9S771", reportUrl: "https://couchbaselabs.github.io/fit-cli/health/dotnet/" },
   },
 };
 
@@ -79,12 +66,8 @@ export function validateOptIn(sdk: string, o: unknown): string[] {
     problems.push("workflows must be a non-empty list of workflow file names (e.g. fit-testing-java.yml)");
   }
   if (e.branch !== undefined && (typeof e.branch !== "string" || !e.branch)) problems.push("branch, when given, must be a branch name");
-  if (e.slack !== undefined) {
-    if (!e.slack || typeof e.slack.channel !== "string" || !/^[CGUD][A-Z0-9]{6,}$/.test(e.slack.channel)) {
-      problems.push(`slack.channel must be a Slack channel or user ID (C…/G…/U…), got ${JSON.stringify(e.slack?.channel)}`);
-    }
-    if (e.slack?.reportUrl !== undefined && !/^https:\/\//.test(e.slack.reportUrl)) problems.push("slack.reportUrl must be an https:// URL");
-  }
+  // Where output goes is data, not code: `fit health settings <sdk> --slack-channel <id>`.
+  if ((o as Record<string, unknown>).slack !== undefined) problems.push("slack is no longer part of an opt-in: set it with `fit health settings <sdk> --slack-channel <id>`");
   for (const field of ["paths", "sharedCorePaths", "sharedHarnessPaths"] as const) {
     const v = e[field];
     if (v === undefined) continue;

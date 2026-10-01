@@ -12,7 +12,7 @@ import { HEALTH_OPT_INS_ENV_VAR, loadOptIns, validateOptIn } from "../health-opt
 
 const FIXTURES = join(import.meta.dirname, "fixtures");
 
-test("a minimal entry is valid; branch and slack are optional", () => {
+test("a minimal entry is valid; branch is optional", () => {
   assert.deepEqual(validateOptIn("java", { repo: "couchbase/couchbase-jvm-clients", workflows: ["fit-testing-java.yml"] }), []);
 });
 
@@ -21,7 +21,7 @@ test("invalid entries say exactly what is wrong", () => {
   assert.ok(p.some((x) => /not an SDK/.test(x)));
   assert.ok(p.some((x) => /owner\/name/.test(x)));
   assert.ok(p.some((x) => /non-empty list/.test(x)));
-  assert.ok(p.some((x) => /channel or user ID/.test(x)));
+  assert.ok(p.some((x) => /fit health settings/.test(x)), "slack has moved to the store's settings");
 });
 
 test("a local opt-in file adds entries and overrides committed ones, marked local", () => {

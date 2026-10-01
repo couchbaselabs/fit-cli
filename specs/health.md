@@ -23,12 +23,12 @@ Nothing here changes how a test run behaves: records are built afterwards, by re
 The `FIT health` workflow (`.github/workflows/health.yaml`) runs daily for every opted-in SDK: `backfill`, then `report`. It writes the job summary, uploads the report as an artifact, posts the Slack digest where one is configured, and (from `main` only) publishes each SDK's page to the repo's GitHub Pages site at `/health/<sdk>/`.
 
 ## Opting in
-An SDK opts in with an entry in `src/fit/health/registry/health-opt-ins.ts`: its repo, its nightly workflow file(s), and optionally a branch and a Slack channel. Opting in includes the SDK in reports and tells `backfill` where its nightly runs are.
+An SDK opts in with an entry in `src/fit/health/registry/health-opt-ins.ts`: its repo, its nightly workflow file(s), optionally a branch, and - for a repo holding several SDKs - which paths are this SDK. Opting in includes the SDK in reports and tells `backfill` where its nightly runs are.
 
 Steps:
 1. Add the entry and commit it.
 2. Run the `FIT health` workflow for the SDK once with the `create_store` input, which creates its part of the shared store. Later runs are the daily schedule.
-3. Optionally, Slack: invite fitbot to the channel and add `slack: { channel: "<channel ID>", reportUrl: "<the SDK's Pages URL>" }` to the entry.
+3. Optionally, Slack: invite fitbot to the channel, then `fit health settings <sdk> --slack-channel <channel ID>` against the shared store. No PR needed.
 
 ## Commands
 - `fit health backfill <sdk>` - fetches the nightly logs GitHub still holds, then rebuilds each run's records from its S3 archive. Safe to rerun: only missing runs are fetched. Ends with `check`.
@@ -36,6 +36,7 @@ Steps:
 - `fit health report <sdk>` - the report: terminal summary, plus `health-report.json` and `health-report.html` as artifacts (and a job summary in GitHub Actions). It covers the last 90 days (`--days N` for another span); the store keeps every night.
 - `fit health opt-ins` - lists the committed opt-ins, which the workflow runs.
 - `fit health notes <sdk> [--set <file>]` - shows or sets the SDK's hand-written notes (known fixes, keyed by exact test id), kept in the store.
+- `fit health settings <sdk>` - shows or sets where the SDK's output goes (its Slack channel), kept in the store.
 - `fit health reparse <sdk>` - rebuilds records from stored logs after a parser change. No GitHub access needed.
 - `fit health import-logs <sdk>` - imports run logs already on disk.
 
@@ -56,7 +57,7 @@ A JSON contract for tools that act on the report, such as a triage agent. `repor
 `changeAnalysis.category`, from the SDK and the test's own file only: `test-changed` (driver yes, SDK no), `sdk` (SDK yes, driver no), `both`, `neither` (environment, server or flakiness), or `unknown` (with a `reason`). `span` gives the two nights and how many days apart they are; over 2 days the `reason` says the commits cover more than one night. `--no-changes` skips the lookup.
 
 ## Slack
-If an SDK's opt-in has a `slack` block, `fit health report` posts a digest: a headline in the channel and the detail in its thread. It posts automatically only in CI; a local run needs `--slack`. `--slack-dry-run` prints it instead.
+Where an SDK's output goes is data in the store, not code: `fit health settings <sdk>` shows it, `--slack-channel <id>` sets it, `--no-slack` turns it off, and `--report-url` changes the digest's link (default: the SDK's page on the health Pages site). With a channel set, `fit health report` posts a digest: a headline in the channel and the detail in its thread. It posts automatically only in CI; a local run needs `--slack`, and `--slack-dry-run` prints it instead. A Slack failure is a warning, never a failed run.
 
 ## Classification
 A test is classed by the shape of its last 30 days, not its failure rate: one unbroken run of failures means it broke ("Failing since"), two or more separate runs mean it flips ("Intermittent"). Also: Always fails, New · watch, Recovered, One-off, Stopped running, Dormant. Nights with no usable results, and nights a test was skipped, are shown as gaps, never as passes. A test that fails and then stops running (3+ nights) is "Stopped running": listed for 14 days, then dropped.
