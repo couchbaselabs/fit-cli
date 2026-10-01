@@ -94,3 +94,13 @@ test("an expired archive reads as missing: without ListBucket, S3 answers 403, n
   assert.equal(isMissingObject({ name: "TimeoutError" }), false);
   assert.equal(isMissingObject({ $metadata: { httpStatusCode: 500 } }), false);
 });
+
+test("a Columnar run: its folder is functional-analytics, and its cluster label differs from the archive's", () => {
+  const columnar = ["instances/aws1/clusters/Capella-cbdino1/sessions/columnar-java-main/runs/functional-analytics/surefire-reports.tar.gz"];
+  const r = rec("columnar-func-lite", "functional", "CA-cbdino1");
+  assert.deepEqual(matchTarball(r, columnar, []), { path: columnar[0] });
+  // With another functional run in the same archive, a label that matches nothing is never guessed.
+  const other = rec("op-onprem-func-lite", "functional", "8.5-stable");
+  const two = [...columnar, "instances/aws1/clusters/8.5-stable/sessions/x/runs/functional/surefire-reports.tar.gz"];
+  assert.ok("reason" in matchTarball(r, two, [other]));
+});

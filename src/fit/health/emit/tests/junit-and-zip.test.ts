@@ -136,3 +136,15 @@ test("a tarball with no JUnit results is refused, never turned into a clean reco
   const ok = await upgradeRecord(scraped, tarGz([["./TEST-a.xml", "0", `<testsuite><testcase name="x" classname="c.A"><failure/></testcase></testsuite>`]]), "s3://fit-cli/runs/x.zip", "a/surefire-reports.tar.gz");
   assert.ok(!("reason" in ok) && ok.source === "run-archive-junit");
 });
+
+test("a nameless test case is a class-level error only when it failed or errored", () => {
+  const xml = `<testsuite>
+    <testcase name="" classname="com.x.StandardQueryNegativeTest$DCLTests"><skipped/></testcase>
+    <testcase name="" classname="com.x.SetupBrokeTest"><error message="beforeAll"/></testcase>
+    <testcase name="ok" classname="com.x.StandardQueryNegativeTest"/>
+  </testsuite>`;
+  const o = junitOutcomes([xml]);
+  assert.equal(o.tests["StandardQueryNegativeTest$DCLTests"], undefined, "a skipped nested class isn't an error");
+  assert.deepEqual(o.tests.SetupBrokeTest, { classError: true });
+  assert.deepEqual(o.counts, { passed: 1, failed: 0, errored: 1, skipped: 1 }, "still counted, as the results table counts it");
+});

@@ -70,7 +70,10 @@ export function junitOutcomes(xmls: Iterable<string>): JunitOutcomes {
       const dot = classname.lastIndexOf(".");
       if (dot > 0) packages[simpleClass(classname)] = classname.slice(0, dot);
       const name = getAttr(m[1], "name");
-      // A class-level failure (setup/teardown) has no method; keep it as `Class.`.
+      // A class-level failure (setup/teardown) has no method; keep it as `Class.`. A nameless
+      // entry that passed or was skipped (JUnit writes one for a skipped @Nested class) is no
+      // outcome of any test, so it is counted but not kept.
+      if (!name && (outcome === "p" || outcome === "s")) continue;
       const id = name ? canonicalTestName(classname, name) : `${simpleClass(classname)}.`;
       const prev = worst.get(id);
       if (!prev || RANK[outcome] > RANK[prev]) worst.set(id, outcome);

@@ -26,10 +26,10 @@ test("invalid entries say exactly what is wrong", () => {
 
 test("a local opt-in file adds entries and overrides committed ones, marked local", () => {
   const all = loadOptIns({ [HEALTH_OPT_INS_ENV_VAR]: join(FIXTURES, "opt-ins.json5") });
-  assert.equal(all.java.repo, "couchbase/couchbase-jvm-clients");
-  assert.equal(all.java.local, true);
+  assert.equal(all.ruby.repo, "couchbase/couchbase-ruby-client");
+  assert.equal(all.ruby.local, true);
   assert.equal(all.dotnet.branch, "release-3.9");
-  assert.equal(loadOptIns({}).java, undefined, "without the file, only committed entries");
+  assert.equal(loadOptIns({}).ruby, undefined, "without the file, only committed entries");
 });
 
 test("an invalid local entry is refused, naming the file", () => {

@@ -34,7 +34,8 @@ export function uploadedArchivesByJob(logText: string): Record<string, string> {
   return out;
 }
 
-const tarballKind = (path: string) => (/\/runs\/functional\//.test(path) ? "functional" : /\/runs\/situational[^/]*\//.test(path) ? "situational" : undefined);
+// "functional/", or a variant such as Columnar's "functional-analytics/".
+const tarballKind = (path: string) => (/\/runs\/functional[^/]*\//.test(path) ? "functional" : /\/runs\/situational[^/]*\//.test(path) ? "situational" : undefined);
 
 /**
  * The one surefire tarball in an archive that belongs to `record`, or why there isn't one.
@@ -45,7 +46,11 @@ export function matchTarball(record: RunRecord, tarballs: string[], peers: RunRe
   let candidates = tarballs.filter((t) => tarballKind(t) === record.kind);
   if (record.kind === "functional") {
     if (!record.cluster) return { reason: "no cluster to tell the functional runs apart" };
-    candidates = candidates.filter((t) => t.includes(`/clusters/${record.cluster}/`));
+    const onCluster = candidates.filter((t) => t.includes(`/clusters/${record.cluster}/`));
+    // The log's cluster label and the archive's folder name can differ (Columnar's "CA-cbdino1"
+    // is archived under "Capella-cbdino1"). That matters only if there is a choice: the only
+    // functional run in an archive owns its only functional tarball, whatever the label.
+    candidates = onCluster.length === 0 && sameKindPeers.length === 0 && candidates.length === 1 ? candidates : onCluster;
     // `peers` excludes this record, so any other functional run on the same cluster is a clash.
     const sameCluster = sameKindPeers.filter((p) => p.cluster === record.cluster);
     if (sameCluster.length > 0) return { reason: `${sameCluster.length + 1} functional runs on ${record.cluster} share this archive` };

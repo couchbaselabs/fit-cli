@@ -47,11 +47,46 @@ export interface HealthOptIn {
 }
 
 
+/** What every SDK in couchbase-jvm-clients shares: the repo, the core they're built on, and the FIT harness. */
+const JVM: Pick<HealthOptIn, "repo" | "family" | "sharedCorePaths" | "sharedHarnessPaths"> = {
+  repo: "couchbase/couchbase-jvm-clients",
+  family: "jvm",
+  sharedCorePaths: ["core-io/", "core-io-deps/", "protostellar/", "bom/", "pom.xml", ".mvn/"],
+  sharedHarnessPaths: ["core-fit-performer/", "fit-performer-protocol/", "test-utils/"],
+};
+
 export const HEALTH_OPT_INS: Partial<Record<SdkValue, HealthOptIn>> = {
   dotnet: {
     repo: "couchbase/couchbase-net-client",
     workflows: ["fit-testing-dotnet.yml"],
     branch: "master",
+  },
+  go: {
+    repo: "couchbase/gocb",
+    workflows: ["fit-test.yml"],
+  },
+  // couchbase-jvm-clients holds four SDKs, one nightly workflow each. Scala, Kotlin and
+  // Columnar are built on core-io directly, as java-client is: a core-io change is a change to
+  // all of them, a java-client change only to Java.
+  java: {
+    ...JVM,
+    workflows: ["fit-testing-java.yml"],
+    paths: ["java-client/", "java-fit-performer/", "tracing-opentelemetry/", "tracing-opentelemetry-deps/", "metrics-opentelemetry/"],
+  },
+  scala: {
+    ...JVM,
+    workflows: ["fit-testing-scala.yml"],
+    paths: ["scala-client/", "scala-implicits/", "scala-fit-performer/"],
+  },
+  kotlin: {
+    ...JVM,
+    workflows: ["fit-testing-kotlin.yml"],
+    paths: ["kotlin-client/", "kotlin-fit-performer/"],
+  },
+  "columnar-java": {
+    ...JVM,
+    workflows: ["fit-testing-java-columnar.yml"],
+    paths: ["columnar-java-client/", "columnar-java-fit-performer/", "columnar-fit-performer-shared/"],
   },
 };
 
