@@ -8,6 +8,7 @@
  * classify.ts and regenerate it.
  */
 import type { ChangeSummary } from "./changes.js";
+import type { CrossSummary } from "./cross.js";
 import { sdkCommitOf, type RunManifest } from "../record/run-manifest.js";
 import type { RunRecord } from "../record/run-record.js";
 import {
@@ -104,6 +105,8 @@ export interface HealthReport {
   comparisons: ParamComparison[];
   /** What changed around each finding's change point, when it was looked up (see changes.ts). */
   changes?: Record<string, Record<string, ChangeSummary>>;
+  /** The same tests on the other SDKs, when the reports were compared (see cross.ts). */
+  cross?: Record<string, Record<string, CrossSummary>>;
   source: { records: number; scraped: number; archive: number; emitted: number; unreadableRuns: { date: string; runId: number; status: string; reason?: string }[] };
 }
 

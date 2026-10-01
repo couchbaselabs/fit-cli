@@ -207,6 +207,18 @@ jobs:
           pattern: health-report-*
           path: reports
 
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: latest
+
+      - name: Install fit-cli dependencies
+        run: bun install --frozen-lockfile
+
+      # Every SDK's report from this run, compared with every other's: the same test on the
+      # other SDKs, written back into each triage.json and page.
+      - name: Compare the SDKs
+        run: bun src/fit/main/main.ts health cross --dir reports
+
       - name: Build the site
         env:
           LIVE: ${{ steps.pages.outputs.url }}

@@ -12,10 +12,11 @@
  */
 import type { RunRecord } from "../record/run-record.js";
 import { sdkCommitOf, type RunManifest } from "../record/run-manifest.js";
-import { RECENT_DAYS, type HealthReport, type ReportNotes, type ReportSeries, type ReportTest } from "./build-report.js";
+import { RECENT_DAYS, addDays, type HealthReport, type ReportNotes, type ReportSeries, type ReportTest } from "./build-report.js";
 import { CLASS_LABELS, WINDOW_DAYS, isFailure, type NightOutcome, type TestClass } from "./classify.js";
 import { buildSeries, type Series } from "./series.js";
 import type { ChangeAnalysis, Commit, DriverChanges } from "./changes.js";
+import type { CrossSdk } from "./cross.js";
 
 export const TRIAGE_SCHEMA = "fit-health-triage/1" as const;
 
@@ -90,8 +91,8 @@ export interface TriageFinding {
   driverChanges: DriverChanges | null;
   /** The likely cause, from the SDK and driver changes. Absent until they are computed. */
   changeAnalysis?: ChangeAnalysis;
-  /** The same test on other opted-in SDKs. Null until computed. */
-  crossSdk: null;
+  /** The same test on every other SDK with a report (see cross.ts). Null until compared. */
+  crossSdk: CrossSdk | null;
 }
 
 export interface TriageReport {
@@ -117,6 +118,13 @@ export interface TriageReport {
     active: boolean;
   }[];
   findings: TriageFinding[];
+  /**
+   * Per test type: every test with a known result (passed, failed or errored) in the
+   * classification window - what another SDK's report needs to say "this SDK runs that test",
+   * not just "it fails it". A night read only from the CI log names failures, not passes, so
+   * `complete` says whether every night came from full JUnit.
+   */
+  testsSeen: Record<"functional" | "situational", { tests: string[]; complete: boolean }>;
 }
 
 export function runUrl(ci: RunRecord["ci"]): string {
@@ -254,5 +262,21 @@ export function buildTriageReport(report: HealthReport, records: RunRecord[], no
       active: rs.active,
     })),
     findings,
+    testsSeen: testsSeen(inWindow, addDays(report.end, -(WINDOW_DAYS - 1)), report.end),
   };
+}
+
+function testsSeen(records: RunRecord[], from: string, to: string): TriageReport["testsSeen"] {
+  const out: TriageReport["testsSeen"] = { functional: { tests: [], complete: true }, situational: { tests: [], complete: true } };
+  const seen = { functional: new Set<string>(), situational: new Set<string>() };
+  for (const r of records) {
+    if (r.date < from || r.date > to || !r.counts) continue;
+    if (!r.passesKnown) out[r.kind].complete = false;
+    for (const [cls, o] of Object.entries(r.tests)) {
+      for (const m of [...(o.p ?? []), ...(o.f ?? []), ...(o.e ?? [])]) seen[r.kind].add(`${cls}.${m}`);
+      if (o.classError) seen[r.kind].add(cls);
+    }
+  }
+  for (const k of ["functional", "situational"] as const) out[k].tests = [...seen[k]].sort();
+  return out;
 }

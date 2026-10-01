@@ -124,6 +124,7 @@ const report = (findings: TriageFinding[]): TriageReport => ({
   unreadableRuns: [],
   series: [],
   findings,
+  testsSeen: { functional: { tests: [], complete: true }, situational: { tests: [], complete: true } },
 });
 const finding = (test: string, before: TriageNight, after: TriageNight): TriageFinding => ({
   test,

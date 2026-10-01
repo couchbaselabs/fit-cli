@@ -389,11 +389,23 @@ function changeLine(c) {
   if (c.driverPin && c.category === 'unknown') parts.push(`the driver's pinned Gerrit patchset changed`);
   return parts.length ? `<div class="sub">${parts.join(' · ')}</div>` : '';
 }
+// The same test on the other SDKs (fit health cross), when the reports were compared.
+const SDK_NAME = { dotnet: '.NET', java: 'Java', scala: 'Scala', kotlin: 'Kotlin', go: 'Go', 'columnar-java': 'Java Columnar', node: 'Node.js', python: 'Python', cpp: 'C++', ruby: 'Ruby', rust: 'Rust' };
+const sdkNames = (xs) => xs.map((x) => esc(SDK_NAME[x] || x)).join(', ');
+function crossLine(seriesId, test) {
+  const x = D.cross && D.cross[seriesId] && D.cross[seriesId][test];
+  if (!x || x.category === 'not-enough-data') return '';
+  const fails = x.failingOn.length ? `also failing on ${sdkNames(x.failingOn)}` : '';
+  const passes = x.passingOn.length ? `passes on ${sdkNames(x.passingOn)}` : '';
+  const lead = { 'every-sdk': 'every SDK that runs it fails it', 'only-this-sdk': 'only this SDK fails it', family: 'its SDK family fails it' }[x.category];
+  return [lead, fails, passes].filter(Boolean).join(' · ');
+}
 $('new').innerHTML = groups.map((g) => {
   const names = g.tests.map((t) => `<div class="tname">${nameHtml(t)}</div>`).join('');
   const commit = sameCommit(g.since) ? `<span>no SDK change that night (<code>${D.commits[g.since]}</code> both nights)</span>` : '';
   const change = changeLine(D.changes && D.changes[g.series] && D.changes[g.series][g.tests[0]]);
-  return `<li>${names}<div class="sub"><span class="num">since ${fmt(g.since)} · ${g.nights} nights</span><span>${esc(g.suite)}</span>${commit}</div>${change}</li>`;
+  const cross = crossLine(g.series, g.tests[0]);
+  return `<li>${names}<div class="sub"><span class="num">since ${fmt(g.since)} · ${g.nights} nights</span><span>${esc(g.suite)}</span>${commit}</div>${change}${cross ? `<div class="sub">${cross}</div>` : ''}</li>`;
 }).join('') || '<li class="sub">Nothing started failing in the last 14 days.</li>';
 const unchanged = groups.filter((g) => sameCommit(g.since)).length;
 $('new-callout').innerHTML = unchanged ? `${unchanged} of these groups began on a night with no SDK commit since the night before.` : '';
@@ -498,6 +510,8 @@ function row(s, t) {
   if (t.cls === 'failing' && !t.streak && t.cleanTail) extra.push(`passed the last ${t.cleanTail} night${t.cleanTail > 1 ? 's' : ''}`);
   if (t.flakyBefore) extra.push(`failed ${t.flakyBefore}× before the ${WIN}-day window`);
   if (t.cls === 'stopped') extra.push(`last ran ${fmt(t.lastRan)} (${RESULT[t.lastResult]}) · not run since ${fmt(t.notRunSince)}`);
+  const cross = crossLine(s.id, t.test);
+  if (cross) extra.push(cross);
   return `<div class="row"><div class="name"><div class="tname">${nameHtml(t.test)}</div>
     <div class="rate"><span class="pill p-${t.cls}" title="${esc(D.classes.blurbs[t.cls])}">${LABEL[t.cls]}${since}</span><span>${t.windowFails}/${t.windowRuns} in ${WIN} days · ${t.fails}/${t.runs} overall</span></div>
     ${extra.length ? `<div class="hist">${extra.join(' · ')}</div>` : ''}</div>
