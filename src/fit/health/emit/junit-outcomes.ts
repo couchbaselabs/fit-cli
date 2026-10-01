@@ -8,6 +8,7 @@
  * and one scraped from the log directly comparable, and collapses a parameterised test's
  * repeats (`method(Param) [2]`) into one test exactly as the log does.
  */
+import { classKey } from "./test-identity.js";
 import { Readable } from "node:stream";
 import { createGunzip } from "node:zlib";
 import type { ClassOutcomes, ResultCounts } from "../record/run-record.js";
@@ -40,11 +41,13 @@ export function decodeXmlEntities(s: string): string {
   });
 }
 
-const simpleClass = (classname: string) => classname.slice(classname.lastIndexOf(".") + 1);
-
-/** The canonical test id: the part of `SimpleClass.name` before any whitespace. */
+/**
+ * The canonical test id: the part of `Class.name` before any whitespace, where Class is the
+ * simple class name - or, for a name the driver uses in several packages, a package-qualified
+ * one (see test-identity.ts).
+ */
 export function canonicalTestName(classname: string, name: string): string {
-  return `${simpleClass(classname)}.${name}`.split(/\s/)[0];
+  return `${classKey(classname)}.${name}`.split(/\s/)[0];
 }
 
 type Outcome = "p" | "f" | "e" | "s";
@@ -68,13 +71,13 @@ export function junitOutcomes(xmls: Iterable<string>): JunitOutcomes {
       counts[({ p: "passed", f: "failed", e: "errored", s: "skipped" } as const)[outcome]]++;
       const classname = getAttr(m[1], "classname");
       const dot = classname.lastIndexOf(".");
-      if (dot > 0) packages[simpleClass(classname)] = classname.slice(0, dot);
+      if (dot > 0) packages[classKey(classname)] = classname.slice(0, dot);
       const name = getAttr(m[1], "name");
       // A class-level failure (setup/teardown) has no method; keep it as `Class.`. A nameless
       // entry that passed or was skipped (JUnit writes one for a skipped @Nested class) is no
       // outcome of any test, so it is counted but not kept.
       if (!name && (outcome === "p" || outcome === "s")) continue;
-      const id = name ? canonicalTestName(classname, name) : `${simpleClass(classname)}.`;
+      const id = name ? canonicalTestName(classname, name) : `${classKey(classname)}.`;
       const prev = worst.get(id);
       if (!prev || RANK[outcome] > RANK[prev]) worst.set(id, outcome);
     }

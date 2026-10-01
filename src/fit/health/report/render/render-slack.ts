@@ -48,6 +48,17 @@ function grouped<T extends { test: string }>(items: (T & { where: string })[], k
 /** The method part of each test id; a bare class name is a class-level error. */
 const methods = (tests: string[]) => tests.map((t) => (t.includes(".") ? t.slice(t.indexOf(".") + 1) : "(whole class)"));
 
+/** "Last night: 2,412 tests ran (1,584 on-prem · 828 CNG) · 410 skipped", counted in tests, not test cases. */
+export function lastNightTests(series: ReportSeries[]): string[] {
+  const known = series.filter((s) => s.latest?.tests != null);
+  if (!known.length) return [];
+  const ran = (s: ReportSeries) => s.latest!.passed! + s.latest!.failing;
+  const n = (x: number) => x.toLocaleString("en-US");
+  const total = known.reduce((a, s) => a + ran(s), 0);
+  const skipped = known.reduce((a, s) => a + s.latest!.skipped!, 0);
+  return [`• Last night: *${n(total)}* tests ran (${known.map((s) => `${n(ran(s))} ${s.short}`).join(" · ")}) · ${n(skipped)} skipped`];
+}
+
 export function renderSlackDigest(report: HealthReport, sdkName: string, reportUrl?: string): SlackDigest {
   const func = report.series.filter((s) => s.active && s.kind === "functional");
   const sum = (f: (s: ReportSeries) => number) => func.reduce((a, s) => a + f(s), 0);
@@ -69,6 +80,7 @@ export function renderSlackDigest(report: HealthReport, sdkName: string, reportU
   const headline = [
     `*${slackEscape(sdkName)} FIT health* · as of ${day(report.end)} · last ${report.classes.windowDays} days`,
     `• Failing now: *${sum(failingNow)}* (${split(failingNow)})`,
+    ...lastNightTests(func),
     `• Last 14 days: *${started.length}* started failing · *${stopped.length}* stopped · *${sum((s) => s.counts.intermittent)}* intermittent`,
     ...(caveats.length ? [`_Data: ${caveats.join("; ")}._`] : []),
     ...(reportUrl ? [`<${reportUrl}|Full report>`] : []),

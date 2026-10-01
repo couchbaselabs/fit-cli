@@ -104,3 +104,21 @@ test("a Columnar run: its folder is functional-analytics, and its cluster label 
   const two = [...columnar, "instances/aws1/clusters/8.5-stable/sessions/x/runs/functional/surefire-reports.tar.gz"];
   assert.ok("reason" in matchTarball(r, two, [other]));
 });
+
+test("records built by an older JUnit reader are read again; a re-read keeps what it can't redo", async () => {
+  const { JUNIT_READER_VERSION } = await import("../../record/run-manifest.js");
+  const { keepEarlierUpgrades } = await import("../../backfill/upgrade-from-archive.js");
+  const m = (archive?: RunManifest["archive"]): RunManifest => ({
+    schema: MANIFEST_SCHEMA, sdk: "dotnet", runId: 1, runAttempt: 1, date: "2026-08-05", status: "ok", records: [], archive,
+  });
+  assert.equal(needsArchiveUpgrade(m({ status: "ok", upgraded: ["k/a"], skipped: [], attempts: 1 })), true, "junit-1");
+  assert.equal(needsArchiveUpgrade(m({ status: "ok", upgraded: ["k/a"], skipped: [], attempts: 1, reader: JUNIT_READER_VERSION })), false);
+  assert.equal(needsArchiveUpgrade(m({ status: "none", upgraded: [], skipped: [], attempts: 1 })), false, "nothing to redo");
+  // The archive has expired since the first read: its record keeps the earlier JUnit version.
+  const earlier = { status: "ok" as const, upgraded: ["k/a", "k/b"], skipped: [], attempts: 1 };
+  const now = { status: "partial" as const, upgraded: ["k/a"], skipped: ["k/b: s3://x.zip no longer exists"], reason: "1 archive(s) expired" };
+  const merged = keepEarlierUpgrades(earlier, now, () => true);
+  assert.deepEqual([merged.upgraded, merged.skipped, merged.status], [["k/a", "k/b"], [], "partial"]);
+  assert.match(merged.reason ?? "", /1 record\(s\) kept from an earlier read \(junit-1\)/);
+  assert.deepEqual(keepEarlierUpgrades(earlier, now, () => false), now, "a record that's gone can't be kept");
+});

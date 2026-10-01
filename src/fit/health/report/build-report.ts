@@ -49,6 +49,36 @@ export interface ReportTest extends Classification {
   fails: number;
 }
 
+/**
+ * One night of one series, counted in tests - the Class.method you'd go and fix - not test
+ * cases: one test can run as many cases (each API, every permutation; one permutation test runs
+ * 1,000), and fit-cli's results table counts those. A night read only from the CI log names its
+ * failures but not its passes, so it has `testCases` and `failing` but no test totals.
+ */
+export interface NightTests {
+  /** Test cases, as in fit-cli's results table. */
+  testCases: number;
+  /** Distinct tests, when the night came from full JUnit: passed + failing + skipped. */
+  tests?: number;
+  passed?: number;
+  failing: number;
+  skipped?: number;
+}
+
+export function nightTests(record: RunRecord): NightTests {
+  const c = record.counts!;
+  const testCases = c.passed + c.failed + c.errored + c.skipped;
+  let passed = 0;
+  let failing = 0;
+  let skipped = 0;
+  for (const o of Object.values(record.tests)) {
+    passed += o.p?.length ?? 0;
+    failing += (o.f?.length ?? 0) + (o.e?.length ?? 0) + (o.classError ? 1 : 0);
+    skipped += o.s?.length ?? 0;
+  }
+  return record.passesKnown ? { testCases, tests: passed + failing + skipped, passed, failing, skipped } : { testCases, failing };
+}
+
 export interface ReportSeries {
   id: string;
   label: string;
@@ -66,6 +96,10 @@ export interface ReportSeries {
   perNight: Record<string, number | null>;
   /** Tests per night from the results table. */
   totals: Record<string, number>;
+  /** Per night: how many tests ran, and how they did (see NightTests). */
+  testCounts: Record<string, NightTests>;
+  /** The latest night's counts. */
+  latest?: NightTests & { date: string };
   counts: Record<TestClass, number>;
   tests: ReportTest[];
   started: { test: string; since: string; nights: number }[];
@@ -173,10 +207,13 @@ function reportSeries(s: Series, end: string, notes: ReportNotes): ReportSeries 
     });
   }
   const totals: Record<string, number> = {};
+  const testCounts: Record<string, NightTests> = {};
   for (const n of s.nights) {
     const c = n.record.counts!;
     totals[n.date] = c.passed + c.failed + c.skipped + c.errored;
+    testCounts[n.date] = nightTests(n.record);
   }
+  const lastNight = s.ran.at(-1);
 
   const clusters: ReportSeries["clusters"] = [];
   for (const [d, cl] of Object.entries(s.clusters).sort(([a], [b]) => a.localeCompare(b))) {
@@ -204,6 +241,8 @@ function reportSeries(s: Series, end: string, notes: ReportNotes): ReportSeries 
     degraded: s.degraded,
     perNight,
     totals,
+    testCounts,
+    ...(lastNight ? { latest: { date: lastNight, ...testCounts[lastNight] } } : {}),
     counts,
     tests,
     started: tests

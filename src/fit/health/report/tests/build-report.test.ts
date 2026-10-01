@@ -229,6 +229,21 @@ test("a report looks at the last 90 days by default, or --days; older nights are
   assert.equal(longer.series[0].tests.find((t) => t.test === "A.x")?.fails, 10);
 });
 
+test("each night is counted in tests, not test cases; a log-only night says only what it can", async () => {
+  const { nightTests } = await import("../build-report.js");
+  const tests = {};
+  addOutcome(tests, "Perm.permute", "f"); // one test that ran as 1,000 cases, 3 of them failing
+  addOutcome(tests, "A.x", "p");
+  addOutcome(tests, "A.y", "s");
+  addOutcome(tests, "Broken.", "e");
+  const junit = rec("2026-09-01", { source: "run-archive-junit", passesKnown: true, tests, counts: { passed: 998, failed: 3, errored: 1, skipped: 1 } });
+  assert.deepEqual(nightTests(junit), { testCases: 1003, tests: 4, passed: 1, failing: 2, skipped: 1 });
+  const scraped = rec("2026-09-02", { failing: ["A.x"] });
+  assert.deepEqual(nightTests(scraped), { testCases: 101, failing: 1 });
+  const [s] = buildHealthReport("dotnet", [junit, scraped], [], { end: "2026-09-02" }).series;
+  assert.deepEqual(s.latest, { date: "2026-09-02", testCases: 101, failing: 1 });
+});
+
 test("notes files are validated: only known fixes, keyed by an exact test id, with text", async () => {
   const { validateNotes } = await import("../notes.js");
   assert.deepEqual(validateNotes({ fixes: { "SetAuthenticatorTest.canSetAuthenticator": { ticket: "NCBC-4304", text: "fixed" } } }), []);

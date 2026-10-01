@@ -7,7 +7,7 @@
 import { gunzipSync } from "node:zlib";
 import { matchTarball, upgradeRecord, uploadedArchivesByJob } from "../emit/archive-junit.js";
 import { S3Zip } from "../emit/s3-zip.js";
-import { rawLogKey, type ArchiveUpgrade, type RunManifest } from "../record/run-manifest.js";
+import { rawLogKey, type ArchiveUpgrade, type RunManifest, JUNIT_READER_VERSION } from "../record/run-manifest.js";
 import type { RunRecord } from "../record/run-record.js";
 import type { LocalHealthStore } from "../store/health-store.js";
 
@@ -27,11 +27,27 @@ export function isMissingObject(err: unknown): boolean {
   return ["NotFound", "NoSuchKey", "AccessDenied", "Forbidden"].includes(e?.name ?? "") || [403, 404].includes(e?.$metadata?.httpStatusCode ?? 0);
 }
 
+/**
+ * A re-read never undoes an earlier one: a record upgraded before that this read couldn't
+ * upgrade (its archive has expired) keeps its JUnit version, and stays listed as upgraded.
+ */
+export function keepEarlierUpgrades<T extends Omit<ArchiveUpgrade, "attempts">>(earlier: ArchiveUpgrade | undefined, now: T, exists: (key: string) => boolean): T {
+  const kept = (earlier?.upgraded ?? []).filter((k) => !now.upgraded.includes(k) && exists(k));
+  if (!kept.length) return now;
+  return {
+    ...now,
+    upgraded: [...now.upgraded, ...kept],
+    skipped: now.skipped.filter((s) => !kept.some((k) => s.startsWith(`${k}:`))),
+    status: now.status === "error" ? "error" : now.status === "none" || now.skipped.length ? "partial" : now.status,
+    reason: [now.reason, `${kept.length} record(s) kept from an earlier read (${earlier?.reader ?? "junit-1"})`].filter(Boolean).join("; "),
+  };
+}
+
 export async function upgradeFromArchive(store: LocalHealthStore, manifest: RunManifest): Promise<ArchiveUpgrade> {
   const attempts = (manifest.archive?.attempts ?? 0) + 1;
   const raw = store.read(rawLogKey(manifest.sdk, manifest.runId, manifest.runAttempt));
   const done = (a: Omit<ArchiveUpgrade, "attempts">): ArchiveUpgrade => {
-    const archive = { ...a, attempts };
+    const archive = { ...keepEarlierUpgrades(manifest.archive, a, (k) => !!store.read(k)), attempts, reader: JUNIT_READER_VERSION };
     store.writeManifest({ ...manifest, archive });
     return archive;
   };

@@ -127,7 +127,10 @@ const TEST_FILE = /(?:^|\/)[A-Za-z0-9_]+Tests?\.(?:java|scala|kt)$/;
 
 /** The driver files that define test class `cls` (normally one). */
 export function testFilesFor(cls: string, tree: readonly string[]): string[] {
-  const names = ["java", "scala", "kt"].map((ext) => `/${cls}.${ext}`);
+  // A package-qualified key ("kv/GetTest") matches by its package too; a nested class
+  // (Outer$Inner) is in its outer class's file.
+  const file = cls.replace(/\$.*$/, "");
+  const names = ["java", "scala", "kt"].map((ext) => `/${file}.${ext}`);
   return tree.filter((p) => p.startsWith("test-driver/") && names.some((n) => p.endsWith(n)));
 }
 

@@ -11,6 +11,13 @@ const code = (s: string) => `\`${s.replace(/`/g, "'")}\``;
 
 const RESULT = { p: "passed", f: "failed", e: "errored" } as const;
 
+/** Tests, not test cases (a test can run as many cases); "-" when the night's passes aren't known. */
+function testsRun(s: ReportSeries): string {
+  const l = s.latest;
+  if (!l || l.tests == null) return "-";
+  return `${(l.passed! + l.failing).toLocaleString("en-US")} (${l.skipped!.toLocaleString("en-US")} skipped)`;
+}
+
 export function renderMarkdown(report: HealthReport, sdkName: string): string {
   const active = report.series.filter((s) => s.active);
   const func = active.filter((s) => s.kind === "functional");
@@ -20,9 +27,9 @@ export function renderMarkdown(report: HealthReport, sdkName: string): string {
     "",
     `${report.source.records} run records over ${report.dates.length} nights (last ${report.classes.windowDays} days classified).`,
     "",
-    "| Series | Failing now | Started (14d) | Stopped (14d) | Intermittent |",
-    "| --- | ---: | ---: | ---: | ---: |",
-    ...active.map((s) => `| ${s.label} | ${failingNow(s)} | ${s.started.length} | ${s.stopped.length} | ${s.counts.intermittent} |`),
+    "| Series | Failing now | Started (14d) | Stopped (14d) | Intermittent | Tests run, last night |",
+    "| --- | ---: | ---: | ---: | ---: | ---: |",
+    ...active.map((s) => `| ${s.label} | ${failingNow(s)} | ${s.started.length} | ${s.stopped.length} | ${s.counts.intermittent} | ${testsRun(s)} |`),
   ];
   const started = func.flatMap((s) => s.started.map((t) => ({ ...t, where: s.short })));
   const stopped = func.flatMap((s) => s.stopped.map((t) => ({ ...t, where: s.short })));

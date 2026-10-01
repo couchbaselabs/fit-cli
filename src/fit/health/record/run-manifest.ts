@@ -68,7 +68,16 @@ export interface ArchiveUpgrade {
   skipped: string[];
   reason?: string;
   attempts: number;
+  /** The JUnit reader that built `upgraded` (see JUNIT_READER_VERSION); absent means junit-1. */
+  reader?: string;
 }
+
+/**
+ * Bump when the JUnit reader would build different records from the same archive: backfill
+ * then re-reads every archive still in S3. junit-2: package-qualified class names where the
+ * driver reuses one (kv/GetTest), and no class-level error for a skipped nested class.
+ */
+export const JUNIT_READER_VERSION = "junit-2";
 
 export const MAX_FETCH_ATTEMPTS = 5;
 
@@ -84,7 +93,9 @@ export function rawLogKey(sdk: string, runId: number, runAttempt: number): strin
 export function needsArchiveUpgrade(manifest: RunManifest): boolean {
   if (manifest.status !== "ok") return false;
   if (!manifest.archive) return true;
-  return manifest.archive.status === "error" && manifest.archive.attempts < MAX_FETCH_ATTEMPTS;
+  if (manifest.archive.status === "error") return manifest.archive.attempts < MAX_FETCH_ATTEMPTS;
+  // Records an older JUnit reader built: read their archives again, while S3 still has them.
+  return manifest.archive.upgraded.length > 0 && (manifest.archive.reader ?? "junit-1") !== JUNIT_READER_VERSION;
 }
 
 /**

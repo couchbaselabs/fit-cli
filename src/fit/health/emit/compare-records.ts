@@ -34,12 +34,19 @@ export interface RecordComparison {
 
 const classErrors = (r: RunRecord) => Object.entries(r.tests).filter(([, o]) => o.classError).map(([c]) => c).sort();
 
+/**
+ * A test id as fit-cli's log prints it: the simple class name. JUnit ids qualify a class name
+ * the driver reuses across packages ("kv/GetTest.x"); the log can't, so they are compared plain.
+ */
+export const asLogged = (id: string) => id.replace(/^[^.]*\//, "");
+
 export function compareRecords(emitted: RunRecord, scraped: RunRecord): RecordComparison {
-  const j = new Set(failingTests(emitted));
+  const j = new Set(failingTests(emitted).map(asLogged));
   const l = new Set(failingTests(scraped));
   const missing = [...j].filter((t) => !l.has(t)).sort();
   const hidden = scraped.hiddenFailures ?? {};
-  const pkgOf = (t: string) => emitted.packages?.[t.slice(0, t.indexOf("."))];
+  const packages = Object.fromEntries(Object.entries(emitted.packages ?? {}).map(([c, p]) => [asLogged(c), p]));
+  const pkgOf = (t: string) => packages[t.slice(0, t.indexOf("."))];
   const byPkg = new Map<string, string[]>();
   for (const t of missing) {
     const p = pkgOf(t);
@@ -51,7 +58,7 @@ export function compareRecords(emitted: RunRecord, scraped: RunRecord): RecordCo
   const ce = emitted.counts;
   const cl = scraped.counts;
   const countsAgree = !!ce && !!cl && ce.passed === cl.passed && ce.failed === cl.failed && ce.errored === cl.errored && ce.skipped === cl.skipped;
-  const cj = classErrors(emitted);
+  const cj = classErrors(emitted).map(asLogged).sort();
   const clog = classErrors(scraped);
   return {
     key: recordKey(scraped),

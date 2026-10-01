@@ -103,7 +103,7 @@ section { display: flex; flex-direction: column; gap: 16px; }
 
 /* Summary: one table-like block, not a row of cards */
 .summary {
-  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
   background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; box-shadow: var(--shadow);
 }
 .stat { padding: 18px 20px; display: flex; flex-direction: column; gap: 6px; }
@@ -115,7 +115,7 @@ section { display: flex; flex-direction: column; gap: 16px; }
 .stat .big.good { color: var(--good); }
 @media (max-width: 760px) {
   .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .stat:nth-child(3) { border-left: 0; }
+  .stat:nth-child(odd) { border-left: 0; }
   .stat:nth-child(n+3) { border-top: 1px solid var(--rule); }
 }
 
@@ -154,6 +154,7 @@ section { display: flex; flex-direction: column; gap: 16px; }
 .tl-card { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; box-shadow: var(--shadow); overflow: hidden; }
 .tl-head { padding: 16px 20px 12px; display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; justify-content: space-between; border-bottom: 1px solid var(--rule); }
 .tl-head .preset { font: 12px var(--mono); color: var(--muted); }
+.tl-head .tl-tests { flex-basis: 100%; font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .tl-scroll { overflow-x: auto; }
 .tl { display: grid; grid-template-columns: minmax(300px, 1fr) auto; min-width: max-content; }
 .tl .row { display: contents; }
@@ -354,6 +355,24 @@ $('meta').innerHTML = [
   ...FUNC.filter((s) => s.clusters.length > 1).map((s) => `<span>${esc(s.short)}: ${esc(clusterText(s))}</span>`),
 ].join('');
 
+// Tests, not test cases: a test is the Class.method you'd fix, and one test can run as many
+// cases (each API, every permutation) - fit-cli's results table counts those.
+const num = (n) => Number(n).toLocaleString('en-US');
+const CASES_NOTE = "test cases in fit-cli's results table: one test can run as many cases (each API, every permutation)";
+function testsLine(l) {
+  if (!l) return '';
+  if (l.tests == null) return `<span title="${num(l.testCases)} ${CASES_NOTE}">${num(l.testCases)} test cases · ${l.failing} failing tests (passes not known: read from the CI log)</span>`;
+  return `<span title="${num(l.testCases)} ${CASES_NOTE}">${num(l.tests)} tests: ${num(l.passed)} passed · <b>${l.failing}</b> failing · ${num(l.skipped)} skipped</span>`;
+}
+function lastNightStat() {
+  const known = FUNC.filter((s) => s.latest && s.latest.tests != null);
+  if (!known.length) return '';
+  const ran = (s) => s.latest.passed + s.latest.failing;
+  const skipped = known.reduce((a, s) => a + s.latest.skipped, 0);
+  const cases = known.reduce((a, s) => a + s.latest.testCases, 0);
+  return `<div class="stat" title="${num(cases)} ${CASES_NOTE}"><span class="label">Tests run, last night</span><span class="big">${num(known.reduce((a, s) => a + ran(s), 0))}</span><span class="split">${known.map((s) => `${num(ran(s))} ${esc(s.short)}`).join(' · ')} · ${num(skipped)} skipped</span></div>`;
+}
+
 // ----- summary
 const cnt = (s, ...c) => c.reduce((a, k) => a + s.counts[k], 0);
 const sum = (f) => FUNC.reduce((a, s) => a + f(s), 0);
@@ -363,7 +382,7 @@ $('summary').innerHTML = [
   ['Started failing, last 14 days', sum((s) => s.started.length), 'bad', split((s) => s.started.length)],
   ['Stopped failing, last 14 days', sum((s) => s.stopped.length), 'good', split((s) => s.stopped.length)],
   ['Intermittent', sum((s) => cnt(s, 'intermittent')), '', split((s) => cnt(s, 'intermittent'))],
-].map(([l, n, c, s]) => `<div class="stat"><span class="label">${l}</span><span class="big ${c}">${n}</span><span class="split">${s}</span></div>`).join('');
+].map(([l, n, c, s]) => `<div class="stat"><span class="label">${l}</span><span class="big ${c}">${n}</span><span class="split">${s}</span></div>`).join('') + lastNightStat();
 
 // ----- what changed
 const newItems = FUNC.flatMap((s) => s.started.map((n) => ({ ...n, suite: s.short, series: s.id })));
@@ -486,7 +505,12 @@ const hideTip = () => { tip.hidden = true; };
     const i = Math.max(0, Math.min(N - 1, Math.round(((px - m.l) / iw) * (N - 1))));
     const d = D.dates[i];
     xh.setAttribute('x1', x(i)); xh.setAttribute('x2', x(i)); xh.setAttribute('opacity', '.5');
-    const rows = FUNC.map((s, si) => vals[si][i] == null ? `<span class="k">${esc(s.short)}:</span> no results` : `<span class="k">${esc(s.short)}:</span> <b>${vals[si][i]}</b> failing`).join('<br>');
+    const rows = FUNC.map((s, si) => {
+      if (vals[si][i] == null) return `<span class="k">${esc(s.short)}:</span> no results`;
+      const t = s.testCounts && s.testCounts[d];
+      const of = t && t.tests != null ? ` of ${num(t.passed + t.failing)} run · ${num(t.skipped)} skipped` : '';
+      return `<span class="k">${esc(s.short)}:</span> <b>${vals[si][i]}</b> failing${of}`;
+    }).join('<br>');
     showTip(`<b>${fmt(d)}</b><br>${rows}${D.commits[d] ? `<br><span class="k">commit</span> ${D.commits[d]}` : ''}`, e.clientX, e.clientY);
   });
   hit.addEventListener('mouseleave', () => { xh.setAttribute('opacity', '0'); hideTip(); });
@@ -529,7 +553,7 @@ function suite(s) {
   const dormant = s.tests.filter((t) => t.cls === 'dormant');
   const note = [clusterText(s) && `cluster ${clusterText(s)}`, s.ran.length ? `first reported ${fmt(s.ran[0])}` : 'no results yet: every run in the window aborted'].filter(Boolean).join(' · ');
   return `<div class="tl-card">
-    <div class="tl-head"><h3>${esc(s.label)}</h3><span class="preset">${esc(s.preset)} · ${s.ran.length} nights reported · ${esc(note)}</span></div>
+    <div class="tl-head"><h3>${esc(s.label)}</h3><span class="preset">${esc(s.preset)} · ${s.ran.length} nights reported · ${esc(note)}</span>${s.latest ? `<span class="tl-tests">${fmt(s.latest.date)}: ${testsLine(s.latest)}</span>` : ''}</div>
     ${live.length ? grid(s, live) : `<p class="sub" style="padding:14px 20px">No failures in the last ${WIN} days.</p>`}
     ${dormant.length ? `<details class="dormant"><summary>${dormant.length} more tests failed earlier but not in the last ${WIN} days</summary>${grid(s, dormant)}</details>` : ''}
   </div>`;

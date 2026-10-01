@@ -116,6 +116,8 @@ export interface TriageReport {
     degraded: string[];
     aborted: ReportSeries["aborted"];
     active: boolean;
+    /** The latest night, counted in tests (and in test cases, as fit-cli's results table does). */
+    latest?: ReportSeries["latest"];
   }[];
   findings: TriageFinding[];
   /**
@@ -260,6 +262,7 @@ export function buildTriageReport(report: HealthReport, records: RunRecord[], no
       degraded: rs.degraded,
       aborted: rs.aborted,
       active: rs.active,
+      ...(rs.latest ? { latest: rs.latest } : {}),
     })),
     findings,
     testsSeen: testsSeen(inWindow, addDays(report.end, -(WINDOW_DAYS - 1)), report.end),
