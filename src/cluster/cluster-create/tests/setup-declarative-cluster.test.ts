@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ClusterCommandExecutor } from "../allocate-cluster.js";
-import { CBDINOCLUSTER_REMOVE_ALL_TIMEOUT, CBDINOCLUSTER_RM_TIMEOUT, cbdinoclusterNeedsInit, dockerNetworkFromInitArgs, remoteCbdinoclusterCloudEnabled, removeClusterArgs, removeRunCapellaClustersArgs, setupDeclarativeCluster } from "../setup-declarative-cluster.js";
+import { CBDINOCLUSTER_REMOVE_ALL_TIMEOUT, CBDINOCLUSTER_RM_TIMEOUT, cbdinoclusterNeedsInit, dockerNetworkFromInitArgs, remoteCbdinoclusterCloudEnabled, removeClusterArgs, removeRunCapellaClustersArgs, rmOutputShowsClusterGone, setupDeclarativeCluster } from "../setup-declarative-cluster.js";
 
 const CLUSTER_PS_OUTPUT = `2026-06-03T13:02:18.157+0100    INFO    logger initialized
 Clusters:
@@ -260,6 +260,25 @@ test("setupDeclarativeCluster initializes cbdinocluster before retrying ps", asy
 test("removeClusterArgs bounds the removal so a foreign stuck cluster cannot hold the wait", () => {
   assert.deepEqual(removeClusterArgs("abc123"), ["rm", "--timeout", CBDINOCLUSTER_RM_TIMEOUT, "abc123"]);
   assert.ok(removeClusterArgs("abc123").includes("--timeout"));
+});
+
+const RM_LOGGER_LINE = "2026-09-29T10:00:00.000Z\tINFO\tlogger initialized\n";
+const RM_IDENTIFY_FATAL =
+  '2026-09-29T10:00:01.000Z\tFATAL\tfailed to identify cluster using specified identifier\t{"identifier": "abc123"}\n';
+const RM_LIST_WARN =
+  '2026-09-29T10:00:00.500Z\tWARN\tfailed to list clusters\t{"error": "context deadline exceeded", "deployer": "cloud"}\n';
+
+test("rmOutputShowsClusterGone treats an unknown id as already removed", () => {
+  assert.equal(rmOutputShowsClusterGone(RM_LOGGER_LINE + RM_IDENTIFY_FATAL), true);
+});
+
+test("rmOutputShowsClusterGone keeps a failure when a deployer could not list its clusters", () => {
+  assert.equal(rmOutputShowsClusterGone(RM_LOGGER_LINE + RM_LIST_WARN + RM_IDENTIFY_FATAL), false);
+});
+
+test("rmOutputShowsClusterGone keeps every other failure", () => {
+  assert.equal(rmOutputShowsClusterGone(""), false);
+  assert.equal(rmOutputShowsClusterGone(`${RM_LOGGER_LINE}2026-09-29T10:00:01.000Z\tFATAL\tfailed to remove cluster\n`), false);
 });
 
 test("removeRunCapellaClustersArgs targets the cloud deployer with the run's exact stamp", () => {

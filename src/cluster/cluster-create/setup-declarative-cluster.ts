@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { type RunOutput } from "../../util/non-fit/artifacts.js";
 import { isMain, runCli } from "../../util/non-fit/cli.js";
 import type { PieceData } from "../../util/non-fit/config-pieces.js";
-import { ensureRunDir } from "../../util/non-fit/replay.js";
+import { ensureRunDir, sanitizePathSeg } from "../../util/non-fit/replay.js";
 import { posixQuote } from "../../util/non-fit/remote-target.js";
 import { findOnPath } from "../../util/non-fit/which.js";
 import { CAPELLA_DEFAULT_CREDENTIALS, DEFAULT_CREDENTIALS } from "../cluster-select/ask-credentials.js";
@@ -696,6 +696,15 @@ export function removeClusterArgs(id: string): string[] {
   return ["rm", "--timeout", CBDINOCLUSTER_RM_TIMEOUT, id];
 }
 
+/**
+ * Whether a failed `cbdinocluster rm` output means the cluster is already gone.
+ * cbdinocluster also fails to identify the cluster when a deployer cannot list
+ * its clusters. In that case the cluster can still exist, so it stays a failure.
+ */
+export function rmOutputShowsClusterGone(output: string): boolean {
+  return output.includes("failed to identify cluster") && !output.includes("failed to list clusters");
+}
+
 /** Remove a cbdinocluster cluster, streaming progress. Resolves whether it worked. */
 export async function removeCluster(
   cbdinocluster: string,
@@ -703,11 +712,25 @@ export async function removeCluster(
   execution: ClusterCommandExecutor,
 ): Promise<boolean> {
   console.log(`\nRemoving cluster ${id}...`);
+  // The output also goes to a file, because a failure is only told apart from
+  // "already gone" by what cbdinocluster printed.
+  const localOutputFile = join(ensureRunDir(), `cbdinocluster-rm-${sanitizePathSeg(id)}.log`);
+  const targetOutputFile = execution.targetFilePath(localOutputFile);
   try {
-    await execution.run(cbdinocluster, removeClusterArgs(id));
+    await execution.streamToTerminalAndFile(cbdinocluster, removeClusterArgs(id), targetOutputFile);
     console.log(`\n✓ Removed cluster ${id}`);
     return true;
   } catch (err) {
+    let output = "";
+    try {
+      output = readFileSync(await execution.collectFile(targetOutputFile, localOutputFile), "utf8");
+    } catch {
+      // Best effort. The file does not exist if the command never started.
+    }
+    if (rmOutputShowsClusterGone(output)) {
+      console.log(`\n✓ Cluster ${id} not found, probably already removed`);
+      return true;
+    }
     console.error(`\n✗ Failed to remove cluster ${id}: ${(err as Error).message}`);
     return false;
   }
