@@ -30,6 +30,7 @@ import { parseClusterIds, type CbdinoCluster } from "../cluster-select/parse-clu
 import { parseConnstr } from "../cluster-select/parse-connstr.js";
 import {
   allocateCluster,
+  isRemoteExecution,
   localClusterCommandExecutor,
   type ClusterCommandExecutor,
 } from "./allocate-cluster.js";
@@ -90,11 +91,6 @@ async function resolveCbdinoclusterCommand(
 
 export function cbdinoclusterNeedsInit(message: string): boolean {
   return message.includes(CBDINOCLUSTER_INIT_REQUIRED);
-}
-
-/** Whether the executor runs on a remote box (vs. this machine). */
-function isRemoteExecution(execution: ClusterCommandExecutor): boolean {
-  return "kind" in execution && (execution as { kind?: string }).kind === "remote";
 }
 
 /**
@@ -209,8 +205,9 @@ export function dockerNetworkFromInitArgs(args: string): string | undefined {
  * `--disable-github`. The run's own Capella API key pool flags are appended the
  * same way (see {@link capellaKeyPoolInitArgs}), and the returned
  * `capellaKeyPool` tells teardown whether there is a pool to remove. The run's
- * purpose stamp also becomes the config's purpose prefix, so every allocate on the
- * box carries it, including the ones the FIT suite makes on its own. Afterwards
+ * purpose stamp also becomes the config's purpose prefix. This is the only source
+ * of the stamp on the box, for fit-cli's own allocate and for the ones the FIT
+ * suite makes on its own. Afterwards
  * the docker network the args name is created if it isn't a built-in
  * (cbdinocluster init records the network but doesn't create it).
  *
@@ -235,9 +232,8 @@ export async function runCbdinoclusterInit(
     : ["--disable-github"];
   const poolArgs = capellaKeyPoolInitArgs(initArgs, allocatePurpose());
   // FIT drives cbdinocluster on the box and passes its own --purpose. The prefix
-  // puts the run stamp in front of it, so teardown and the hourly sweep, which
-  // both match by prefix, own those clusters too. Applied whatever the deployer,
-  // and this is a throwaway box config.
+  // puts the run stamp in front of it, so teardown and the hourly sweep own those
+  // clusters too. Applied whatever the deployer, and this is a throwaway box config.
   const purposeArgs = ["--purpose-prefix", allocatePurpose()];
   console.log(
     `→ setup-cluster: initializing cbdinocluster on ${execution.description} with \`cbdinocluster init ${args}\``,
@@ -348,7 +344,8 @@ export async function remoteCbdinoclusterCloudEnabled(
 /**
  * Prepare `~/.cbdinocluster` from a definition's init setup, picking the right
  * path: the `args` path runs `cbdinocluster init <args>` (and merges any
- * `configPatch`); the legacy `config` path uploads a config object verbatim (CNG).
+ * `configPatch`); the legacy `config` path uploads a config object (CNG) with the
+ * run's purpose prefix added.
  * Used by the situational flow, which sets up its own cluster outside
  * {@link setupDeclarativeCluster}. Reports whether init created the run's Capella
  * API key pool, so teardown knows there is one to remove, and the cbdinocluster
@@ -390,9 +387,15 @@ export async function prepareCbdinoclusterConfig(
   if (!config || !("kind" in execution) || execution.kind !== "remote") {
     return;
   }
-  const configToUpload: PieceData = githubCredentials
-    ? { ...config, github: { enabled: "true", user: githubCredentials.user, token: githubCredentials.token } }
-    : config;
+  // Same purpose prefix as runCbdinoclusterInit, so this run's teardown removes
+  // every cluster allocated on the box.
+  const configToUpload: PieceData = {
+    ...config,
+    "purpose-prefix": allocatePurpose(),
+    ...(githubCredentials
+      ? { github: { enabled: "true", user: githubCredentials.user, token: githubCredentials.token } }
+      : {}),
+  };
   console.log(
     `→ setup-cluster: uploading cbdinocluster config to ${execution.description} as ${CBDINOCLUSTER_DEFAULT_REMOTE_CONFIG_PATH}`,
   );
@@ -417,12 +420,17 @@ async function listExistingClusters(
       return undefined;
     }
 
+    // A remote box gets the run stamp as its purpose prefix. On this machine the
+    // config is the operator's own and outlives the run, so it gets no prefix.
+    const initArgs = isRemoteExecution(execution)
+      ? ["init", "--auto", "--purpose-prefix", allocatePurpose()]
+      : ["init", "--auto"];
     console.log(
       `→ setup-cluster: ${execution.description} has no cbdinocluster config yet — ` +
-        `initializing a default one with \`${cbdinocluster} init --auto\`.`,
+        `initializing a default one with \`${cbdinocluster} ${initArgs.join(" ")}\`.`,
     );
     try {
-      await execution.runHiddenUntilFailure(cbdinocluster, ["init", "--auto"]);
+      await execution.runHiddenUntilFailure(cbdinocluster, initArgs);
     } catch (initErr) {
       console.error(`\n✗ setup-cluster: couldn't initialize cbdinocluster: ${(initErr as Error).message}`);
       return undefined;
@@ -760,7 +768,10 @@ export async function removeCapellaApiKeyPool(
   }
 }
 
-/** Build the `cbdinocluster remove-all cloud --purpose <purpose>` args. Matched by prefix. */
+/**
+ * Build the `cbdinocluster remove-all cloud --purpose <purpose>` args. A cluster
+ * matches when its purpose equals the stamp or starts with the stamp plus a dash.
+ */
 export function removeRunCapellaClustersArgs(purpose: string): string[] {
   return ["remove-all", "cloud", "--purpose", purpose, "--timeout", CBDINOCLUSTER_REMOVE_ALL_TIMEOUT];
 }
@@ -769,10 +780,10 @@ export function removeRunCapellaClustersArgs(purpose: string): string[] {
  * Remove every Capella cluster and project still carrying this run's purpose
  * stamp. The per-group `rm` removes the cluster fit-cli knows the id of, but an
  * allocate that failed part way, or a group whose `rm` failed, leaves projects
- * fit-cli holds no id for. `remove-all` matches the purpose by prefix, so a cluster
- * whose purpose is the stamp plus a FIT label still matches. The stamp is unique to
- * the run, so this can never touch another run's clusters. No `--expired-only`
- * because the run is over, so anything still stamped with it is garbage.
+ * fit-cli holds no id for. A cluster matches when its purpose equals the stamp or
+ * starts with the stamp plus a dash, so FIT's `<stamp>-FIT-SIT` matches too. The
+ * stamp is unique to the run, so this can never touch another run's clusters. It
+ * removes expired and live clusters, because the run is over.
  *
  * Must run before the key pool is removed (it needs working keys) and before the
  * box is terminated (the config lives on the box). Best effort like
@@ -1234,7 +1245,7 @@ export async function setupDeclarativeCluster(plan: {
     return FAILED();
   }
 
-  // CNG uploads a config object verbatim. For the docker path, run cbdinocluster init
+  // CNG uploads a config object. For the docker path, run cbdinocluster init
   // with explicit args from the definition if present, or generate the standard
   // functional defaults. An empty init block ({}) means "run default init".
   let capellaKeyPool = false;
