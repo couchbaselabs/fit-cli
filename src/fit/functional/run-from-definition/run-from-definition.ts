@@ -705,7 +705,7 @@ export async function setupCluster(
           ...(outcome.clusterId ? { clusterId: outcome.clusterId } : {}),
           ...(outcome.cbdinocluster ? { cbdinoclusterCommand: outcome.cbdinocluster } : {}),
           ...(outcome.deployer ? { deployer: outcome.deployer } : {}),
-          // allocateCluster stamped this same value (same process, same run dir).
+          // The cluster carries this same stamp (same process, same run dir).
           ...(outcome.allocated ? { purpose: allocatePurpose() } : {}),
           logsDir: join(clusterDir, "server-logs"),
           ...(outcome.couchbaseClusterUuid ? { couchbaseClusterUuid: outcome.couchbaseClusterUuid } : {}),

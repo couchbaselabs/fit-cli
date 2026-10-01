@@ -67,6 +67,11 @@ export interface ClusterCommandExecutor {
   commandAvailable(command: string): Promise<boolean>;
 }
 
+/** Whether the executor runs on a remote box (vs. this machine). */
+export function isRemoteExecution(execution: ClusterCommandExecutor): boolean {
+  return "kind" in execution && (execution as { kind?: string }).kind === "remote";
+}
+
 export function localClusterCommandExecutor(): ClusterCommandExecutor {
   return {
     description: "this machine",
@@ -167,11 +172,13 @@ export async function allocateCluster(
   // 31h claim can starve other users. Expire those quickly instead.
   const sharedResourceDeployer = deployer === "cloud" || cng;
   args.push(sharedResourceDeployer ? "--expiry=3h" : "--expiry=31h");
-  // The per-run stamp is how a leaked cluster is traced back to its run, and how
-  // the capella-clusters sweeper tells fit-cli's Capella projects from other
-  // teams'. cbdinocluster puts it in the Capella project name and in the
-  // `cbdc2.purpose` label on the docker/CNG deployers.
-  args.push(`--purpose=${allocatePurpose()}`);
+  // Every cluster of the run carries the run stamp as its purpose. A remote box
+  // gets it from the purpose prefix in its config, so a flag here would double it.
+  // This machine gets it from the flag, because fit-cli never writes the
+  // operator's own config.
+  if (!isRemoteExecution(execution)) {
+    args.push(`--purpose=${allocatePurpose()}`);
+  }
   args.push(`--def-file=${defFile}`);
 
   mkdirSync(cycleDir, { recursive: true, mode: 0o700 });

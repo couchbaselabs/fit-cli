@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import YAML from "yaml";
 import type { ClusterCommandExecutor } from "../allocate-cluster.js";
+import { allocatePurpose } from "../allocate-purpose.js";
 import { CBDINOCLUSTER_REMOVE_ALL_TIMEOUT, CBDINOCLUSTER_RM_TIMEOUT, cbdinoclusterNeedsInit, dockerNetworkFromInitArgs, remoteCbdinoclusterCloudEnabled, removeClusterArgs, removeRunCapellaClustersArgs, rmOutputShowsClusterGone, setupDeclarativeCluster } from "../setup-declarative-cluster.js";
 
 const CLUSTER_PS_OUTPUT = `2026-06-03T13:02:18.157+0100    INFO    logger initialized
@@ -53,6 +56,12 @@ function executor(): ClusterCommandExecutor & {
     collectFile: (_targetPath: string, localPath: string) => Promise.resolve(localPath),
     commandAvailable: () => Promise.resolve(true),
   };
+}
+
+/** The same fake as {@link executor}, run on this machine. */
+function localExecutor(): Omit<ReturnType<typeof executor>, "kind"> {
+  const { kind: _kind, ...local } = executor();
+  return local;
 }
 
 test("cbdinoclusterNeedsInit spots the init-required failure", () => {
@@ -254,6 +263,38 @@ test("setupDeclarativeCluster initializes cbdinocluster before retrying ps", asy
     },
   ]);
   assert.equal(result.allocated, false);
+  assert.equal(result.cluster?.defaultHostname, "172.18.0.2");
+  // The uploaded config carries the run stamp as its purpose prefix.
+  const uploaded = YAML.parse(readFileSync(execution.stagedFiles[0].localPath, "utf8")) as Record<string, unknown>;
+  assert.equal(uploaded["purpose-prefix"], allocatePurpose());
+  assert.deepEqual(uploaded.docker, { enabled: "true", network: "fit" });
+});
+
+test("setupDeclarativeCluster sets the purpose prefix when it runs `init --auto` on a remote box", async () => {
+  const execution = executor();
+  const result = await setupDeclarativeCluster(
+    {
+      config: { nodes: [{ count: 1, version: "8.1.0", services: ["kv"] }] },
+      onClusterExists: "useExisting",
+    },
+    execution,
+  );
+  assert.deepEqual(execution.runCalls, [
+    { command: "cbdinocluster", args: ["init", "--auto", "--purpose-prefix", allocatePurpose()] },
+  ]);
+  assert.equal(result.cluster?.defaultHostname, "172.18.0.2");
+});
+
+test("setupDeclarativeCluster runs `init --auto` without a purpose prefix on this machine", async () => {
+  const execution = localExecutor();
+  const result = await setupDeclarativeCluster(
+    {
+      config: { nodes: [{ count: 1, version: "8.1.0", services: ["kv"] }] },
+      onClusterExists: "useExisting",
+    },
+    execution,
+  );
+  assert.deepEqual(execution.runCalls, [{ command: "cbdinocluster", args: ["init", "--auto"] }]);
   assert.equal(result.cluster?.defaultHostname, "172.18.0.2");
 });
 

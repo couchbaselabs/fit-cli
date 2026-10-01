@@ -19,9 +19,13 @@ test("writeClusterDef writes into the provided cluster directory", () => {
   assert.equal(readFileSync(result.path, "utf8"), def);
 });
 
-/** Fake executor that records the args passed to `cbdinocluster allocate` and fakes a successful allocation. */
-function fakeExecutor(): ClusterCommandExecutor & { capturedArgs: string[] } {
+/**
+ * Fake executor that records the args passed to `cbdinocluster allocate` and fakes a successful allocation.
+ * Runs on this machine unless `kind` is "remote".
+ */
+function fakeExecutor(kind?: "remote"): ClusterCommandExecutor & { capturedArgs: string[] } {
   const executor = {
+    ...(kind ? { kind } : {}),
     description: "fake",
     capturedArgs: [] as string[],
     run: () => Promise.resolve(),
@@ -56,9 +60,17 @@ test("allocateCluster sets a short expiry for shared resources (Capella, CNG) an
   assert.ok(dockerExecutor.capturedArgs.includes("--expiry=31h"));
 });
 
-test("allocateCluster always tags the allocate call with --purpose", async () => {
+test("allocateCluster tags a local allocate with --purpose", async () => {
   const cycleDir = join(ensureRunDir(), "instances", "0", "clusters", "0");
   const executor = fakeExecutor();
   await allocateCluster("cbdinocluster", "def", "docker", executor, cycleDir);
   assert.ok(executor.capturedArgs.includes(`--purpose=${allocatePurpose()}`));
+});
+
+test("allocateCluster passes no --purpose on a remote box, whose config prefix carries the stamp", async () => {
+  const cycleDir = join(ensureRunDir(), "instances", "0", "clusters", "0");
+  const executor = fakeExecutor("remote");
+  await allocateCluster("cbdinocluster", "def", "cloud", executor, cycleDir);
+  assert.ok(executor.capturedArgs.includes("allocate"));
+  assert.ok(!executor.capturedArgs.some((arg) => arg.startsWith("--purpose")));
 });
