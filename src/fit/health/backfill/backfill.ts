@@ -1,0 +1,247 @@
+#!/usr/bin/env node
+/**
+ * Fill in run records for an opted-in SDK's nightly runs that GitHub still holds.
+ *
+ *   bun src/fit/health/backfill/backfill.ts <sdk> [--limit N] [--store <dir>] [--dry-run]
+ *
+ * For every nightly run with no manifest (or one worth retrying - see needsWork), fetch
+ * the whole-run log with `gh run view --log`, keep it, parse it, and write its records.
+ * Safe to rerun: a run that already has a manifest is skipped, so a rerun does only the
+ * missing work. Newest first, so an interrupted backfill loses the fewest nights to
+ * GitHub's 90-day log retention.
+ *
+ * Fetch the whole-run log, not per job: ~5s for every job at once, versus 30-60s per job.
+ */
+import { readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import type { RunOutput } from "../../../util/non-fit/artifacts.js";
+import { isMain, runCli } from "../../../util/non-fit/cli.js";
+import { fitCliInfo, fitCliWarn } from "../../../util/non-fit/fit-cli-log.js";
+import { streamToFile } from "../../../util/non-fit/proc.js";
+import { ensureRunDir } from "../../../util/non-fit/replay.js";
+import { LOG_PARSER_VERSION } from "../log-parse/parse-run-log.js";
+import { MANIFEST_SCHEMA, needsArchiveUpgrade, needsWork, type RunManifest } from "../record/run-manifest.js";
+import { healthOptIn } from "../registry/health-opt-ins.js";
+import { type LocalHealthStore, defaultHealthStoreRoot } from "../store/health-store.js";
+import { openStore, type OpenedStore } from "../store/s3-store.js";
+import { ingestLog, recordFetchFailure } from "./ingest-log.js";
+import { listNightlyRuns, type CiRun } from "./list-runs.js";
+import { upgradeFromArchive } from "./upgrade-from-archive.js";
+import { checkStore, renderChecks } from "./checks.js";
+import { printWithoutTimestamps } from "../../../util/non-fit/fit-cli-log.js";
+
+/** A fetch error that means GitHub no longer has the log, so retrying is pointless. */
+export function isExpiredLogError(message: string): boolean {
+  return /\b(410|gone|expired)\b|log (?:not found|is not available)|could not find any logs/i.test(message);
+}
+
+export interface BackfillOptions {
+  store: LocalHealthStore;
+  limit?: number;
+  dryRun?: boolean;
+  /** Skip reading JUnit from the runs' S3 archives (e.g. without AWS credentials). */
+  skipArchives?: boolean;
+}
+
+export interface BackfillSummary {
+  listed: number;
+  alreadyDone: number;
+  ingested: number;
+  parseErrors: number;
+  fetchFailures: number;
+  records: number;
+  /** Records upgraded to full JUnit from the runs' S3 archives. */
+  archiveUpgraded: number;
+  archiveRuns: number;
+  pending: CiRun[];
+  warnings: string[];
+}
+
+export async function backfill(sdk: string, opts: BackfillOptions): Promise<BackfillSummary> {
+  const optIn = healthOptIn(sdk);
+  if (!optIn) throw new Error(`${sdk} has not opted in to fit health - add it to src/fit/health/registry/health-opt-ins.ts`);
+  const { runs, warnings } = await listNightlyRuns(optIn);
+  for (const w of warnings) fitCliWarn(w);
+
+  const todo = runs.filter((r) => needsWork(opts.store.readManifest(sdk, r.runId, r.runAttempt), LOG_PARSER_VERSION));
+  const batch = opts.limit ? todo.slice(0, opts.limit) : todo;
+  const summary: BackfillSummary = {
+    listed: runs.length,
+    alreadyDone: runs.length - todo.length,
+    ingested: 0,
+    parseErrors: 0,
+    fetchFailures: 0,
+    records: 0,
+    archiveUpgraded: 0,
+    archiveRuns: 0,
+    pending: batch,
+    warnings,
+  };
+  fitCliInfo(`${runs.length} nightly runs on GitHub; ${summary.alreadyDone} already stored; ${todo.length} to fetch${batch.length < todo.length ? ` (this pass: ${batch.length})` : ""}.`);
+  if (opts.dryRun) return summary;
+
+  const scratch = join(ensureRunDir(), "fetched-log.txt");
+  for (const [i, run] of batch.entries()) {
+    const meta = {
+      sdk,
+      date: run.date,
+      ci: { repo: optIn.repo, workflow: run.workflow, ref: `refs/heads/${run.branch}`, sha: run.sha, event: run.event, runId: run.runId, runAttempt: run.runAttempt },
+    };
+    fitCliInfo(`[${i + 1}/${batch.length}] ${run.date} run ${run.runId} (attempt ${run.runAttempt})`);
+    rmSync(scratch, { force: true });
+    try {
+      await streamToFile(
+        "gh",
+        ["run", "view", String(run.runId), "-R", optIn.repo, "--attempt", String(run.runAttempt), "--log"],
+        scratch,
+        process.cwd(),
+        { quiet: true },
+      );
+    } catch (err) {
+      // streamToFile's error only carries the exit code; gh's own message is in the file.
+      const ghSaid = safeRead(scratch).split("\n").filter((l) => l.trim() && !l.startsWith("# ")).join(" ").trim();
+      const message = [String(err instanceof Error ? err.message : err), ghSaid].filter(Boolean).join(": ");
+      const expired = isExpiredLogError(message);
+      recordFetchFailure(opts.store, meta, expired, message);
+      summary.fetchFailures++;
+      fitCliWarn(`  could not fetch the log${expired ? " (GitHub has deleted it)" : ""}: ${message.slice(0, 200)}`);
+      continue;
+    }
+    const manifest = ingestLog(opts.store, meta, readFileSync(scratch, "utf8"));
+    summary.ingested++;
+    summary.records += manifest.records.length;
+    if (manifest.status === "parse_error") {
+      summary.parseErrors++;
+      fitCliWarn(`  parse error (kept; retried only when the parser changes): ${manifest.reason}`);
+    } else {
+      fitCliInfo(`  ${manifest.records.length} records${manifest.warnings?.length ? `, ${manifest.warnings.length} warnings` : ""}`);
+    }
+  }
+  rmSync(scratch, { force: true });
+
+  if (!opts.skipArchives) await upgradeAll(sdk, opts, summary);
+  return summary;
+}
+
+/**
+ * Second pass: upgrade scraped records to full JUnit from each run's S3 archive. Separate
+ * from the log pass so a run whose log was stored earlier (or imported) is upgraded too.
+ */
+async function upgradeAll(sdk: string, opts: BackfillOptions, summary: BackfillSummary): Promise<void> {
+  const manifests = opts.store
+    .list(`${sdk}/manifests`)
+    .map((k) => JSON.parse(opts.store.read(k)!.toString("utf8")) as RunManifest)
+    .filter((m) => m.schema === MANIFEST_SCHEMA && needsArchiveUpgrade(m))
+    .sort((a, b) => b.date.localeCompare(a.date));
+  const batch = opts.limit ? manifests.slice(0, opts.limit) : manifests;
+  if (!batch.length) return;
+  fitCliInfo(`\nUpgrading ${batch.length} runs from the JUnit in their S3 archives (the log names at most 3 failures per package)...`);
+  for (const [i, m] of batch.entries()) {
+    const a = await upgradeFromArchive(opts.store, m);
+    summary.archiveRuns++;
+    summary.archiveUpgraded += a.upgraded.length;
+    fitCliInfo(`[${i + 1}/${batch.length}] ${m.date} run ${m.runId}: ${a.status}, ${a.upgraded.length} upgraded${a.skipped.length ? `, ${a.skipped.length} left as scraped` : ""}${a.reason ? ` (${a.reason})` : ""}`);
+  }
+}
+
+function safeRead(path: string): string {
+  try {
+    return readFileSync(path, "utf8").slice(0, 4000);
+  } catch {
+    return "";
+  }
+}
+
+export function backfillHelp(prefix: string): string {
+  return `Fill in run records for an opted-in SDK's nightly runs that GitHub still holds.
+
+Usage:
+  ${prefix} <sdk> [--limit N] [--store <dir>] [--dry-run]
+
+  --limit     Fetch at most N runs this pass (newest first). Rerun to continue.
+  --store     Store: a directory, or s3://bucket/prefix/ for the shared store (default:
+              ${defaultHealthStoreRoot()}, or $FIT_HEALTH_STORE).
+  --dry-run   List what would be fetched; fetch nothing.
+  --no-archives  Don't read JUnit from the runs' S3 archives (needs AWS credentials).
+  --create-store  Create the SDK's part of an S3 store if it doesn't exist yet (first run only).
+
+Two passes, both safe to rerun (anything already done is skipped):
+  1. fetch each nightly's log with \`gh\` and scrape it (GitHub keeps logs 90 days);
+  2. replace the scraped records with ones built from the full JUnit in the run's S3
+     archive (kept 180 days) - the log names at most 3 failures per Java package.
+Needs \`gh\` with read access to the SDK's repo, and AWS credentials for s3://fit-cli/runs/.`;
+}
+
+/** Parse `<sdk> [--limit N] [--store dir] [--dry-run]`. */
+export interface BackfillArgs {
+  sdk?: string;
+  limit?: number;
+  store?: string;
+  dryRun: boolean;
+  skipArchives: boolean;
+  createStore: boolean;
+}
+
+export function parseBackfillArgs(argv: string[]): BackfillArgs {
+  const out: { sdk?: string; limit?: number; store?: string; dryRun: boolean; skipArchives: boolean; createStore: boolean } = { dryRun: false, skipArchives: false, createStore: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--limit") out.limit = Number(argv[++i]);
+    else if (a === "--store") out.store = argv[++i];
+    else if (a === "--dry-run") out.dryRun = true;
+    else if (a === "--no-archives") out.skipArchives = true;
+    else if (a === "--create-store") out.createStore = true;
+    else if (!a.startsWith("-") && !out.sdk) out.sdk = a;
+    else throw new Error(`Unexpected argument: ${a}`);
+  }
+  if (out.limit !== undefined && !(Number.isInteger(out.limit) && out.limit > 0)) throw new Error("--limit must be a positive integer");
+  return out;
+}
+
+export async function runBackfillCommand(argv: string[], prefix: string): Promise<Partial<RunOutput>> {
+  if (argv.includes("--help") || argv.includes("-h")) {
+    console.log(backfillHelp(prefix));
+    return {};
+  }
+  const args = parseBackfillArgs(argv);
+  if (!args.sdk) throw new Error(`Name an SDK.\n\n${backfillHelp(prefix)}`);
+  const opened = await openStore(args.store ?? process.env.FIT_HEALTH_STORE, args.sdk, { create: args.createStore });
+  try {
+    return await backfillAndCheck({ ...args, sdk: args.sdk }, opened);
+  } finally {
+    opened.close();
+  }
+}
+
+async function backfillAndCheck(args: BackfillArgs & { sdk: string }, opened: OpenedStore): Promise<Partial<RunOutput>> {
+  const store = opened.store;
+  let s: BackfillSummary;
+  try {
+    s = await backfill(args.sdk, { store, limit: args.limit, dryRun: args.dryRun, skipArchives: args.skipArchives });
+  } finally {
+    // Push whatever was done, even if a later run failed: every step is safe to redo.
+    if (!args.dryRun) await opened.flush();
+  }
+  if (args.dryRun) {
+    for (const r of s.pending) console.log(`  would fetch ${r.date} run ${r.runId}#${r.runAttempt}`);
+    return {};
+  }
+  fitCliInfo(`\nFetched ${s.ingested} run logs → ${s.records} records; ${s.parseErrors} parse errors; ${s.fetchFailures} fetch failures.`);
+  if (s.archiveRuns) fitCliInfo(`Upgraded ${s.archiveUpgraded} records from ${s.archiveRuns} runs' S3 archives.`);
+  fitCliInfo(`Store: ${opened.location}`);
+  const checks = checkStore(store, args.sdk);
+  printWithoutTimestamps(`\n${renderChecks(checks)}`);
+  if (!checks.pass) process.exitCode = 1;
+  return {
+    details: [
+      { label: "Store", value: opened.location },
+      { label: "Report", value: `fit health report ${args.sdk}` },
+    ],
+    artifacts: [],
+  };
+}
+
+if (isMain(import.meta.url)) {
+  runCli(() => runBackfillCommand(process.argv.slice(2), "bun src/fit/health/backfill/backfill.ts"));
+}
+

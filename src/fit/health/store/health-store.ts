@@ -1,0 +1,93 @@
+/**
+ * Where run records, manifests and raw logs live. Keys are relative paths
+ * (`dotnet/records/2026/...json`) so a local directory and, later, an S3 prefix
+ * (s3://fit-cli/health/) are interchangeable. Only the local backend exists so far.
+ *
+ * Default root: ~/.fit-cli/health. Override with --store <dir> or FIT_HEALTH_STORE.
+ */
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import { FIT_CLI_CONFIG_DIRNAME } from "../../util/config.js";
+import { MANIFEST_SCHEMA, manifestKey, type RunManifest } from "../record/run-manifest.js";
+import { recordKey, type RunRecord } from "../record/run-record.js";
+
+export const HEALTH_STORE_ENV_VAR = "FIT_HEALTH_STORE";
+
+export function defaultHealthStoreRoot(env: NodeJS.ProcessEnv = process.env, home: string = homedir()): string {
+  return env[HEALTH_STORE_ENV_VAR]?.trim() || join(home, FIT_CLI_CONFIG_DIRNAME, "health");
+}
+
+export class LocalHealthStore {
+  constructor(readonly root: string) {}
+
+  /**
+   * The file for `key`. Keys come from the shared S3 index and from command arguments, so one
+   * that would land outside the store (`../`, an absolute path) is refused, never followed.
+   */
+  path(key: string): string {
+    const root = resolve(this.root);
+    const p = resolve(root, ...key.split("/"));
+    if (p !== root && !p.startsWith(root + sep)) throw new Error(`Refusing store key outside the store: ${JSON.stringify(key)}`);
+    return p;
+  }
+
+  has(key: string): boolean {
+    return existsSync(this.path(key));
+  }
+
+  read(key: string): Buffer | undefined {
+    const p = this.path(key);
+    return existsSync(p) ? readFileSync(p) : undefined;
+  }
+
+  write(key: string, data: string | Buffer): string {
+    const p = this.path(key);
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, data);
+    return p;
+  }
+
+  remove(key: string): void {
+    rmSync(this.path(key), { force: true });
+  }
+
+  /** Keys under a prefix, recursively, sorted. */
+  list(prefix: string): string[] {
+    const base = this.path(prefix);
+    if (!existsSync(base)) return [];
+    const out: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else out.push(relative(this.root, full).split(sep).join("/"));
+      }
+    };
+    walk(base);
+    return out.sort();
+  }
+
+  readManifest(sdk: string, runId: number, runAttempt: number): RunManifest | undefined {
+    const raw = this.read(manifestKey(sdk, runId, runAttempt));
+    if (!raw) return undefined;
+    const m = JSON.parse(raw.toString("utf8")) as RunManifest;
+    return m.schema === MANIFEST_SCHEMA ? m : undefined;
+  }
+
+  writeManifest(manifest: RunManifest): void {
+    this.write(manifestKey(manifest.sdk, manifest.runId, manifest.runAttempt), JSON.stringify(manifest, null, 1) + "\n");
+  }
+
+  writeRecord(record: RunRecord): string {
+    const key = recordKey(record);
+    this.write(key, JSON.stringify(record) + "\n");
+    return key;
+  }
+
+  readRecords(sdk: string): RunRecord[] {
+    return this.list(`${sdk}/records`)
+      .filter((k) => k.endsWith(".json"))
+      .map((k) => JSON.parse(this.read(k)!.toString("utf8")) as RunRecord);
+  }
+}

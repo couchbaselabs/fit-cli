@@ -22,6 +22,7 @@
     "archive": "bun src/fit/archive/archive.ts",
     "ingest": "bun src/fit/ingest/ingest.ts",
     "caps": "bun src/fit/caps/caps.ts",
+    "health": "bun src/fit/health/health.ts",
     "external-services": "bun src/fit/external-services/external-services-cli.ts",
     "upgrade": "bun src/fit/upgrade/upgrade.ts",
     "maintenance": "bun src/fit/maintenance/maintenance.ts",
