@@ -48,6 +48,8 @@ export interface RunManifest {
    * can differ from `ci.sha` (the commit the workflow checked out). From the log, like `driver`.
    */
   performerRevision?: Record<string, string>;
+  /** A newer parser couldn't read this run's log; its records are the earlier parser's, kept. */
+  reparseError?: { parserVersion: string; reason: string };
 }
 
 /** The SDK commit a record's run actually tested: its performer image's revision, else the workflow's commit. */

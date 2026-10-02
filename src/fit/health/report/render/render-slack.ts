@@ -50,7 +50,8 @@ const methods = (tests: string[]) => tests.map((t) => (t.includes(".") ? t.slice
 
 /** "Last night: 2,412 tests ran (1,584 on-prem · 828 CNG) · 410 skipped", counted in tests, not test cases. */
 export function lastNightTests(series: ReportSeries[]): string[] {
-  const known = series.filter((s) => s.latest?.tests != null);
+  // Only nights that are last night and usable: a preset that missed it, or had a bad one, isn't counted.
+  const known = series.filter((s) => s.latest?.usable && s.latest.tests != null);
   if (!known.length) return [];
   const ran = (s: ReportSeries) => s.latest!.passed! + s.latest!.failing;
   const n = (x: number) => x.toLocaleString("en-US");

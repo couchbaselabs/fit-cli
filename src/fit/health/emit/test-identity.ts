@@ -55,6 +55,11 @@ function driverQualifiers(): Map<string, Map<string, string>> {
   return cached;
 }
 
+/** The driver uses this simple class name in more than one package (so a log line can't say which). */
+export function isReusedClassName(simple: string, table: Map<string, Map<string, string>> = driverQualifiers()): boolean {
+  return table.has(simple.replace(/\$.*$/, ""));
+}
+
 /**
  * The class part of a test id for a fully-qualified JUnit class name. A nested class
  * (Outer$Inner) is qualified by its outer class's name.

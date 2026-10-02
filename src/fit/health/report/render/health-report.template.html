@@ -365,7 +365,8 @@ function testsLine(l) {
   return `<span title="${num(l.testCases)} ${CASES_NOTE}">${num(l.tests)} tests: ${num(l.passed)} passed · <b>${l.failing}</b> failing · ${num(l.skipped)} skipped</span>`;
 }
 function lastNightStat() {
-  const known = FUNC.filter((s) => s.latest && s.latest.tests != null);
+  // Only presets whose latest night is the report's end and usable add up into "last night".
+  const known = FUNC.filter((s) => s.latest && s.latest.usable && s.latest.tests != null);
   if (!known.length) return '';
   const ran = (s) => s.latest.passed + s.latest.failing;
   const skipped = known.reduce((a, s) => a + s.latest.skipped, 0);

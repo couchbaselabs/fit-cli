@@ -238,10 +238,52 @@ test("each night is counted in tests, not test cases; a log-only night says only
   addOutcome(tests, "Broken.", "e");
   const junit = rec("2026-09-01", { source: "run-archive-junit", passesKnown: true, tests, counts: { passed: 998, failed: 3, errored: 1, skipped: 1 } });
   assert.deepEqual(nightTests(junit), { testCases: 1003, tests: 4, passed: 1, failing: 2, skipped: 1 });
-  const scraped = rec("2026-09-02", { failing: ["A.x"] });
-  assert.deepEqual(nightTests(scraped), { testCases: 101, failing: 1 });
+  const scraped = rec("2026-09-02", { failing: ["A.x"], counts: { passed: 1002, failed: 1, errored: 0, skipped: 0 } });
+  assert.deepEqual(nightTests(scraped), { testCases: 1003, failing: 1 });
   const [s] = buildHealthReport("dotnet", [junit, scraped], [], { end: "2026-09-02" }).series;
-  assert.deepEqual(s.latest, { date: "2026-09-02", testCases: 101, failing: 1 });
+  assert.deepEqual(s.latest, { date: "2026-09-02", testCases: 1003, failing: 1, usable: true });
+});
+
+test("a night every preset ran but none could use is a blackout night too", () => {
+  const bulk = { counts: { passed: 1, failed: 1, errored: 40, skipped: 0 } };
+  const rs = days(1, 10).flatMap((d) => [
+    rec(d, { failing: ["A.x"], ...(d === "2026-09-05" ? bulk : {}) }),
+    rec(d, { preset: "op-cng-func-lite", failing: ["A.x"], ...(d === "2026-09-05" ? bulk : {}) }),
+  ]);
+  assert.deepEqual(buildHealthReport("dotnet", rs, [], { end: "2026-09-10" }).blackout, ["2026-09-05"]);
+});
+
+test("only presets whose latest night is the report's end, and usable, count as last night", async () => {
+  const { lastNightTests } = await import("../render/render-slack.js");
+  const junit = (d: string, preset: string, over: Partial<RunRecord> = {}) => {
+    const tests = {};
+    addOutcome(tests, "A.x", "p");
+    return rec(d, { preset, source: "run-archive-junit", passesKnown: true, tests, ...over });
+  };
+  const rs = [
+    ...days(1, 10).map((d) => junit(d, "op-onprem-func-lite")),
+    ...days(1, 8).map((d) => junit(d, "op-cng-func-lite")), // missed the last two nights
+  ];
+  const r = buildHealthReport("dotnet", rs, [], { end: "2026-09-10" });
+  const onprem = r.series.find((x) => x.preset === "op-onprem-func-lite")!;
+  const cng = r.series.find((x) => x.preset === "op-cng-func-lite")!;
+  assert.equal(onprem.latest?.usable, true);
+  assert.deepEqual([cng.latest?.date, cng.latest?.usable], ["2026-09-08", false]);
+  assert.match(lastNightTests(r.series).join(), /\*1\* tests ran \(1 on-prem\)/, "CNG's older night isn't added in");
+});
+
+test("a log-only night naming a reused class's test makes each qualified test unknown, not a history of its own", () => {
+  const junit = (d: string, o: "p" | "f") => {
+    const tests = {};
+    addOutcome(tests, "kv/GetTest.getX", o);
+    addOutcome(tests, "states/GetTest.getX", "p");
+    return rec(d, { source: "run-archive-junit", passesKnown: true, tests });
+  };
+  const rs = [junit("2026-09-01", "f"), rec("2026-09-02", { failing: ["GetTest.getX"] }), junit("2026-09-03", "f")];
+  const h = testHistories(buildSeries(rs)[0]);
+  assert.deepEqual(h.get("kv/GetTest.getX"), ["f", "u", "f"]);
+  assert.deepEqual(h.get("states/GetTest.getX"), ["p", "u", "p"]);
+  assert.equal(h.get("GetTest.getX"), undefined);
 });
 
 test("notes files are validated: only known fixes, keyed by an exact test id, with text", async () => {

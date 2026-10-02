@@ -8,6 +8,8 @@
  * Presets are never merged, even when they print identical tags: op-capella-sit-lite and
  * op-capella-pe-sit-lite differ only by their private-endpoint parameter.
  */
+import { asLogged } from "../emit/compare-records.js";
+import { isReusedClassName } from "../emit/test-identity.js";
 import { failingTests, type RunRecord } from "../record/run-record.js";
 import type { NightOutcome } from "./classify.js";
 
@@ -157,10 +159,36 @@ export function testHistories(series: Series, opts: { include?: Iterable<string>
   const pkgOfClass = new Map<string, string>();
   for (const n of series.nights) for (const [cls, pkg] of Object.entries(n.record.packages ?? {})) pkgOfClass.set(cls, pkg);
   const hiddenOn = new Map(series.nights.filter((n) => n.record.hiddenFailures).map((n) => [n.date, n.record.hiddenFailures!]));
+  // A log line names a class by its simple name, so for a name the driver reuses across
+  // packages ("GetTest.x") a log-only night can't say which test failed. Where JUnit nights
+  // have seen the qualified tests ("kv/GetTest.x"), each of them is unknown that night, rather
+  // than the log's name becoming a history of its own.
+  const qualifiedBySimple = new Map<string, Set<string>>();
+  for (const n of series.nights) {
+    if (!n.record.passesKnown) continue;
+    for (const [cls, o] of Object.entries(n.record.tests)) {
+      if (!cls.includes("/")) continue;
+      for (const m of [...(o.p ?? []), ...(o.f ?? []), ...(o.e ?? []), ...(o.s ?? [])]) {
+        const simple = asLogged(`${cls}.${m}`);
+        (qualifiedBySimple.get(simple) ?? qualifiedBySimple.set(simple, new Set()).get(simple)!).add(`${cls}.${m}`);
+      }
+    }
+  }
+  const ambiguousOn = new Map<string, Set<string>>();
   const failing = new Map<string, Set<string>>();
   for (const n of series.nights) {
     if (truncated.has(n.date)) continue;
-    for (const t of n.failing) (failing.get(t) ?? failing.set(t, new Set()).get(t)!).add(n.date);
+    for (const t of n.failing) {
+      const candidates = !n.record.passesKnown && isReusedClassName(t.slice(0, t.indexOf("."))) ? qualifiedBySimple.get(t) : undefined;
+      if (candidates) {
+        for (const q of candidates) {
+          (ambiguousOn.get(q) ?? ambiguousOn.set(q, new Set()).get(q)!).add(n.date);
+          if (!failing.has(q)) failing.set(q, new Set());
+        }
+        continue;
+      }
+      (failing.get(t) ?? failing.set(t, new Set()).get(t)!).add(n.date);
+    }
     for (const [cls, o] of Object.entries(n.record.tests)) if (o.classError) (failing.get(cls) ?? failing.set(cls, new Set()).get(cls)!).add(n.date);
   }
   for (const t of opts.include ?? []) if (!failing.has(t)) failing.set(t, new Set());
@@ -176,6 +204,7 @@ export function testHistories(series: Series, opts: { include?: Iterable<string>
         const record = recordOn.get(d);
         if (dates.has(d)) return wholeClass || record?.tests[cls]?.e?.includes(method) ? "e" : "f";
         if (degraded.has(d)) return "u";
+        if (ambiguousOn.get(test)?.has(d)) return "u";
         if (record?.passesKnown) {
           const o = record.tests[cls];
           if (wholeClass) return o?.p?.length || o?.f?.length || o?.e?.length ? "p" : "n";

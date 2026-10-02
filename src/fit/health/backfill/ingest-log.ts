@@ -43,6 +43,14 @@ export function ingestLog(store: LocalHealthStore, meta: RunMeta, text: string, 
   const previous = store.readManifest(meta.sdk, meta.ci.runId, meta.ci.runAttempt);
   const parsed = parseRunLog(text);
   const result = buildRecords(parsed, meta);
+  // A parser that can't read a log an earlier one read is a parser problem, not news about the
+  // run: keep the run's records (and their JUnit upgrades) as they were, note the failure, and
+  // leave the old parser version on the manifest so the next parser tries again.
+  if (result.parseError && previous?.status === "ok" && previous.records.length > 0) {
+    const kept: RunManifest = { ...previous, reparseError: { parserVersion: LOG_PARSER_VERSION, reason: result.parseError } };
+    store.writeManifest(kept);
+    return kept;
+  }
   // A record already upgraded from the run's JUnit archive is better than anything the log
   // can say, so a reparse keeps it rather than overwriting it with the scraped version -
   // as long as the new parse still produces its key.

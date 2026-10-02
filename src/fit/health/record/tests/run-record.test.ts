@@ -111,3 +111,23 @@ test("the last failed fetch marks the run fetch_failed, not pending for ever", a
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("a reparse that fails keeps the run's records, rather than wiping a run an earlier parser read", async () => {
+  const { LocalHealthStore } = await import("../../store/health-store.js");
+  const { ingestLog } = await import("../../backfill/ingest-log.js");
+  const root = mkdtempSync(join(tmpdir(), "fit-health-test-"));
+  try {
+    const store = new LocalHealthStore(root);
+    const meta = { sdk: "dotnet", date: "2026-09-27", ci: { repo: "r", runId: 7, runAttempt: 1, job: "fit / op-onprem-func-lite" } };
+    store.write("dotnet/records/2026/kept.json", "{}");
+    store.writeManifest({ ...manifest({ runId: 7, records: ["dotnet/records/2026/kept.json"], parserVersion: "log-1" }), archive: { status: "ok", upgraded: ["dotnet/records/2026/kept.json"], skipped: [], attempts: 1 } });
+    const m = ingestLog(store, meta, "some log no parser recognises", { keepRaw: false });
+    assert.equal(m.status, "ok");
+    assert.deepEqual(m.records, ["dotnet/records/2026/kept.json"]);
+    assert.equal(m.parserVersion, "log-1", "still the old parser's, so the next one retries");
+    assert.match(m.reparseError?.reason ?? "", /no FIT presets/);
+    assert.ok(store.read("dotnet/records/2026/kept.json"), "the record is still there");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

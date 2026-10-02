@@ -46,3 +46,14 @@ test("a store key that would land outside the store is refused", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("a concurrent writer's index is merged with, never overwritten", async () => {
+  const { isWriteConflict } = await import("../s3-store.js");
+  // A laptop wrote settings.json while CI was working from an older snapshot: CI's retry
+  // starts from the newer index, so both writers' keys survive.
+  const newer = nextIndex(["dotnet/a"], ["dotnet/settings.json"], []);
+  assert.deepEqual(nextIndex(newer, ["dotnet/records/r.json"], []), ["dotnet/a", "dotnet/records/r.json", "dotnet/settings.json"]);
+  assert.equal(isWriteConflict({ name: "PreconditionFailed", $metadata: { httpStatusCode: 412 } }), true);
+  assert.equal(isWriteConflict({ name: "ConditionalRequestConflict", $metadata: { httpStatusCode: 409 } }), true);
+  assert.equal(isWriteConflict({ name: "AccessDenied", $metadata: { httpStatusCode: 403 } }), false);
+});

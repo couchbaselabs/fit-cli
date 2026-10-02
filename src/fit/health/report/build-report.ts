@@ -98,8 +98,11 @@ export interface ReportSeries {
   totals: Record<string, number>;
   /** Per night: how many tests ran, and how they did (see NightTests). */
   testCounts: Record<string, NightTests>;
-  /** The latest night's counts. */
-  latest?: NightTests & { date: string };
+  /**
+   * The latest night's counts. `usable`: it is the report's end date and wasn't degraded or
+   * truncated - only those nights add up into "last night".
+   */
+  latest?: NightTests & { date: string; usable: boolean };
   counts: Record<TestClass, number>;
   tests: ReportTest[];
   started: { test: string; since: string; nights: number }[];
@@ -242,7 +245,7 @@ function reportSeries(s: Series, end: string, notes: ReportNotes): ReportSeries 
     perNight,
     totals,
     testCounts,
-    ...(lastNight ? { latest: { date: lastNight, ...testCounts[lastNight] } } : {}),
+    ...(lastNight ? { latest: { date: lastNight, ...testCounts[lastNight], usable: lastNight === end && !s.degraded.includes(lastNight) } } : {}),
     counts,
     tests,
     started: tests
@@ -357,7 +360,9 @@ export function buildHealthReport(
     if (sha) commits[r.date] = sha.slice(0, 9);
   }
   const functional = series.filter((s) => s.kind === "functional");
-  const blackout = dates.filter((d) => !functional.some((s) => s.ran.includes(d)));
+  // No usable functional results from any preset: none ran, or every one that did was
+  // degraded or truncated that night (perNight is null for those).
+  const blackout = dates.filter((d) => !functional.some((s) => d in s.perNight && s.perNight[d] !== null));
 
   return {
     schema: HEALTH_REPORT_SCHEMA,

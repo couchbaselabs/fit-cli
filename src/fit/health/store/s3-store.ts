@@ -15,6 +15,10 @@
  *     then the index. A push that dies part-way therefore never leaves a manifest saying work
  *     is done when the data it describes didn't land; that run is simply redone next time.
  *   - Removing a key drops it from the index; its object stays behind, unreferenced.
+ *   - The index is written only if it hasn't changed since it was read (S3's If-Match). Two
+ *     commands for one SDK at once - a CI run and `fit health settings` from a laptop - would
+ *     otherwise each rewrite it from their own snapshot and drop the other's keys; instead the
+ *     later one re-reads it, adds its changes to what's there now, and tries again.
  *   - Without ListBucket, S3 answers a missing object with the same AccessDenied as a real
  *     permission problem. So a missing index is an error unless the caller says it is
  *     creating the store - otherwise a glitch could replace a real index with an empty one.
@@ -102,6 +106,14 @@ export function nextIndex(before: readonly string[], written: Iterable<string>, 
   return [...keys].sort();
 }
 
+/** S3 refusing a conditional write because the object changed (or appeared) since it was read. */
+export function isWriteConflict(err: unknown): boolean {
+  const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+  return e?.name === "PreconditionFailed" || e?.name === "ConditionalRequestConflict" || e?.$metadata?.httpStatusCode === 412 || e?.$metadata?.httpStatusCode === 409;
+}
+
+const INDEX_WRITE_TRIES = 5;
+
 function isMissingOrDenied(err: unknown): boolean {
   const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
   return e?.name === "NoSuchKey" || e?.name === "AccessDenied" || e?.$metadata?.httpStatusCode === 404 || e?.$metadata?.httpStatusCode === 403;
@@ -123,11 +135,14 @@ export async function openStore(spec: string | undefined, sdk: string, opts: Ope
   const store = new TrackingHealthStore(mirror);
   const indexKey = `${prefix}${sdk}/${INDEX_KEY}`;
   let keys: string[] = [];
+  /** The index's ETag when read; undefined for a store being created. */
+  let etag: string | undefined;
   // Until the store is handed back, nothing else can close it: a failed pull removes its own mirror.
   try {
     try {
       const res = await s3Client.send(new GetObjectCommand({ Bucket: bucket, Key: indexKey }));
       keys = (JSON.parse(await res.Body!.transformToString()) as StoreIndex).keys;
+      etag = res.ETag;
     } catch (err) {
       if (!isMissingOrDenied(err)) throw err;
       if (!opts.create) {
@@ -164,9 +179,30 @@ export async function openStore(spec: string | undefined, sdk: string, opts: Ope
       }
       if (!written.length && !removed.length) return { written: 0, removed: 0 };
       // The index goes last: until it lands, the previous index still describes the store.
-      const index: StoreIndex = { schema: 1, keys: nextIndex(keys, written, removed) };
-      await s3Client.send(new PutObjectCommand({ Bucket: bucket, Key: indexKey, Body: JSON.stringify(index), ContentType: "application/json" }));
-      keys = index.keys;
+      for (let attempt = 1; ; attempt++) {
+        const index: StoreIndex = { schema: 1, keys: nextIndex(keys, written, removed) };
+        try {
+          const res = await s3Client.send(
+            new PutObjectCommand({
+              Bucket: bucket,
+              Key: indexKey,
+              Body: JSON.stringify(index),
+              ContentType: "application/json",
+              ...(etag ? { IfMatch: etag } : { IfNoneMatch: "*" }),
+            }),
+          );
+          keys = index.keys;
+          etag = res.ETag;
+          break;
+        } catch (err) {
+          if (!isWriteConflict(err) || attempt >= INDEX_WRITE_TRIES) throw err;
+          // Someone else wrote the index since we read it: start again from theirs.
+          const res = await s3Client.send(new GetObjectCommand({ Bucket: bucket, Key: indexKey }));
+          keys = (JSON.parse(await res.Body!.transformToString()) as StoreIndex).keys;
+          etag = res.ETag;
+          fitCliInfo(`fit health: the ${sdk} index changed while this ran; merging into the newer one (attempt ${attempt + 1})`);
+        }
+      }
       store.written.clear();
       store.removed.clear();
       fitCliInfo(`fit health: pushed ${written.length} changed objects${removed.length ? ` and dropped ${removed.length} from the index` : ""} to s3://${bucket}/${prefix}`);

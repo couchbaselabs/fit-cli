@@ -78,6 +78,17 @@ test("a driver commit decides only if it touches the test's own file; other test
   assert.deepEqual(split, { testFileCommits: [c("9f9ed00b", "SDKQE-3058: Fix observability tests for RangeScan")], helperCommits: [c("util")] });
 });
 
+test("Columnar's tests are found in columnar-test-driver, not test-driver", async () => {
+  const { driverModuleFor } = await import("../changes.js");
+  assert.equal(driverModuleFor("columnar-java"), "columnar-test-driver");
+  assert.equal(driverModuleFor("analytics-dotnet"), "columnar-test-driver");
+  assert.equal(driverModuleFor("dotnet"), "test-driver");
+  const tree = ["columnar-test-driver/src/test/java/com/couchbase/fit/columnar/tests/query/QueryRetryTest.java", "test-driver/src/test/java/x/QueryRetryTest.java"];
+  assert.deepEqual(testFilesFor("QueryRetryTest", tree, "columnar-test-driver"), [tree[0]]);
+  const split = splitDriverCommits([{ commit: c("h"), files: ["columnar-test-driver/src/test/java/util/Helper.java"] }], [], "columnar-test-driver");
+  assert.deepEqual(split.helperCommits, [c("h")]);
+});
+
 test("the category follows the SDK / test-file grid, and says when it can't tell", () => {
   const sdk = (changed: boolean) => ({ from: "a", to: "b", changed, commits: [], sharedCoreCommits: [], sharedHarnessCommits: [] });
   const driver = (testFileCommits: { sha: string; title: string }[] | null, helperCommits: { sha: string; title: string }[] = []) => ({
@@ -181,6 +192,14 @@ test("nights far apart say the comparison covers more than one night's changes",
   await analyseChanges(t, { manifests: [manifest(1, "2026-08-20T00:20:00.000Z"), manifest(2, "2026-08-28T00:20:00.000Z")], optIn: { repo: "o/r", workflows: ["x.yml"] }, source });
   assert.equal(t.findings[0].changeAnalysis?.span?.days, 8);
   assert.match(t.findings[0].changeAnalysis?.reason ?? "", /8 days apart/);
+});
+
+test("a driver cloned from a branch is unknown, not unchanged: a branch moves", async () => {
+  const t = report([finding("A.x", night("2026-09-23", 1, "a"), night("2026-09-24", 2, "a"))]);
+  const branchManifest = (runId: number, at: string): RunManifest => ({ ...manifest(runId, at), driver: { "fit / op-onprem-func-lite": { clonedAt: at, branch: "dk/x" } } });
+  await analyseChanges(t, { manifests: [branchManifest(1, "2026-09-23T00:20:00.000Z"), branchManifest(2, "2026-09-24T00:20:00.000Z")], optIn: { repo: "o/r", workflows: ["x.yml"] }, source: src({}) });
+  assert.equal(t.findings[0].driverChanges?.changed, null);
+  assert.equal(t.findings[0].changeAnalysis?.category, "unknown");
 });
 
 test("a GitHub failure leaves the finding's category unknown, with the reason, and never throws", async () => {

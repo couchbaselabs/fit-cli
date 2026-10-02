@@ -25,8 +25,20 @@ import type { RunManifest } from "../record/run-manifest.js";
 import type { HealthOptIn } from "../registry/health-opt-ins.js";
 import type { DriverCheckout } from "../log-parse/parse-run-log.js";
 import type { TriageFinding, TriageNight, TriageReport } from "./triage.js";
+import { sdkByValue } from "../../../util/sdk/sdks.js";
+import { ANALYTICS_TEST_DRIVER_MODULE, DEFAULT_TEST_DRIVER_MODULE } from "../../shared/run-test-driver/run-test-driver.js";
 
 export const DRIVER_REPO = "couchbaselabs/transactions-fit-performer";
+
+/**
+ * The driver module holding an SDK's tests: the Columnar and Enterprise Analytics SDKs run
+ * columnar-test-driver,
+ * the rest test-driver - the choice fit-cli itself makes per run (run-test-driver.ts).
+ */
+export function driverModuleFor(sdk: string): string {
+  const family = sdkByValue(sdk)?.family;
+  return family === "columnar" || family === "enterprise-analytics" ? ANALYTICS_TEST_DRIVER_MODULE : DEFAULT_TEST_DRIVER_MODULE;
+}
 export const DRIVER_BRANCH = "master";
 
 export interface Commit {
@@ -126,25 +138,26 @@ export function splitSdkCommits(
 const TEST_FILE = /(?:^|\/)[A-Za-z0-9_]+Tests?\.(?:java|scala|kt)$/;
 
 /** The driver files that define test class `cls` (normally one). */
-export function testFilesFor(cls: string, tree: readonly string[]): string[] {
+export function testFilesFor(cls: string, tree: readonly string[], module: string = DEFAULT_TEST_DRIVER_MODULE): string[] {
   // A package-qualified key ("kv/GetTest") matches by its package too; a nested class
   // (Outer$Inner) is in its outer class's file.
   const file = cls.replace(/\$.*$/, "");
   const names = ["java", "scala", "kt"].map((ext) => `/${file}.${ext}`);
-  return tree.filter((p) => p.startsWith("test-driver/") && names.some((n) => p.endsWith(n)));
+  return tree.filter((p) => p.startsWith(`${module}/`) && names.some((n) => p.endsWith(n)));
 }
 
 /** Split a driver range's commits into those touching the test's own file and those touching other test code. */
 export function splitDriverCommits(
   commits: { commit: Commit; files: string[] }[],
   testFiles: readonly string[],
+  module: string = DEFAULT_TEST_DRIVER_MODULE,
 ): Pick<DriverChanges, "testFileCommits" | "helperCommits"> {
   const own: Commit[] = [];
   const helpers: Commit[] = [];
   for (const { commit, files } of commits) {
     if (files.some((f) => testFiles.includes(f))) own.push(commit);
     // Other code under the test driver that isn't itself a test: helpers, utils, base classes.
-    else if (files.some((f) => f.startsWith("test-driver/") && !TEST_FILE.test(f))) helpers.push(commit);
+    else if (files.some((f) => f.startsWith(`${module}/`) && !TEST_FILE.test(f))) helpers.push(commit);
   }
   return { testFileCommits: own, helperCommits: helpers };
 }
@@ -225,6 +238,7 @@ export async function analyseChanges(
   ctx: { manifests: RunManifest[]; optIn: HealthOptIn; source: ChangeSource },
 ): Promise<{ analysed: number; failed: number }> {
   const manifests = new Map(ctx.manifests.map((m) => [`${m.runId}-${m.runAttempt}`, m]));
+  const module = driverModuleFor(triage.sdk);
   const compares = MEMO<Commit[]>();
   const files = MEMO<string[]>();
   const compare = (repo: string, a: string, b: string) => {
@@ -287,13 +301,16 @@ export async function analyseChanges(
       // The driver side.
       const from = side(before);
       const to = side(after);
-      const testFiles = tree ? testFilesFor(f.class, tree) : [];
+      const testFiles = tree ? testFilesFor(f.class, tree, module) : [];
       let driver: DriverChanges;
-      if (from.gerritRef || to.gerritRef || from.branch || to.branch) {
-        const same = from.gerritRef === to.gerritRef && from.branch === to.branch;
-        driver = same
+      if (from.branch || to.branch) {
+        // A branch moves: the same name on both nights doesn't mean the same commit.
+        driver = { from, to, changed: null, testFiles, testFileCommits: null, helperCommits: null, note: "the driver was cloned from a branch, whose commit on each night isn't known" };
+      } else if (from.gerritRef || to.gerritRef) {
+        // A Gerrit patchset is a fixed commit: the same one on both nights is the same driver.
+        driver = from.gerritRef === to.gerritRef
           ? { from, to, changed: false, testFiles, testFileCommits: [], helperCommits: [] }
-          : { from, to, changed: true, testFiles, testFileCommits: null, helperCommits: null, note: "the driver was pinned to a different Gerrit patchset or branch; its files aren't compared" };
+          : { from, to, changed: true, testFiles, testFileCommits: null, helperCommits: null, note: "the driver was pinned to a different Gerrit patchset; its files aren't compared" };
       } else if (!from.sha || !to.sha) {
         driver = { from, to, changed: null, testFiles, testFileCommits: null, helperCommits: null, note: driverProblem ?? "the driver commit of one of the nights isn't known (no clone line in its log)" };
       } else {
@@ -304,8 +321,8 @@ export async function analyseChanges(
           changed: range.length > 0,
           ...(from.sha !== to.sha ? { compareUrl: `https://github.com/${DRIVER_REPO}/compare/${from.sha}...${to.sha}` } : {}),
           testFiles,
-          ...splitDriverCommits(range, testFiles),
-          ...(testFiles.length === 0 ? { note: `no file for ${f.class} found under test-driver/; only other test code is listed` } : {}),
+          ...splitDriverCommits(range, testFiles, module),
+          ...(testFiles.length === 0 ? { note: `no file for ${f.class} found under ${module}/; only other test code is listed` } : {}),
         };
       }
       f.driverChanges = driver;
