@@ -2,16 +2,16 @@
  * SDKs that FIT can test.
  */
 export const SDKS = [
-  { name: "Java", value: "java", family: "operational" },
-  { name: "Scala", value: "scala", family: "operational" },
-  { name: "Kotlin", value: "kotlin", family: "operational" },
-  { name: "C++", value: "cpp", family: "operational" },
-  { name: ".NET", value: "dotnet", family: "operational" },
-  { name: "Go", value: "go", family: "operational" },
-  { name: "Node.js", value: "node", family: "operational" },
-  { name: "Python", value: "python", family: "operational" },
-  { name: "Ruby", value: "ruby", family: "operational" },
-  { name: "Rust", value: "rust", family: "operational" },
+  { name: "Java", value: "java", family: "operational", cng: true },
+  { name: "Scala", value: "scala", family: "operational", cng: true },
+  { name: "Kotlin", value: "kotlin", family: "operational", cng: true },
+  { name: "C++", value: "cpp", family: "operational", cng: true },
+  { name: ".NET", value: "dotnet", family: "operational", cng: true },
+  { name: "Go", value: "go", family: "operational", cng: true },
+  { name: "Node.js", value: "node", family: "operational", cng: false },
+  { name: "Python", value: "python", family: "operational", cng: false },
+  { name: "Ruby", value: "ruby", family: "operational", cng: true },
+  { name: "Rust", value: "rust", family: "operational", cng: false },
   // Analytics SDKs — tested via the columnar-test-driver (`analytics-functional`
   // runs). Two families exist: "Columnar SDK" (recommended for Capella Analytics) and
   // "Enterprise Analytics SDK" (recommended for Enterprise Analytics + a load balancer).
