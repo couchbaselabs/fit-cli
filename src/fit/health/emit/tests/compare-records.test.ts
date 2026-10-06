@@ -93,3 +93,25 @@ test("a hidden failure is matched to its own class's package when two classes sh
   assert.deepEqual(r.onlyJunit, []);
   assert.equal(r.agree, true);
 });
+
+test("classes that errored as a whole, hidden behind the cap, are explained too", () => {
+  // couchbase-cxx-client's CNG nightly: every class errors before a test runs, and the log
+  // names three per package, then "... and N more failure(s)" - the same cap as for tests.
+  const cls = (pkg: string, name: string) => `<testcase name="" classname="com.couchbase.${pkg}.${name}"><error/></testcase>`;
+  const log: RunRecord = {
+    ...scraped,
+    counts: { passed: 0, failed: 0, errored: 5, skipped: 0 },
+    tests: { ATest: { classError: true }, BTest: { classError: true }, CTest: { classError: true }, XTest: { classError: true } },
+    hiddenFailures: { "com.couchbase.kv": 1 },
+  };
+  const rec = recordFromJunit(junitOutcomes([xml(["ATest", "BTest", "CTest", "DTest"].map((n) => cls("kv", n)).join("") + cls("query", "XTest"))]), log);
+  const r = compareRecords(rec, log);
+  assert.deepEqual(r.hiddenByCap, ["DTest"]);
+  assert.deepEqual(r.classErrorsOnlyJunit, []);
+  assert.equal(r.agree, true);
+
+  // One more missing than the log said it hid: a real disagreement, and named.
+  const r2 = compareRecords(rec, { ...log, tests: { ATest: { classError: true }, BTest: { classError: true }, XTest: { classError: true } } });
+  assert.equal(r2.agree, false);
+  assert.deepEqual(r2.classErrorsOnlyJunit, ["CTest", "DTest"]);
+});

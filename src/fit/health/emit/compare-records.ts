@@ -16,9 +16,9 @@ export interface RecordComparison {
   /** Failing in JUnit but not named in the log, and the reverse. */
   onlyJunit: string[];
   /**
-   * The part of onlyJunit accounted for by fit-cli's per-package display cap: the log said
-   * "... and N more failure(s) in <package>" for these tests' package, with N at least as
-   * many as are missing. Expected, not a reader bug - but it means log-scraped history
+   * The failures - tests, and classes that errored as a whole - accounted for by fit-cli's
+   * per-package display cap: the log said "... and N more failure(s) in <package>" for their
+   * package, with N at least as many as are missing. Expected, not a reader bug - but it means log-scraped history
    * undercounts failures on such nights.
    */
   hiddenByCap: string[];
@@ -29,6 +29,9 @@ export interface RecordComparison {
   /** Class-level errors: the log keeps them apart from tests, so they are compared separately. */
   classErrorsJunit: string[];
   classErrorsLog: string[];
+  /** Class errors one side has alone, after those hidden by the cap (which are in hiddenByCap). */
+  classErrorsOnlyJunit: string[];
+  classErrorsOnlyLog: string[];
   passesNamed: number;
 }
 
@@ -44,25 +47,31 @@ export function compareRecords(emitted: RunRecord, scraped: RunRecord): RecordCo
   const j = new Set(failingTests(emitted).map(asLogged));
   const l = new Set(failingTests(scraped));
   const missing = [...j].filter((t) => !l.has(t)).sort();
+  // Class-level errors, by the name the log prints (a reused class name is one name there).
+  const cj = [...new Set(classErrors(emitted).map(asLogged))].sort();
+  const clog = classErrors(scraped);
+  const missingClasses = cj.filter((c) => !clog.includes(c));
   const hidden = scraped.hiddenFailures ?? {};
-  // Each failing test's package comes from its own class. Keyed by the logged name, classes the
+  // Each failure's package comes from its own class. Keyed by the logged name, classes the
   // driver reuses across packages (client/observability/ObservabilityTest and
-  // transactions/observability/ObservabilityTest) would collapse into one, and a test could be
-  // given the other class's package - so a logged id can have more than one package.
+  // transactions/observability/ObservabilityTest) would collapse into one, and a failure could
+  // be given the other class's package - so a logged name can have more than one package.
   const pkgsOf = new Map<string, Set<string>>();
-  for (const t of failingTests(emitted)) {
-    const p = emitted.packages?.[t.slice(0, t.indexOf("."))];
-    if (!p) continue;
-    const k = asLogged(t);
-    (pkgsOf.get(k) ?? pkgsOf.set(k, new Set()).get(k)!).add(p);
-  }
+  const addPkg = (cls: string, logged: string) => {
+    const p = emitted.packages?.[cls];
+    if (p) (pkgsOf.get(logged) ?? pkgsOf.set(logged, new Set()).get(logged)!).add(p);
+  };
+  for (const t of failingTests(emitted)) addPkg(t.slice(0, t.indexOf(".")), asLogged(t));
+  for (const c of classErrors(emitted)) addPkg(c, asLogged(c));
+  // The cap counts a class error like a failing test: both are a failure line it didn't print.
+  const unnamed = [...missing, ...missingClasses];
   const byPkg = new Map<string, string[]>();
-  for (const t of missing) {
+  for (const t of unnamed) {
     for (const p of pkgsOf.get(t) ?? []) (byPkg.get(p) ?? byPkg.set(p, []).get(p)!).push(t);
   }
   // Hidden only if the log hid at least as many failures as are missing in every package the
-  // test could be in.
-  const hiddenByCap = missing
+  // failure could be in.
+  const hiddenByCap = unnamed
     .filter((t) => {
       const ps = [...(pkgsOf.get(t) ?? [])];
       return ps.length > 0 && ps.every((p) => (hidden[p] ?? 0) >= byPkg.get(p)!.length);
@@ -70,15 +79,15 @@ export function compareRecords(emitted: RunRecord, scraped: RunRecord): RecordCo
     .sort();
   const onlyJunit = missing.filter((t) => !hiddenByCap.includes(t));
   const onlyLog = [...l].filter((t) => !j.has(t)).sort();
+  const classErrorsOnlyJunit = missingClasses.filter((c) => !hiddenByCap.includes(c));
+  const classErrorsOnlyLog = clog.filter((c) => !cj.includes(c));
   const ce = emitted.counts;
   const cl = scraped.counts;
   const countsAgree = !!ce && !!cl && ce.passed === cl.passed && ce.failed === cl.failed && ce.errored === cl.errored && ce.skipped === cl.skipped;
-  const cj = classErrors(emitted).map(asLogged).sort();
-  const clog = classErrors(scraped);
   return {
     key: recordKey(scraped),
     label: `${scraped.date} ${scraped.preset} ${scraped.kind}${scraped.cluster ? ` @${scraped.cluster}` : ""}`,
-    agree: onlyJunit.length === 0 && onlyLog.length === 0 && countsAgree && cj.join() === clog.join(),
+    agree: onlyJunit.length === 0 && onlyLog.length === 0 && countsAgree && classErrorsOnlyJunit.length === 0 && classErrorsOnlyLog.length === 0,
     onlyJunit,
     hiddenByCap,
     onlyLog,
@@ -87,6 +96,8 @@ export function compareRecords(emitted: RunRecord, scraped: RunRecord): RecordCo
     countsAgree,
     classErrorsJunit: cj,
     classErrorsLog: clog,
+    classErrorsOnlyJunit,
+    classErrorsOnlyLog,
     passesNamed: Object.values(emitted.tests).reduce((a, o) => a + (o.p?.length ?? 0), 0),
   };
 }

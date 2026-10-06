@@ -109,6 +109,8 @@ export function renderChecks(c: CheckReport): string {
     lines.push(`             ✗ ${a.label}`);
     if (a.onlyJunit.length) lines.push(`               failing in JUnit, not in the log: ${a.onlyJunit.slice(0, 5).join(", ")}`);
     if (a.onlyLog.length) lines.push(`               in the log, not failing in JUnit: ${a.onlyLog.slice(0, 5).join(", ")}`);
+    if (a.classErrorsOnlyJunit.length) lines.push(`               classes errored in JUnit, not in the log: ${a.classErrorsOnlyJunit.slice(0, 5).join(", ")}`);
+    if (a.classErrorsOnlyLog.length) lines.push(`               classes errored in the log, not in JUnit: ${a.classErrorsOnlyLog.slice(0, 5).join(", ")}`);
     if (!a.countsAgree) lines.push(`               counts: JUnit ${JSON.stringify(a.countsJunit)} vs log ${JSON.stringify(a.countsLog)}`);
   }
   return lines.join("\n");
