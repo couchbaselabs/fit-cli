@@ -678,7 +678,7 @@ function showNight(d) {
   const body = i < 0
     ? `<p class="sub">This report covers ${fmtY(D.start)} to ${fmtY(D.end)}, so it has nothing for this night.</p>`
     : [...FUNC, ...SIT].map((s) => nightSeries(s, d)).join('');
-  $('night-body').innerHTML = `<div class="night-head"><h2 id="h-night">The night of ${fmtY(d)}</h2><a href="#">Close</a></div>
+  $('night-body').innerHTML = `<div class="night-head"><h2 id="h-night">The night of ${esc(fmtY(d))}</h2><a href="#">Close</a></div>
     ${i < 0 ? '' : `<p class="sub">${commit}${D.blackout.includes(d) ? ' · no usable functional results this night' : ''}</p>`}${body}`;
   $('night').hidden = false;
   document.querySelectorAll(`.strip i[data-d="${d}"]`).forEach((c) => c.classList.add('sel'));
