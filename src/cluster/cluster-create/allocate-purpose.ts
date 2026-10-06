@@ -7,7 +7,6 @@
  * suffix, which keeps parallel CI runs from colliding. The value ends up visible to
  * anyone who can see the pool, so it carries nothing secret.
  */
-import { userInfo } from "node:os";
 import { basename } from "node:path";
 import { ensureRunDir } from "../../util/non-fit/replay.js";
 
@@ -26,17 +25,14 @@ function slug(value: string): string {
 }
 
 /**
- * The stamp for this run, built from the prefix, this run's artifact directory name
- * (e.g. `20260821-154758-ded4`) and whoever started it. That directory name is a
- * timestamp plus a random suffix, so two runs started in the same second still get
- * different stamps. The run id ties a leaked resource back to its artifacts, the
- * username ties it to a person.
+ * The stamp for this run, built from the prefix and this run's artifact directory
+ * name (e.g. `20260821-154758-ded4`). That name is a timestamp plus a random suffix,
+ * so two runs started in the same second still get different stamps. It also ties a
+ * leaked resource back to the run's artifacts. The stamp stays short because tools
+ * downstream extend it and some cap its length.
  */
-export function allocatePurpose(
-  runId: string = basename(ensureRunDir()),
-  username: string = userInfo().username,
-): string {
-  return FITCLI_PURPOSE_PREFIX + [slug(runId), slug(username)].filter(Boolean).join("-");
+export function allocatePurpose(runId: string = basename(ensureRunDir())): string {
+  return FITCLI_PURPOSE_PREFIX + slug(runId);
 }
 
 /**

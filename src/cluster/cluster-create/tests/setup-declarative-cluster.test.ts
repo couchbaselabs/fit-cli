@@ -323,16 +323,16 @@ test("rmOutputShowsClusterGone keeps every other failure", () => {
 });
 
 test("removeRunCapellaClustersArgs targets the cloud deployer with the run's exact stamp", () => {
-  assert.deepEqual(removeRunCapellaClustersArgs("fitcli-20260615-090000-ab12-someone"), [
+  assert.deepEqual(removeRunCapellaClustersArgs("fitcli-20260615-090000-ab12"), [
     "remove-all",
     "cloud",
     "--purpose",
-    "fitcli-20260615-090000-ab12-someone",
+    "fitcli-20260615-090000-ab12",
     "--timeout",
     CBDINOCLUSTER_REMOVE_ALL_TIMEOUT,
   ]);
 });
 
 test("removeRunCapellaClustersArgs bounds the removal", () => {
-  assert.ok(removeRunCapellaClustersArgs("fitcli-20260615-090000-ab12-someone").includes("--timeout"));
+  assert.ok(removeRunCapellaClustersArgs("fitcli-20260615-090000-ab12").includes("--timeout"));
 });
