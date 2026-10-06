@@ -99,6 +99,8 @@ header { padding-top: 40px; display: flex; flex-direction: column; gap: 14px; }
 .meta { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--muted); font-size: 13px; }
 
 section { display: flex; flex-direction: column; gap: 16px; }
+/* section sets display, which would override the hidden attribute */
+section[hidden] { display: none; }
 .sec-head { display: flex; flex-direction: column; gap: 6px; }
 
 /* Summary: one table-like block, not a row of cards */
@@ -196,6 +198,15 @@ section { display: flex; flex-direction: column; gap: 16px; }
 details.dormant { border-top: 1px solid var(--rule); }
 details.dormant summary { padding: 12px 20px; cursor: pointer; font-size: 13.5px; color: var(--ink-2); }
 details.dormant summary:focus-visible { outline: 2px solid var(--series-1); outline-offset: -2px; }
+/* One night, opened by #night-YYYY-MM-DD (the overview page links to it) or a click on the chart */
+.night-head { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: baseline; }
+.night-head a { font-size: 13px; margin-left: auto; }
+.night-series { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 1px solid var(--rule); }
+.night-series:first-of-type { border-top: 0; padding-top: 0; }
+.night-series .counts { font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.night-series .items li { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 6px 0; }
+.strip i.sel { outline: 2px solid var(--ink); outline-offset: 1px; }
+.chart-box #hit { cursor: pointer; }
 .cells-key { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: var(--muted); padding: 12px 20px; border-top: 1px solid var(--rule); }
 .cells-key span { display: inline-flex; align-items: center; gap: 6px; }
 .cells-key i { width: 6px; height: 14px; border-radius: 1.5px; display: inline-block; }
@@ -242,6 +253,10 @@ footer { color: var(--muted); font-size: 12.5px; border-top: 1px solid var(--rul
     <p class="lede" id="lede"></p>
     <div class="meta" id="meta"></div>
   </header>
+
+  <section aria-labelledby="h-night" id="night" hidden>
+    <div class="panel" id="night-body"></div>
+  </section>
 
   <section aria-labelledby="h-now">
     <div class="sec-head">
@@ -457,6 +472,7 @@ function showTip(html, x, y) {
 const hideTip = () => { tip.hidden = true; };
 
 // ----- chart
+let markChartNight = () => {};
 (function chart() {
   const W = 1040, H = 260, m = { l: 34, r: 84, t: 14, b: 26 };
   const iw = W - m.l - m.r, ih = H - m.t - m.b;
@@ -495,6 +511,7 @@ const hideTip = () => { tip.hidden = true; };
   // keep end labels apart
   ends.sort((a, b) => a.y - b.y).forEach((e, i, all) => { if (i && e.y - all[i - 1].y < 14) e.y = all[i - 1].y + 14; });
   ends.forEach((e) => { svg += `<text x="${e.x}" y="${e.y}" style="fill:var(--ink-2);font:12px var(--sans)">${esc(e.text)}</text>`; });
+  svg += `<line id="xsel" x1="0" x2="0" y1="${m.t}" y2="${m.t + ih}" stroke="var(--ink)" stroke-width="1.5" opacity="0"/>`;
   svg += `<line id="xh" x1="0" x2="0" y1="${m.t}" y2="${m.t + ih}" stroke="var(--ink-2)" stroke-width="1" opacity="0"/>`;
   svg += `<rect id="hit" x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent"/></svg>`;
   $('chart').innerHTML = svg;
@@ -515,6 +532,18 @@ const hideTip = () => { tip.hidden = true; };
     showTip(`<b>${fmt(d)}</b><br>${rows}${D.commits[d] ? `<br><span class="k">commit</span> ${D.commits[d]}` : ''}`, e.clientX, e.clientY);
   });
   hit.addEventListener('mouseleave', () => { xh.setAttribute('opacity', '0'); hideTip(); });
+  hit.addEventListener('click', (e) => {
+    const r = el.getBoundingClientRect();
+    const px = ((e.clientX - r.left) / r.width) * W;
+    const i = Math.max(0, Math.min(N - 1, Math.round(((px - m.l) / iw) * (N - 1))));
+    location.hash = `night-${D.dates[i]}`;
+  });
+  const xsel = el.querySelector('#xsel');
+  markChartNight = (d) => {
+    const i = D.dates.indexOf(d);
+    xsel.setAttribute('opacity', i < 0 ? '0' : '.8');
+    if (i >= 0) { xsel.setAttribute('x1', x(i)); xsel.setAttribute('x2', x(i)); }
+  };
 })();
 
 // ----- timelines
@@ -621,6 +650,43 @@ document.addEventListener('mouseover', (e) => {
   c.onmousemove = (ev) => showTip(`<b>${fmt(d)}</b> · ${text}<br><span class="k">${esc(t)}</span>`, ev.clientX, ev.clientY);
   c.onmouseleave = hideTip;
 });
+
+// ----- one night: what ran and which tests failed, per series
+function nightSeries(s, d) {
+  const t = s.testCounts && s.testCounts[d];
+  const label = `<h3>${esc(s.label)}</h3>`;
+  if (!t) return `<div class="night-series">${label}<p class="counts">${d < (s.ran[0] || '') ? 'Not running yet.' : 'No results this night: the run aborted, or this preset did not run.'}</p></div>`;
+  const i = s.ran.indexOf(d);
+  const failed = i < 0 ? [] : s.tests.filter((x) => x.seq[i] === 'f' || x.seq[i] === 'e');
+  // A test that stopped running more than 14 days ago is no longer in the report, so it can't
+  // be named here: say how many such failures there are rather than list fewer than the count.
+  const unnamed = t.failing - failed.length;
+  const items = failed.map((x) => `<li><span class="tname">${nameHtml(x.test)}</span><span class="pill p-${x.cls}" title="${esc(D.classes.blurbs[x.cls])}">${esc(LABEL[x.cls])}</span>${x.seq[i] === 'e' ? '<span class="sub">errored</span>' : ''}</li>`).join('');
+  return `<div class="night-series">${label}<p class="counts">${testsLine(t)}</p>
+    ${items ? `<ul class="items">${items}</ul>` : t.failing ? '' : '<p class="sub">No failures.</p>'}
+    ${unnamed > 0 ? `<p class="sub">${unnamed} more failing test${unnamed > 1 ? 's are' : ' is'} not named: the report no longer follows tests that stopped running more than 14 days ago.</p>` : ''}</div>`;
+}
+function showNight(d) {
+  document.querySelectorAll('.strip i.sel').forEach((c) => c.classList.remove('sel'));
+  markChartNight(d);
+  if (!d) { $('night').hidden = true; return; }
+  const i = D.dates.indexOf(d);
+  const prev = i > 0 ? D.dates[i - 1] : null;
+  const commit = D.commits[d]
+    ? `SDK commit <code>${esc(D.commits[d])}</code>${prev && D.commits[prev] ? (D.commits[prev] === D.commits[d] ? ', the same as the night before' : `, changed from <code>${esc(D.commits[prev])}</code> the night before`) : ''}`
+    : 'SDK commit not known';
+  const body = i < 0
+    ? `<p class="sub">This report covers ${fmtY(D.start)} to ${fmtY(D.end)}, so it has nothing for this night.</p>`
+    : [...FUNC, ...SIT].map((s) => nightSeries(s, d)).join('');
+  $('night-body').innerHTML = `<div class="night-head"><h2 id="h-night">The night of ${fmtY(d)}</h2><a href="#">Close</a></div>
+    ${i < 0 ? '' : `<p class="sub">${commit}${D.blackout.includes(d) ? ' · no usable functional results this night' : ''}</p>`}${body}`;
+  $('night').hidden = false;
+  document.querySelectorAll(`.strip i[data-d="${d}"]`).forEach((c) => c.classList.add('sel'));
+  $('night').scrollIntoView({ block: 'start' });
+}
+const nightFromHash = () => { const m = /^#night-(\d{4}-\d{2}-\d{2})$/.exec(location.hash); return m ? m[1] : null; };
+window.addEventListener('hashchange', () => showNight(nightFromHash()));
+showNight(nightFromHash());
 
 // The "what this can't tell you" section describes backfilled data; hide it once every record is emitted.
 if (D.source.emitted && !D.source.scraped && !D.source.archive) $('sec-next').hidden = true;

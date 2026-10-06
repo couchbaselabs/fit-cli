@@ -86,6 +86,8 @@ header { padding-top: 40px; display: flex; flex-direction: column; gap: 12px; }
 .latest b.f { color: var(--fail); }
 .asof { margin-left: auto; font-size: 12px; color: var(--muted); }
 .asof.stale { color: var(--ink); font-weight: 500; }
+.chart-link { display: block; border-radius: 6px; cursor: pointer; }
+.chart-link:focus-visible { outline: 2px solid var(--total); outline-offset: 4px; }
 svg { display: block; width: 100%; height: auto; overflow: visible; }
 svg text { font: 10px var(--mono); fill: var(--muted); }
 .missing { font-size: 14px; color: var(--ink-2); }
@@ -100,7 +102,7 @@ svg text { font: 10px var(--mono); fill: var(--muted); }
 <div class="wrap">
   <header>
     <h1>FIT Health</h1>
-    <p class="lede">Each SDK's nightly FIT runs over the last <span id="win">30</span> days, every environment added together, counted in tests (<code>Class.method</code>) rather than test cases. Each SDK's chart has its own scales. Open an SDK for which tests fail and why.</p>
+    <p class="lede">Each SDK's nightly FIT runs over the last <span id="win">30</span> days, every environment added together, counted in tests (<code>Class.method</code>) rather than test cases. Each SDK's chart has its own scales. Select an SDK's name to open its report, or a night on its chart to open the report at that night.</p>
     <p class="meta" id="meta"></p>
   </header>
   <div class="key">
@@ -152,7 +154,8 @@ function showTip(e, s, i) {
   else if (day === "unreported") body = `<div class="n">Not in this SDK's report</div>`;
   else body = `<div class="f">${fmt(day.failing)} failing</div><div>${fmt(day.passed)} passed</div><div>${fmt(day.skipped)} skipped</div>`
     + `<div class="n">${day.runs} environment run${day.runs === 1 ? "" : "s"}${day.logOnly ? `, ${day.logOnly} log only (passes unknown)` : ""}</div>`;
-  tip.innerHTML = `<div class="d">${esc(s.name)} · ${when}</div>${body}`;
+  const open = day === "unreported" ? "" : `<div class="n">Click to open this night</div>`;
+  tip.innerHTML = `<div class="d">${esc(s.name)} · ${when}</div>${body}${open}`;
   tip.hidden = false;
   const r = tip.getBoundingClientRect();
   let x = e.clientX + 14, y = e.clientY + 14;
@@ -162,12 +165,13 @@ function showTip(e, s, i) {
   tip.style.top = `${y}px`;
 }
 
-function chart(s) {
+function chart(s, link) {
   const W = 960, L = 44, R = 44, H = 110, AX = 16;
   const step = (W - L - R) / D.dates.length, bw = Math.max(1, step - 2);
   const nights = s.days.filter((d) => typeof d === "object");
   const fMax = niceMax(Math.max(0, ...nights.map((n) => n.failing)));
   const rMax = niceMax(Math.max(0, ...nights.filter((n) => !n.logOnly).map((n) => n.passed + n.failing)));
+  const base = `${encodeURIComponent(s.sdk)}/`;
   const svg = el("svg", { viewBox: `0 0 ${W} ${H + AX}`, role: "img", "aria-label": `${s.name}: failing tests and tests run per night, last ${D.windowDays} days` });
   const g = el("g", {}, svg);
   for (const k of [0, 0.5, 1]) {
@@ -205,9 +209,14 @@ function chart(s) {
   });
   D.dates.forEach((_, i) => {
     const hit = el("rect", { x: L + i * step, y: 0, width: step, height: H, fill: "transparent" }, svg);
-    hit.addEventListener("pointerenter", () => { hl.setAttribute("x", L + i * step); hl.setAttribute("opacity", 0.07); });
+    hit.addEventListener("pointerenter", () => {
+      hl.setAttribute("x", L + i * step);
+      hl.setAttribute("opacity", 0.07);
+      // A night the SDK's report covers opens the SDK page at that night.
+      if (s.days[i] !== "unreported") link.href = `${base}#night-${D.dates[i]}`;
+    });
     hit.addEventListener("pointermove", (e) => showTip(e, s, i));
-    hit.addEventListener("pointerleave", () => { tip.hidden = true; hl.setAttribute("opacity", 0); });
+    hit.addEventListener("pointerleave", () => { tip.hidden = true; hl.setAttribute("opacity", 0); link.href = base; });
   });
   return svg;
 }
@@ -223,7 +232,13 @@ for (const s of D.sdks) {
   const stale = s.end < end;
   panel.innerHTML = `<div class="panel-head"><h2><a href="${encodeURIComponent(s.sdk)}/">${esc(s.name)}</a></h2>${latest}`
     + `<span class="asof${stale ? " stale" : ""}">${stale ? "report from an earlier run, to " : "to "}${s.end}</span></div>`;
-  panel.appendChild(chart(s));
+  // The whole chart opens the SDK's page, like its name does; at the night under the pointer.
+  const link = document.createElement("a");
+  link.className = "chart-link";
+  link.href = `${encodeURIComponent(s.sdk)}/`;
+  link.setAttribute("aria-label", `Open the ${s.name} report`);
+  link.appendChild(chart(s, link));
+  panel.appendChild(link);
   host.appendChild(panel);
 }
 for (const m of D.missing) {
