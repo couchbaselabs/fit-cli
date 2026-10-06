@@ -785,6 +785,8 @@ interface RunTestsDependencies {
   runPerformerClusterSanityCheckFn?: typeof runPerformerClusterSanityCheck;
   runTestDriverFn?: typeof runTestDriver;
   recordResult?: RecordRunResult;
+  /** The run stamp for the clusters FIT allocates. Defaults to this run's stamp. */
+  purpose?: string;
 }
 
 export async function runTests(
@@ -845,7 +847,11 @@ export async function runTests(
     console.log(
       `→ Enabling cluster-creating functional tests (cbdinocluster=${cbdinoclusterPath}, version=${version}).`,
     );
-    effectiveFitConfig = withClusterCreating(run.fitConfig, { cbdinoclusterPath, version });
+    effectiveFitConfig = withClusterCreating(run.fitConfig, {
+      cbdinoclusterPath,
+      version,
+      purpose: dependencies.purpose ?? allocatePurpose(),
+    });
   }
   if (externalServices.length > 0) {
     const piece = effectiveFitConfig?.config ?? {};
@@ -976,8 +982,8 @@ function withCbdinoclusterPath(fitConfig: ResolvedFitConfig | undefined, cbdinoP
 /**
  * Return a fitConfig piece with `resourceCreation.cluster` set so the test-driver
  * enables its cluster-creating functional tests (`@RequiresClusterCreating`). The
- * runtime-resolved cbdinocluster path and server version always win over anything
- * the definition specified, since they're the ones valid on this execution host.
+ * runtime-resolved cbdinocluster path, server version and run stamp always win over
+ * anything the definition specified, since they're the ones valid for this run.
  */
 function withClusterCreating(
   fitConfig: ResolvedFitConfig | undefined,
@@ -1065,6 +1071,8 @@ export async function runSituationalTests(
     recordResult?: RecordRunResult;
     /** One per runFromDefinition call, not per run. */
     situationalRunId: string;
+    /** The run stamp for the clusters FIT allocates. */
+    purpose: string;
   },
   instanceKind: "aws" | "gcp" | "localhost" = execution.kind === "remote" ? "aws" : "localhost",
 ): Promise<RunOutput> {
@@ -1084,7 +1092,10 @@ export async function runSituationalTests(
 
   const situationalRunId = dependencies.situationalRunId;
   const fitConfig = generateSituationalConfiguration(
-    situationalCbdinoSettings(run.cng, run.privateEndpoint !== undefined, resolvedVersion, instanceKind),
+    {
+      ...situationalCbdinoSettings(run.cng, run.privateEndpoint !== undefined, resolvedVersion, instanceKind),
+      purpose: dependencies.purpose,
+    },
     execution.fitPerformerDir,
     run.path,
     run.performerPort,
@@ -1381,6 +1392,8 @@ interface IterationInputs {
   recordResult: RecordRunResult;
   /** Read only by situational runs. */
   situationalRunId: string;
+  /** The run stamp FIT puts on the clusters it allocates. See {@link runStamp}. */
+  purpose: string;
   functionalClusterVersion?: string;
   existingPerformer?: RunningPerformer;
   instanceKind?: "aws" | "gcp" | "localhost";
@@ -1389,7 +1402,7 @@ interface IterationInputs {
 }
 
 async function runIteration(inputs: IterationInputs): Promise<{ output: RunOutput; performer?: RunningPerformer }> {
-  const { execution, functionalClusterMode, fitPerformerGerritRef, run, setupPerformerPhase, savedState, globalIterationIndex, definitionPath, recordResult, situationalRunId, functionalClusterVersion, existingPerformer, instanceKind, externalServices = [] } = inputs;
+  const { execution, functionalClusterMode, fitPerformerGerritRef, run, setupPerformerPhase, savedState, globalIterationIndex, definitionPath, recordResult, situationalRunId, purpose, functionalClusterVersion, existingPerformer, instanceKind, externalServices = [] } = inputs;
   const artifacts: Artifact[] = [];
   const details: Detail[] = [];
 
@@ -1417,10 +1430,10 @@ async function runIteration(inputs: IterationInputs): Promise<{ output: RunOutpu
   let output: RunOutput;
   try {
     if (run.type === "situational") {
-      output = await runSituationalTests(execution, run, { recordResult, situationalRunId }, instanceKind);
+      output = await runSituationalTests(execution, run, { recordResult, situationalRunId, purpose }, instanceKind);
     } else {
       const clusterMode: ResolvedFunctionalExecutionGroup["clusterMode"] = functionalClusterMode ?? "useExisting";
-      output = await runTests(execution, clusterMode, run, performer, { recordResult }, functionalClusterVersion, instanceKind, externalServices);
+      output = await runTests(execution, clusterMode, run, performer, { recordResult, purpose }, functionalClusterVersion, instanceKind, externalServices);
     }
   } catch (err) {
     // When we started this performer ourselves and a FatalToSession error escapes, stop
@@ -1699,9 +1712,16 @@ async function removeRunCapellaLeftovers(
   if (!cbdinocluster) {
     return;
   }
-  // A resumed run gets a fresh run id, so its recomputed stamp would miss the
-  // original run's clusters. The persisted stamp wins.
-  await removeRunCapellaClusters(cbdinocluster, clusterState?.purpose ?? allocatePurpose(), execution);
+  await removeRunCapellaClusters(cbdinocluster, runStamp(clusterState), execution);
+}
+
+/**
+ * The stamp that names this run's clusters, for teardown and for FIT. A resumed
+ * run gets a fresh run id, so its recomputed stamp would miss the original run's
+ * clusters. The persisted stamp wins.
+ */
+export function runStamp(clusterState: ResumeClusterState | undefined): string {
+  return clusterState?.purpose ?? allocatePurpose();
 }
 
 /**
@@ -2715,6 +2735,7 @@ export async function runFromDefinition(
               definitionPath,
               recordResult,
               situationalRunId,
+              purpose: runStamp(clusterState),
               functionalClusterVersion: clusterVersionLabel(activeCycle),
               existingPerformer: sessionPerformer,
               instanceKind: activeCycle.instance.kind,

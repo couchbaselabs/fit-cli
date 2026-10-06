@@ -133,9 +133,8 @@ export function capellaFunctionalCbdinoclusterInitArgs(
  * block from the caller's `CAPELLA_*` variables and nothing else can fail to
  * configure. The regions are irrelevant to a sweep but `init` still writes them.
  *
- * `--capella-create-pool` and `--purpose-prefix` are deliberately absent. An
- * hourly sweep must never mint Capella API keys (the shared primary key is
- * enough for sweep volume) and never claim ownership through a purpose prefix.
+ * `--capella-create-pool` is deliberately absent. An hourly sweep must never
+ * mint Capella API keys. The shared primary key is enough for sweep volume.
  */
 export function capellaCleanupCbdinoclusterInitArgs(): string {
   return [

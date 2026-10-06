@@ -87,14 +87,13 @@ test("key pool args are empty when the init args disable Capella", () => {
   assert.deepEqual(capellaKeyPoolInitArgs(initArgs, "fitcli-20260615-090000-ab12", POOL), []);
 });
 
-test("capella cleanup init args enable only Capella, with no key pool and no purpose prefix", () => {
+test("capella cleanup init args enable only Capella, with no key pool and no purpose", () => {
   const args = capellaCleanupCbdinoclusterInitArgs();
   assert.doesNotMatch(args, /--disable-capella/);
   for (const disabled of ["docker", "aws", "azure", "gcp", "k8s", "dns", "github"]) {
     assert.match(args, new RegExp(`--disable-${disabled}`));
   }
-  // An hourly sweep must never mint pool keys, and must never claim ownership of
-  // anything through a purpose prefix.
+  // An hourly sweep must never mint pool keys or stamp a purpose.
   assert.doesNotMatch(args, /--capella-create-pool/);
-  assert.doesNotMatch(args, /--purpose-prefix/);
+  assert.doesNotMatch(args, /--purpose/);
 });

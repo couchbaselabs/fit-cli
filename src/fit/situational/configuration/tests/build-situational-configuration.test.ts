@@ -115,3 +115,18 @@ test("the situational run id is passed to the driver when given", () => {
     .situational as Record<string, unknown>;
   assert.equal(situational.situationalRunId, "52cad896-2bb7-4248-8d3b-92f3e72ac5c6");
 });
+
+test("the run stamp is passed to the driver as situational.cbdino.purpose", () => {
+  const config = buildSituationalConfiguration({ ...DEFAULT_CBDINO_SETTINGS, purpose: "fitcli-20260821-154758-ded4" });
+  const cbdino = (config.situational as { cbdino: Record<string, unknown> }).cbdino;
+  assert.equal(cbdino.purpose, "fitcli-20260821-154758-ded4");
+});
+
+test("a definition fitConfig cbdino block keeps the run stamp", () => {
+  const config = buildSituationalConfiguration({ ...DEFAULT_CBDINO_SETTINGS, purpose: "fitcli-20260821-154758-ded4" }, 8060, {
+    situational: { cbdino: { cbDinoClusterAppPath: "/opt/cbdinocluster", version: "7.6" } },
+  });
+  const cbdino = (config.situational as { cbdino: Record<string, unknown> }).cbdino;
+  assert.equal(cbdino.purpose, "fitcli-20260821-154758-ded4");
+  assert.equal(cbdino.version, "7.6");
+});
