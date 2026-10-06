@@ -13,6 +13,7 @@ import {
   cbdinoclusterSetupFailed,
   finalizeRunFromDefinition,
   runLabelParts,
+  runStamp,
   runTests,
   scopedPromptId,
   setupCluster,
@@ -22,6 +23,7 @@ import {
 } from "../run-from-definition.js";
 import { formatRunLabel } from "../../../shared/util/run-labels.js";
 import { loadEnvironments } from "../../../util/environments.js";
+import { allocatePurpose } from "../../../../cluster/cluster-create/allocate-purpose.js";
 
 function functionalCycle(): ResolvedFunctionalExecutionGroup {
   const sdk = sdkByValue("java");
@@ -294,6 +296,35 @@ test("runTests enables resourceCreation for a self-managed cbdinocluster run", a
   }, "7.6.0");
 
   assert.ok(receivedFitConfig?.config?.resourceCreation, "expected resourceCreation for a self-managed run");
+});
+
+test("runTests gives FIT the run stamp in resourceCreation.cluster.cbdinocluster.purpose", async () => {
+  let receivedFitConfig: { config?: Record<string, unknown> } | undefined;
+  await runTests(fitExecutionContext(), "cbdinocluster", iteration(), undefined, {
+    runClusterDiagFn: () => Promise.resolve(true),
+    generateFitConfigurationFn: (_cluster, _dir, _path, _port, fitConfig) => {
+      receivedFitConfig = fitConfig;
+      return { path: "/tmp/fit.json", artifacts: [], details: [] };
+    },
+    runPerformerClusterSanityCheckFn: () => Promise.resolve({ ok: true, artifacts: [], details: [] }),
+    runTestDriverFn: () => Promise.resolve({ ok: true, logFile: "/tmp/driver.log", artifacts: [], details: [] }),
+    purpose: "fitcli-20260821-154758-ded4",
+  }, "7.6.0");
+
+  const resourceCreation = receivedFitConfig?.config?.resourceCreation as { cluster: { cbdinocluster: Record<string, unknown> } };
+  assert.equal(resourceCreation.cluster.cbdinocluster.purpose, "fitcli-20260821-154758-ded4");
+});
+
+test("runStamp prefers the stamp saved by the original run", () => {
+  assert.equal(
+    runStamp({ cluster: cluster(), allocated: true, purpose: "fitcli-20260101-000000-abcd" }),
+    "fitcli-20260101-000000-abcd",
+  );
+});
+
+test("runStamp falls back to this run's stamp", () => {
+  assert.equal(runStamp(undefined), allocatePurpose());
+  assert.equal(runStamp({ cluster: cluster(), allocated: false }), allocatePurpose());
 });
 
 test("runTests leaves resourceCreation off for a Capella cbdinocluster run (no Docker deployer)", async () => {

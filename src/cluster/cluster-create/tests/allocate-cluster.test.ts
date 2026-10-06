@@ -67,10 +67,13 @@ test("allocateCluster tags a local allocate with --purpose", async () => {
   assert.ok(executor.capturedArgs.includes(`--purpose=${allocatePurpose()}`));
 });
 
-test("allocateCluster passes no --purpose on a remote box, whose config prefix carries the stamp", async () => {
+test("allocateCluster tags a remote allocate with --purpose too", async () => {
   const cycleDir = join(ensureRunDir(), "instances", "0", "clusters", "0");
   const executor = fakeExecutor("remote");
   await allocateCluster("cbdinocluster", "def", "cloud", executor, cycleDir);
   assert.ok(executor.capturedArgs.includes("allocate"));
-  assert.ok(!executor.capturedArgs.some((arg) => arg.startsWith("--purpose")));
+  assert.deepEqual(
+    executor.capturedArgs.filter((arg) => arg.startsWith("--purpose")),
+    [`--purpose=${allocatePurpose()}`],
+  );
 });
