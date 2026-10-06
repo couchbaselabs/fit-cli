@@ -88,6 +88,23 @@ export const HEALTH_OPT_INS: Partial<Record<SdkValue, HealthOptIn>> = {
     workflows: ["fit-testing-java-columnar.yml"],
     paths: ["columnar-java-client/", "columnar-java-fit-performer/", "columnar-fit-performer-shared/"],
   },
+  // Python and Node.js are built on the C++ SDK's core (couchbase-cxx-client): a test failing on
+  // all three, and passing elsewhere, points at the shared core.
+  cpp: {
+    repo: "couchbase/couchbase-cxx-client",
+    workflows: ["fit-test.yml"],
+    family: "cxx",
+  },
+  python: {
+    repo: "couchbase/couchbase-python-client",
+    workflows: ["fit-test.yml"],
+    family: "cxx",
+  },
+  node: {
+    repo: "couchbase/couchnode",
+    workflows: ["fit-test.yml"],
+    family: "cxx",
+  },
 };
 
 /** Problems with one entry, as sentences; empty when it is valid. */
