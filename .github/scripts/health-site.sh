@@ -5,7 +5,8 @@
 #   <reports-dir>   holds one health-report-<sdk>/ directory per SDK that reported this run
 #   <site-dir>      is created; the site is written there:
 #                     index.html               redirects to health/
-#                     health/index.html        one line per SDK, linking its report
+#                     health/index.html        each SDK's last 30 nights, one chart each (fit health overview)
+#                     health/overview.json     that page's data
 #                     health/sdks.json         the SDKs on the site, for the next run
 #                     health/<sdk>/index.html  the SDK's report page
 #                     health/<sdk>/report.json the report data (the page's drawing data)
@@ -72,34 +73,7 @@ fi
 sdks=($(printf '%s\n' "${sdks[@]}" | sort -u))
 printf '%s\n' "${sdks[@]}" | jq -R . | jq -cs . > "$site/health/sdks.json"
 
-rows=""
-for sdk in "${sdks[@]}"; do
-  when=""
-  if [ -f "$site/health/$sdk/report.json" ]; then
-    when="$(jq -r '"nights to \(.end), generated \(.generatedAt[0:10])"' "$site/health/$sdk/report.json")"
-  fi
-  rows+="<li><a href=\"$sdk/\">$sdk</a> <span>$when</span></li>"$'\n'
-done
-
-cat > "$site/health/index.html" <<EOF
-<!doctype html>
-<meta charset="utf-8">
-<meta name="robots" content="noindex">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FIT Health</title>
-<style>
-:root { color-scheme: light dark; --bg: #f5f6f8; --ink: #161a20; --muted: #6b7380; --link: #1f5fbf; }
-@media (prefers-color-scheme: dark) { :root { --bg: #111418; --ink: #e6e8eb; --muted: #9aa3ae; --link: #7fb0ff; } }
-body { background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; }
-a { color: var(--link); font-weight: 600; }
-span { color: var(--muted); font-size: 14px; margin-left: 8px; }
-li { margin: 6px 0; }
-</style>
-<h1>FIT Health</h1>
-<p>Per-SDK FIT test health from the nightly runs, produced by <code>fit health report</code>.</p>
-<ul>
-$rows</ul>
-EOF
+bun src/fit/main/main.ts health overview --dir "$site/health"
 
 cat > "$site/index.html" <<'EOF'
 <!doctype html>

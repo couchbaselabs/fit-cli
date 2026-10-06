@@ -20,6 +20,7 @@ import { runReportCommand } from "./report/report.js";
 import { runNotesCommand } from "./report/notes.js";
 import { runSettingsCommand } from "./report/settings.js";
 import { runCrossCommand } from "./report/cross-command.js";
+import { runOverviewCommand } from "./report/overview-command.js";
 import { HEALTH_OPT_INS } from "./registry/health-opt-ins.js";
 
 function helpText(): string {
@@ -34,6 +35,7 @@ Usage:
   ${p} notes <sdk> [--set <file>] [--store <dir>]
   ${p} settings <sdk> [--slack-channel <id> | --no-slack] [--report-url <url>] [--store <dir>]
   ${p} cross --dir <reports>
+  ${p} overview --dir <site>/health
   ${p} check <sdk> [--store <dir>] [--nights N]
   ${p} reparse <sdk> [--all] [--store <dir>]
   ${p} --help
@@ -48,6 +50,7 @@ Subcommands:
   notes         Show or set an SDK's hand-written report notes (known fixes), kept in the store.
   settings      Show or set where an SDK's output goes (its Slack channel), kept in the store.
   cross         Compare every SDK's report from one run: the same test on the other SDKs.
+  overview      Write the health site's top page: each SDK's last 30 nights, one chart each.
   check         Check an SDK's records can be trusted: runs name the right SDK, how much
                 comes from full JUnit, and JUnit agrees with the log on recent nights.
                 Backfill runs this at the end.
@@ -76,6 +79,9 @@ export function runHealthMain(): void {
       return;
     case "cross":
       runCli(() => runCrossCommand(rest, `${p} cross`));
+      return;
+    case "overview":
+      runCli(() => runOverviewCommand(rest, `${p} overview`));
       return;
     case "report":
       runCli(() => runReportCommand(rest, `${p} report`));
