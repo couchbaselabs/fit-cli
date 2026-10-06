@@ -45,14 +45,29 @@ export function compareRecords(emitted: RunRecord, scraped: RunRecord): RecordCo
   const l = new Set(failingTests(scraped));
   const missing = [...j].filter((t) => !l.has(t)).sort();
   const hidden = scraped.hiddenFailures ?? {};
-  const packages = Object.fromEntries(Object.entries(emitted.packages ?? {}).map(([c, p]) => [asLogged(c), p]));
-  const pkgOf = (t: string) => packages[t.slice(0, t.indexOf("."))];
+  // Each failing test's package comes from its own class. Keyed by the logged name, classes the
+  // driver reuses across packages (client/observability/ObservabilityTest and
+  // transactions/observability/ObservabilityTest) would collapse into one, and a test could be
+  // given the other class's package - so a logged id can have more than one package.
+  const pkgsOf = new Map<string, Set<string>>();
+  for (const t of failingTests(emitted)) {
+    const p = emitted.packages?.[t.slice(0, t.indexOf("."))];
+    if (!p) continue;
+    const k = asLogged(t);
+    (pkgsOf.get(k) ?? pkgsOf.set(k, new Set()).get(k)!).add(p);
+  }
   const byPkg = new Map<string, string[]>();
   for (const t of missing) {
-    const p = pkgOf(t);
-    if (p) (byPkg.get(p) ?? byPkg.set(p, []).get(p)!).push(t);
+    for (const p of pkgsOf.get(t) ?? []) (byPkg.get(p) ?? byPkg.set(p, []).get(p)!).push(t);
   }
-  const hiddenByCap = [...byPkg.entries()].filter(([p, ts]) => (hidden[p] ?? 0) >= ts.length).flatMap(([, ts]) => ts).sort();
+  // Hidden only if the log hid at least as many failures as are missing in every package the
+  // test could be in.
+  const hiddenByCap = missing
+    .filter((t) => {
+      const ps = [...(pkgsOf.get(t) ?? [])];
+      return ps.length > 0 && ps.every((p) => (hidden[p] ?? 0) >= byPkg.get(p)!.length);
+    })
+    .sort();
   const onlyJunit = missing.filter((t) => !hiddenByCap.includes(t));
   const onlyLog = [...l].filter((t) => !j.has(t)).sort();
   const ce = emitted.counts;

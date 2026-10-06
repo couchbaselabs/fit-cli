@@ -71,3 +71,25 @@ test("failures the log hid behind fit-cli's per-package cap are explained, not c
   const r2 = compareRecords(rec, { ...log, hiddenFailures: { "com.couchbase": 1 } });
   assert.equal(r2.agree, false);
 });
+
+test("a hidden failure is matched to its own class's package when two classes share a name", () => {
+  // The driver has com.couchbase.client.observability.ObservabilityTest and
+  // com.couchbase.transactions.observability.ObservabilityTest; the log prints both as
+  // ObservabilityTest. gocb's 2026-10-05 nightly hid client's kvReplace behind the cap.
+  const client = (name: string, inner = "") => `<testcase name="${name}" classname="com.couchbase.client.observability.ObservabilityTest">${inner}</testcase>`;
+  const txn = (name: string) => `<testcase name="${name}" classname="com.couchbase.transactions.observability.ObservabilityTest"/>`;
+  const log: RunRecord = {
+    ...scraped,
+    counts: { passed: 1, failed: 4, errored: 0, skipped: 0 },
+    tests: { ObservabilityTest: { f: ["bucketFlush"] } },
+    hiddenFailures: { "com.couchbase.client.observability": 1 },
+  };
+  const rec = recordFromJunit(
+    junitOutcomes([xml(client("bucketFlush", "<failure/>").repeat(3) + client("kvReplace", "<failure/>") + txn("commit"))]),
+    log,
+  );
+  const r = compareRecords(rec, log);
+  assert.deepEqual(r.hiddenByCap, ["ObservabilityTest.kvReplace"]);
+  assert.deepEqual(r.onlyJunit, []);
+  assert.equal(r.agree, true);
+});
