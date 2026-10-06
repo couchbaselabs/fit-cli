@@ -215,3 +215,19 @@ test("a GitHub failure leaves the finding's category unknown, with the reason, a
   assert.equal(t.findings[0].changeAnalysis?.category, "unknown");
   assert.match(t.findings[0].changeAnalysis?.reason ?? "", /HTTP 502/);
 });
+
+test("no file found for the test's class: whether the test changed is unknown, not 'it didn't'", async () => {
+  const source = src({
+    compare: (repo) => (repo === DRIVER_REPO ? [c("h1", "helper change")] : []),
+    files: () => ["test-driver/src/test/java/com/couchbase/client/util/Helper.java"],
+    history: () => [{ sha: "d1", landedAt: "2026-09-23T13:00:00.000Z" }, { sha: "d0", landedAt: "2026-09-22T13:00:00.000Z" }],
+    tree: () => [],
+  });
+  const t = report([finding("Missing.x", night("2026-09-23", 1, "a"), night("2026-09-24", 2, "a"))]);
+  await analyseChanges(t, { manifests: [manifest(1, "2026-09-23T00:20:00.000Z"), manifest(2, "2026-09-24T00:20:00.000Z")], optIn: { repo: "o/r", workflows: ["x.yml"] }, source });
+  const f = t.findings[0];
+  assert.equal(f.driverChanges?.testFileCommits, null);
+  assert.deepEqual(f.driverChanges?.helperCommits?.map((x) => x.sha), ["h1"]);
+  assert.equal(f.changeAnalysis?.category, "unknown");
+  assert.match(f.changeAnalysis?.reason ?? "", /no file for Missing found/);
+});

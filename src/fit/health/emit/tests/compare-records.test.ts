@@ -115,3 +115,8 @@ test("classes that errored as a whole, hidden behind the cap, are explained too"
   assert.equal(r2.agree, false);
   assert.deepEqual(r2.classErrorsOnlyJunit, ["CTest", "DTest"]);
 });
+
+test("a record built from JUnit keeps the scraped record's variant, so both have one key", () => {
+  const rec = recordFromJunit(junitOutcomes([xml(tc("getAndLock"))]), { ...scraped, variant: "rebalance" });
+  assert.equal(rec.variant, "rebalance");
+});

@@ -15,8 +15,8 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
-import { failingTests, type RunRecord } from "../../record/run-record.js";
-import { buildRecords, parseRunLog, presetKind, readLogFile, stripAnsi } from "../parse-run-log.js";
+import { failingTests, recordKey, type RunRecord } from "../../record/run-record.js";
+import { assignVariants, buildRecords, parseRunLog, presetKind, readLogFile, stripAnsi } from "../parse-run-log.js";
 
 const FIXTURES = join(import.meta.dirname, "fixtures");
 
@@ -218,4 +218,36 @@ test("each job records the commit its performer image was built from", () => {
     "fit / op-onprem-func-lite": "06cc170b0a50da4ec7df269b7b76f3434eed0fe8",
     "fit / op-cng-func-lite": "06cc170b0a50da4ec7df269b7b76f3434eed0fe8",
   });
+});
+
+test("records of one run that would share a key get a variant; the rest keep their key", () => {
+  const rec = (suite: string, params: Record<string, string | number | boolean> = {}, preset = "op-capella-sit-release"): RunRecord => ({
+    schema: 1,
+    source: "run-log-scrape",
+    sdk: "dotnet",
+    preset,
+    kind: "situational",
+    cluster: "Capella:8.0",
+    params: { suite, ...params },
+    date: "2026-10-06",
+    ci: { repo: "r", runId: 1, runAttempt: 1, job: "fit / x" },
+    outcome: "passed",
+    passesKnown: false,
+    tests: {},
+  });
+  // Two suites on one cluster: the suite tells them apart.
+  const bySuite = [rec("standard-qe"), rec("rebalance"), rec("standard-qe", {}, "op-onprem-func-lite")];
+  assignVariants(bySuite);
+  assert.deepEqual(bySuite.map((r) => r.variant), ["standard-qe", "rebalance", undefined]);
+  assert.equal(new Set(bySuite.map(recordKey)).size, 3);
+  assert.ok(!recordKey(bySuite[2]).includes("standard-qe"), "a record that doesn't collide keeps its old key");
+
+  // The same suite with different parameters: a short, stable hash of them.
+  const byParams = [rec("standard-qe", { privateEndpoint: true }), rec("standard-qe", { privateEndpoint: false })];
+  assignVariants(byParams);
+  assert.match(byParams[0].variant ?? "", /^[0-9a-f]{8}$/);
+  assert.notEqual(byParams[0].variant, byParams[1].variant);
+  const again = [rec("standard-qe", { privateEndpoint: true }), rec("standard-qe", { privateEndpoint: false })];
+  assignVariants(again);
+  assert.deepEqual(again.map((r) => r.variant), byParams.map((r) => r.variant), "deterministic, so backfill finds the same key");
 });

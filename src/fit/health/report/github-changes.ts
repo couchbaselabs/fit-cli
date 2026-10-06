@@ -14,7 +14,7 @@ async function lines(args: string[]): Promise<string[]> {
 
 export const githubChanges: ChangeSource = {
   async compare(repo, base, head) {
-    const out = await lines([`repos/${repo}/compare/${base}...${head}`, "--jq", '.commits[] | {sha, title: (.commit.message | split("\\n")[0])} | tojson']);
+    const out = await lines(["--paginate", `repos/${repo}/compare/${base}...${head}?per_page=100`, "--jq", '.commits[] | {sha, title: (.commit.message | split("\\n")[0])} | tojson']);
     return out.map((l) => JSON.parse(l) as Commit);
   },
   async files(repo, sha) {

@@ -7,7 +7,7 @@ import { RUN_RECORD_SCHEMA, type RunRecord } from "../record/run-record.js";
 import type { JunitOutcomes } from "./junit-outcomes.js";
 
 /** Everything about the run that the JUnit XML itself doesn't say. */
-export type RunDescription = Pick<RunRecord, "sdk" | "preset" | "performer" | "kind" | "cluster" | "params" | "date" | "ci">;
+export type RunDescription = Pick<RunRecord, "sdk" | "preset" | "performer" | "kind" | "cluster" | "variant" | "params" | "date" | "ci">;
 
 export function recordFromJunit(junit: JunitOutcomes, run: RunDescription): RunRecord {
   const c = junit.counts;
@@ -21,6 +21,7 @@ export function recordFromJunit(junit: JunitOutcomes, run: RunDescription): RunR
     ...(run.performer ? { performer: run.performer } : {}),
     kind: run.kind,
     cluster: run.cluster,
+    ...(run.variant ? { variant: run.variant } : {}),
     params: { ...run.params },
     date: run.date,
     ci: { ...run.ci },

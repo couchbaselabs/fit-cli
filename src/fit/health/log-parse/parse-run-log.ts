@@ -24,11 +24,13 @@
  *   - The results table gained an Err column at the same time.
  */
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { isMain } from "../../../util/non-fit/cli.js";
 import {
   RUN_RECORD_SCHEMA,
   addOutcome,
+  recordSlug,
   type CiContext,
   type ResultCounts,
   type RunRecord,
@@ -373,7 +375,30 @@ export function buildRecords(parsed: ParsedLog, ctx: { sdk: string; date: string
       tests,
     });
   }
+  assignVariants(records);
   return { records, warnings };
+}
+
+/**
+ * Give records of one run that would share a key (same preset, kind and cluster) a variant
+ * that tells them apart: the suite where that differs, else a short hash of the parameters
+ * and job. Records that don't collide get none, so their keys are as they always were.
+ */
+export function assignVariants(records: RunRecord[]): void {
+  const bySlug = new Map<string, RunRecord[]>();
+  for (const r of records) {
+    const slug = recordSlug(r);
+    (bySlug.get(slug) ?? bySlug.set(slug, []).get(slug)!).push(r);
+  }
+  for (const group of bySlug.values()) {
+    if (group.length < 2) continue;
+    const suites = group.map((r) => String(r.params.suite ?? ""));
+    const suitesDiffer = new Set(suites).size === group.length && suites.every(Boolean);
+    for (const r of group) {
+      const identity = JSON.stringify([Object.entries(r.params).sort(([a], [b]) => a.localeCompare(b)), r.ci.job ?? ""]);
+      r.variant = suitesDiffer ? String(r.params.suite) : createHash("sha256").update(identity).digest("hex").slice(0, 8);
+    }
+  }
 }
 
 /** The test kind a preset runs, from its name (op-cng-sit-lite, op-onprem-func-lite). */

@@ -322,7 +322,8 @@ export async function analyseChanges(
           ...(from.sha !== to.sha ? { compareUrl: `https://github.com/${DRIVER_REPO}/compare/${from.sha}...${to.sha}` } : {}),
           testFiles,
           ...splitDriverCommits(range, testFiles, module),
-          ...(testFiles.length === 0 ? { note: `no file for ${f.class} found under ${module}/; only other test code is listed` } : {}),
+          // Without the test's own file, whether it changed isn't known - not "it didn't".
+          ...(testFiles.length === 0 ? { testFileCommits: null, note: `no file for ${f.class} found under ${module}/; only other test code is listed` } : {}),
         };
       }
       f.driverChanges = driver;

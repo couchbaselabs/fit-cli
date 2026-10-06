@@ -329,3 +329,23 @@ test("a preset that ran two clusters a night stays split, and a whole-preset abo
   assert.equal(series.length, 2);
   for (const s of series) assert.deepEqual(s.aborted.map((a) => a.date), ["2026-09-05"]);
 });
+
+test("a test no longer followed still counts on the nights it failed", () => {
+  // Failed on 1-3 Sep, then stopped running: by 28 Sep it's left out of the rows, but the
+  // per-night counts (the trend chart, the night panel) still include those failures.
+  const rs = days(1, 28).map((d, i) => rec(d, { failing: i < 3 ? ["Gone.test"] : [] }));
+  for (const [i, r] of rs.entries()) if (i < 3) addOutcome(r.tests, "Other.p", "p");
+  for (const [i, r] of rs.entries()) if (i >= 3) r.passesKnown = true;
+  const report = buildHealthReport("dotnet", rs, [], { end: "2026-09-28", now: new Date("2026-09-28T12:00:00Z") });
+  const [s] = report.series;
+  assert.equal(s.tests.find((t) => t.test === "Gone.test"), undefined);
+  assert.equal(s.stoppedRunningEarlier, 1);
+  assert.deepEqual([s.perNight["2026-09-01"], s.perNight["2026-09-03"], s.perNight["2026-09-04"]], [1, 1, 0]);
+});
+
+test("records of one run told apart by a variant are separate series, named by it", () => {
+  const rs = days(1, 5).flatMap((d) => [rec(d, { variant: "standard-qe" }), rec(d, { variant: "rebalance" })]);
+  const report = buildHealthReport("dotnet", rs, [], { end: "2026-09-05", now: new Date("2026-09-05T12:00:00Z") });
+  assert.equal(report.series.length, 2);
+  assert.deepEqual(report.series.map((s) => s.label).sort(), ["Functional · on-prem · rebalance", "Functional · on-prem · standard-qe"]);
+});

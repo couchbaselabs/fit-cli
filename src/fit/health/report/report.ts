@@ -74,7 +74,7 @@ export function slackDecision(argv: string[], configuredChannel: string | undefi
   const channel = override ?? configuredChannel;
   if (argv.includes("--slack-dry-run")) return { post: false, dryRun: true, why: "dry run", channel };
   if (argv.includes("--no-slack")) return { post: false, dryRun: false, why: "--no-slack given" };
-  if (!channel) return { post: false, dryRun: false, why: "no Slack channel configured for this SDK (add a slack block to its opt-in)" };
+  if (!channel) return { post: false, dryRun: false, why: "no Slack channel configured for this SDK (set one with `fit health settings <sdk> --slack-channel <id>`)" };
   const ci = env.GITHUB_ACTIONS === "true";
   if (!ci && !argv.includes("--slack") && !override) {
     return { post: false, dryRun: false, why: `a channel is configured, but this is a local run - pass --slack to post to ${channel}` };

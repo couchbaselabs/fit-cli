@@ -107,14 +107,20 @@ export interface RunRecord {
   archive?: { uri: string; member: string };
   /** Emitted records: each test class's Java package, which log output never shows. */
   packages?: Record<string, string>;
+  /**
+   * Set only when one run produced two records with the same preset, kind and cluster (two
+   * suites, or the same suite with different parameters): it tells them apart in the record
+   * key and the series. Absent otherwise, so no existing record's key changes.
+   */
+  variant?: string;
   /** False for scraped records: absence from `tests` does not mean the test passed. */
   passesKnown: boolean;
   tests: Record<string, ClassOutcomes>;
 }
 
 /** A short, filesystem-safe identifier for the run within its CI job. */
-export function recordSlug(record: Pick<RunRecord, "preset" | "kind" | "cluster">): string {
-  const parts = [record.preset, record.kind, record.cluster].filter((p): p is string => !!p);
+export function recordSlug(record: Pick<RunRecord, "preset" | "kind" | "cluster" | "variant">): string {
+  const parts = [record.preset, record.kind, record.cluster, record.variant].filter((p): p is string => !!p);
   return parts.join(".").replace(/[^A-Za-z0-9._-]+/g, "-");
 }
 

@@ -4,7 +4,7 @@ This is a human-written doc.  Targeted, specific, reviewed LLM edits are permitt
 # fit health
 `fit health` answers, per SDK: which FIT tests fail every night, which fail intermittently, which started or stopped failing recently, and which way things are trending. A nightly that is red every night says nothing on its own; the set of failing tests does.
 
-A report covers its own SDK only. It makes no claim about other SDKs.
+A report is built from its own SDK's runs only; the workflow then adds how other SDKs fare on the same tests (`fit health cross`).
 
 ## Run records
 Everything is built on run records: one per fit-cli run (a preset × test type × cluster, in one CI job), holding every test's outcome plus the run's SDK, performer, preset, cluster, run parameters and CI context. Rules like "chronic" or "intermittent" are applied when a report is built, never stored, so they can change without rewriting history.

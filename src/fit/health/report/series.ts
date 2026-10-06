@@ -31,6 +31,8 @@ export interface Series {
   preset: string;
   kind: RunRecord["kind"];
   suite: string;
+  /** Set when the series is one of a run's same-preset records (see RunRecord.variant). */
+  variant?: string;
   params: Record<string, string | number | boolean>;
   /** Cluster per night; changes over time are shown, not split. */
   clusters: Record<string, string | undefined>;
@@ -52,7 +54,8 @@ const med = (xs: number[]) => {
 
 /** A preset runs one suite per test type, so preset + kind identifies the series. */
 function seriesBaseKey(r: RunRecord): string {
-  return `${r.preset}|${r.kind}`;
+  // A variant (see RunRecord.variant) is its own series; `+` keeps the id's |-separated shape.
+  return `${r.preset}${r.variant ? `+${r.variant}` : ""}|${r.kind}`;
 }
 
 /** Only each night's latest run attempt counts: a re-run replaces the run it re-ran. */
@@ -121,6 +124,7 @@ export function buildSeries(allRecords: RunRecord[]): Series[] {
       preset: first.preset,
       kind: first.kind,
       suite: String(first.params.suite ?? first.kind),
+      ...(first.variant ? { variant: first.variant } : {}),
       params,
       clusters: Object.fromEntries(dated.map(([d, r]) => [d, r.cluster])),
       passesKnown: rs.every((r) => r.passesKnown),

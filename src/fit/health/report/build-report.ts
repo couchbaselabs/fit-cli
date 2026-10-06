@@ -188,7 +188,11 @@ function reportSeries(s: Series, end: string, notes: ReportNotes): ReportSeries 
   const degraded = new Set(s.degraded);
   const tests: ReportTest[] = [];
   let stoppedRunningEarlier = 0;
+  // Per-night failure counts take every history, including tests no longer followed below:
+  // they failed on those nights, and the chart and night panel count them.
+  const everySeq: string[] = [];
   for (const [test, seq] of histories) {
+    everySeq.push(seq.join(""));
     const c = classify(s.ran, seq, end);
     // A test that stopped running is reported for RECENT_DAYS, then no longer followed.
     if (c.cls === "stopped" && daysBetween(c.notRunSince!, end) >= RECENT_DAYS) {
@@ -210,8 +214,8 @@ function reportSeries(s: Series, end: string, notes: ReportNotes): ReportSeries 
   const counts = Object.fromEntries(CLASS_ORDER.map((c) => [c, tests.filter((t) => t.cls === c).length])) as Record<TestClass, number>;
   const perNight: Record<string, number | null> = {};
   for (const d of s.ran) perNight[d] = degraded.has(d) ? null : 0;
-  for (const t of tests) {
-    [...t.seq].forEach((x, i) => {
+  for (const seq of everySeq) {
+    [...seq].forEach((x, i) => {
       const n = perNight[s.ran[i]];
       if (isFailure(x) && n !== null) perNight[s.ran[i]] = n + 1;
     });
@@ -239,7 +243,7 @@ function reportSeries(s: Series, end: string, notes: ReportNotes): ReportSeries 
   const lastRan = s.ran.at(-1) ?? s.aborted.at(-1)?.date;
   return {
     id: s.id,
-    label: `${kind} · ${where}${multiCluster && clusters[0] ? ` (${clusters[0].cluster})` : ""}`,
+    label: `${kind} · ${where}${s.variant ? ` · ${s.variant}` : ""}${multiCluster && clusters[0] ? ` (${clusters[0].cluster})` : ""}`,
     short: where,
     preset: s.preset,
     kind: s.kind,
