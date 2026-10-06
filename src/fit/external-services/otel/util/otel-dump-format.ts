@@ -150,15 +150,17 @@ export function isInternalMetricName(name: string): boolean {
  *
  * 64 MiB is about 4x the largest healthy dump seen (Java's, an estimated 15 MB), and peaks
  * at 1-2 GB.
- * Skipping the readable copy loses no data: the Prometheus TSDB snapshot and Jaeger's
- * badger store are taken separately and keep everything, whatever the size.
+ * Only the readable copy is skipped: the Prometheus TSDB snapshot and Jaeger's badger store
+ * are taken separately and keep the full data whatever the size, when they are captured -
+ * each warns if it isn't, and the badger store is taken after this check, so it can't be
+ * promised here.
  */
 export const MAX_PARSE_BYTES = 64 * 1024 * 1024;
 
 /** Why a response of `bytes` must not be parsed, or undefined when it is safe to. */
 export function tooLargeToParse(bytes: number, limit: number = MAX_PARSE_BYTES): string | undefined {
   if (bytes <= limit) return undefined;
-  return `the response is ${formatBytes(bytes)}, over the ${formatBytes(limit)} that is safe to parse; the full data is in the Prometheus snapshot and Jaeger's badger store`;
+  return `the response is ${formatBytes(bytes)}, over the ${formatBytes(limit)} that is safe to parse; skipped. The full data is kept in prometheus-snapshot.tar.gz / jaeger-badger.tar.gz when those are captured (each warns if it isn't)`;
 }
 
 /** The metric names worth dumping, sorted, with the self-monitoring noise dropped. */

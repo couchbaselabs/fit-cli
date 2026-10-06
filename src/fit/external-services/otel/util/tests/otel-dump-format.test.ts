@@ -165,7 +165,8 @@ test("a response up to the parse limit is parsed; one byte over is refused, sayi
   assert.equal(tooLargeToParse(MAX_PARSE_BYTES), undefined);
   const why = tooLargeToParse(MAX_PARSE_BYTES + 1);
   assert.match(why ?? "", /over the 64\.0 MB that is safe to parse/);
-  assert.match(why ?? "", /Prometheus snapshot/);
+  // It names where the full data would be, without promising it was captured.
+  assert.match(why ?? "", /prometheus-snapshot\.tar\.gz \/ jaeger-badger\.tar\.gz when those are captured/);
 });
 
 test("the parse limit leaves room for healthy dumps and refuses the one that killed the .NET runner", () => {
