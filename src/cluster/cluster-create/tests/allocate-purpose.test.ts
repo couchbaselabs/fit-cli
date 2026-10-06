@@ -8,21 +8,25 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { FITCLI_PURPOSE_PREFIX, allocatePurpose, isFitCliPurpose } from "../allocate-purpose.js";
 
-test("allocatePurpose combines the prefix, the run id and the user", () => {
-  assert.equal(allocatePurpose("20260821-154758-ded4", "someone"), "fitcli-20260821-154758-ded4-someone");
+test("allocatePurpose combines the prefix and the run id", () => {
+  assert.equal(allocatePurpose("20260821-154758-ded4"), "fitcli-20260821-154758-ded4");
 });
 
-test("allocatePurpose reduces a username to lowercase letters, digits and dashes", () => {
-  assert.equal(allocatePurpose("20260821-154758-ded4", "First.Last"), "fitcli-20260821-154758-ded4-first-last");
-  assert.equal(allocatePurpose("20260821-154758-ded4", "_odd_"), "fitcli-20260821-154758-ded4-odd");
+test("allocatePurpose reduces a run id to lowercase letters, digits and dashes", () => {
+  assert.equal(allocatePurpose("20260821_154758.DED4"), "fitcli-20260821-154758-ded4");
+  assert.equal(allocatePurpose("_odd_"), "fitcli-odd");
 });
 
 test("allocatePurpose still carries the prefix when it has nothing else to say", () => {
-  assert.ok(isFitCliPurpose(allocatePurpose("", "")));
+  assert.equal(allocatePurpose(""), FITCLI_PURPOSE_PREFIX);
+  assert.ok(isFitCliPurpose(allocatePurpose("")));
 });
 
 test("isFitCliPurpose accepts our own purposes and nothing else", () => {
-  assert.ok(isFitCliPurpose(allocatePurpose("20260821-154758-ded4", "someone")));
+  assert.ok(isFitCliPurpose(allocatePurpose("20260821-154758-ded4")));
+  // Older stamps carried the username after the run id. Runs that are still alive
+  // use them, so they must stay ours.
+  assert.ok(isFitCliPurpose("fitcli-20260821-154758-ded4-someone"));
   assert.ok(isFitCliPurpose(FITCLI_PURPOSE_PREFIX));
   assert.equal(isFitCliPurpose(undefined), false);
   assert.equal(isFitCliPurpose(""), false);

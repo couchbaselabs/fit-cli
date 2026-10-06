@@ -66,10 +66,10 @@ const POOL = { enabled: true, size: 10, expiryDays: 1 };
 
 test("key pool args carry the pool name, size and expiry when Capella is enabled", () => {
   const initArgs = capellaFunctionalCbdinoclusterInitArgs("aws").split(" ");
-  assert.deepEqual(capellaKeyPoolInitArgs(initArgs, "fitcli-run-user", POOL), [
+  assert.deepEqual(capellaKeyPoolInitArgs(initArgs, "fitcli-20260615-090000-ab12", POOL), [
     "--capella-create-pool",
     "--capella-pool-name",
-    "fitcli-run-user",
+    "fitcli-20260615-090000-ab12",
     "--capella-pool-size",
     "10",
     "--capella-pool-expiry",
@@ -79,12 +79,12 @@ test("key pool args carry the pool name, size and expiry when Capella is enabled
 
 test("key pool args are empty when the pool is disabled", () => {
   const initArgs = capellaFunctionalCbdinoclusterInitArgs("aws").split(" ");
-  assert.deepEqual(capellaKeyPoolInitArgs(initArgs, "fitcli-run-user", { ...POOL, enabled: false }), []);
+  assert.deepEqual(capellaKeyPoolInitArgs(initArgs, "fitcli-20260615-090000-ab12", { ...POOL, enabled: false }), []);
 });
 
 test("key pool args are empty when the init args disable Capella", () => {
   const initArgs = defaultCbdinoclusterInitArgs().split(" ");
-  assert.deepEqual(capellaKeyPoolInitArgs(initArgs, "fitcli-run-user", POOL), []);
+  assert.deepEqual(capellaKeyPoolInitArgs(initArgs, "fitcli-20260615-090000-ab12", POOL), []);
 });
 
 test("capella cleanup init args enable only Capella, with no key pool and no purpose prefix", () => {
