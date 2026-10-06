@@ -172,13 +172,9 @@ export async function allocateCluster(
   // 31h claim can starve other users. Expire those quickly instead.
   const sharedResourceDeployer = deployer === "cloud" || cng;
   args.push(sharedResourceDeployer ? "--expiry=3h" : "--expiry=31h");
-  // Every cluster of the run carries the run stamp as its purpose. A remote box
-  // gets it from the purpose prefix in its config, so a flag here would double it.
-  // This machine gets it from the flag, because fit-cli never writes the
-  // operator's own config.
-  if (!isRemoteExecution(execution)) {
-    args.push(`--purpose=${allocatePurpose()}`);
-  }
+  // Every cluster of the run carries the run stamp as its purpose, so teardown
+  // can find it.
+  args.push(`--purpose=${allocatePurpose()}`);
   args.push(`--def-file=${defFile}`);
 
   mkdirSync(cycleDir, { recursive: true, mode: 0o700 });

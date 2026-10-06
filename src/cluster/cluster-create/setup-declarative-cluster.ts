@@ -204,10 +204,7 @@ export function dockerNetworkFromInitArgs(args: string): string | undefined {
  * `--github-user/--github-token` (which enables GitHub), without them
  * `--disable-github`. The run's own Capella API key pool flags are appended the
  * same way (see {@link capellaKeyPoolInitArgs}), and the returned
- * `capellaKeyPool` tells teardown whether there is a pool to remove. The run's
- * purpose stamp also becomes the config's purpose prefix. This is the only source
- * of the stamp on the box, for fit-cli's own allocate and for the ones the FIT
- * suite makes on its own. Afterwards
+ * `capellaKeyPool` tells teardown whether there is a pool to remove. Afterwards
  * the docker network the args name is created if it isn't a built-in
  * (cbdinocluster init records the network but doesn't create it).
  *
@@ -231,10 +228,6 @@ export async function runCbdinoclusterInit(
     ? ["--github-user", githubCredentials.user, "--github-token", githubCredentials.token]
     : ["--disable-github"];
   const poolArgs = capellaKeyPoolInitArgs(initArgs, allocatePurpose());
-  // FIT drives cbdinocluster on the box and passes its own --purpose. The prefix
-  // puts the run stamp in front of it, so teardown and the hourly sweep own those
-  // clusters too. Applied whatever the deployer, and this is a throwaway box config.
-  const purposeArgs = ["--purpose-prefix", allocatePurpose()];
   console.log(
     `→ setup-cluster: initializing cbdinocluster on ${execution.description} with \`cbdinocluster init ${args}\``,
   );
@@ -260,7 +253,7 @@ export async function runCbdinoclusterInit(
   // Hidden unless it fails: the SSH transport itself can print unrelated
   // diagnostics on stderr (e.g. a cloud provider's OS Login banner naming the
   // account), which we don't want streamed live for every init.
-  const initCmdline = [cbdinocluster, "init", ...initArgs, ...credArgs, ...poolArgs, ...purposeArgs].map(posixQuote).join(" ");
+  const initCmdline = [cbdinocluster, "init", ...initArgs, ...credArgs, ...poolArgs].map(posixQuote).join(" ");
   await execution.runHiddenUntilFailure("bash", ["-lc", initCmdline], undefined, {
     display: `cbdinocluster init ${args}`,
   });
@@ -342,10 +335,9 @@ export async function remoteCbdinoclusterCloudEnabled(
 }
 
 /**
- * Prepare `~/.cbdinocluster` from a definition's init setup, picking the right
- * path: the `args` path runs `cbdinocluster init <args>` (and merges any
- * `configPatch`); the legacy `config` path uploads a config object (CNG) with the
- * run's purpose prefix added.
+ * Prepare `~/.cbdinocluster` from a definition's init setup. The `args` path runs
+ * `cbdinocluster init <args>` and merges any `configPatch`. The legacy `config`
+ * path uploads a config object (CNG).
  * Used by the situational flow, which sets up its own cluster outside
  * {@link setupDeclarativeCluster}. Reports whether init created the run's Capella
  * API key pool, so teardown knows there is one to remove, and the cbdinocluster
@@ -387,11 +379,8 @@ export async function prepareCbdinoclusterConfig(
   if (!config || !("kind" in execution) || execution.kind !== "remote") {
     return;
   }
-  // Same purpose prefix as runCbdinoclusterInit, so this run's teardown removes
-  // every cluster allocated on the box.
   const configToUpload: PieceData = {
     ...config,
-    "purpose-prefix": allocatePurpose(),
     ...(githubCredentials
       ? { github: { enabled: "true", user: githubCredentials.user, token: githubCredentials.token } }
       : {}),
@@ -420,11 +409,7 @@ async function listExistingClusters(
       return undefined;
     }
 
-    // A remote box gets the run stamp as its purpose prefix. On this machine the
-    // config is the operator's own and outlives the run, so it gets no prefix.
-    const initArgs = isRemoteExecution(execution)
-      ? ["init", "--auto", "--purpose-prefix", allocatePurpose()]
-      : ["init", "--auto"];
+    const initArgs = ["init", "--auto"];
     console.log(
       `→ setup-cluster: ${execution.description} has no cbdinocluster config yet — ` +
         `initializing a default one with \`${cbdinocluster} ${initArgs.join(" ")}\`.`,
