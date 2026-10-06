@@ -5,25 +5,24 @@
  *   bun src/fit/health/backfill/backfill.ts <sdk> [--limit N] [--store <dir>] [--dry-run]
  *
  * For every nightly run with no manifest (or one worth retrying - see needsWork), fetch
- * the whole-run log with `gh run view --log`, keep it, parse it, and write its records.
+ * the whole-run log (every job's, see fetch-run-log.ts), keep it, parse it, and write its
+ * records.
  * Safe to rerun: a run that already has a manifest is skipped, so a rerun does only the
  * missing work. Newest first, so an interrupted backfill loses the fewest nights to
  * GitHub's 90-day log retention.
- *
- * Fetch the whole-run log, not per job: ~5s for every job at once, versus 30-60s per job.
  */
-import { readFileSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 import type { RunOutput } from "../../../util/non-fit/artifacts.js";
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { fitCliInfo, fitCliWarn } from "../../../util/non-fit/fit-cli-log.js";
-import { streamToFile } from "../../../util/non-fit/proc.js";
 import { ensureRunDir } from "../../../util/non-fit/replay.js";
 import { LOG_PARSER_VERSION } from "../log-parse/parse-run-log.js";
 import { MANIFEST_SCHEMA, needsArchiveUpgrade, needsWork, type RunManifest } from "../record/run-manifest.js";
 import { healthOptIn } from "../registry/health-opt-ins.js";
 import { type LocalHealthStore, defaultHealthStoreRoot } from "../store/health-store.js";
 import { openStore, type OpenedStore } from "../store/s3-store.js";
+import { fetchRunLog } from "./fetch-run-log.js";
 import { ingestLog, recordFetchFailure } from "./ingest-log.js";
 import { listNightlyRuns, type CiRun } from "./list-runs.js";
 import { upgradeFromArchive } from "./upgrade-from-archive.js";
@@ -88,26 +87,18 @@ export async function backfill(sdk: string, opts: BackfillOptions): Promise<Back
       ci: { repo: optIn.repo, workflow: run.workflow, ref: `refs/heads/${run.branch}`, sha: run.sha, event: run.event, runId: run.runId, runAttempt: run.runAttempt },
     };
     fitCliInfo(`[${i + 1}/${batch.length}] ${run.date} run ${run.runId} (attempt ${run.runAttempt})`);
-    rmSync(scratch, { force: true });
+    let log: string;
     try {
-      await streamToFile(
-        "gh",
-        ["run", "view", String(run.runId), "-R", optIn.repo, "--attempt", String(run.runAttempt), "--log"],
-        scratch,
-        process.cwd(),
-        { quiet: true },
-      );
+      log = await fetchRunLog(optIn.repo, run.runId, run.runAttempt, scratch);
     } catch (err) {
-      // streamToFile's error only carries the exit code; gh's own message is in the file.
-      const ghSaid = safeRead(scratch).split("\n").filter((l) => l.trim() && !l.startsWith("# ")).join(" ").trim();
-      const message = [String(err instanceof Error ? err.message : err), ghSaid].filter(Boolean).join(": ");
+      const message = String(err instanceof Error ? err.message : err);
       const expired = isExpiredLogError(message);
       recordFetchFailure(opts.store, meta, expired, message);
       summary.fetchFailures++;
       fitCliWarn(`  could not fetch the log${expired ? " (GitHub has deleted it)" : ""}: ${message.slice(0, 200)}`);
       continue;
     }
-    const manifest = ingestLog(opts.store, meta, readFileSync(scratch, "utf8"));
+    const manifest = ingestLog(opts.store, meta, log);
     summary.ingested++;
     summary.records += manifest.records.length;
     if (manifest.status === "parse_error") {
@@ -141,14 +132,6 @@ async function upgradeAll(sdk: string, opts: BackfillOptions, summary: BackfillS
     summary.archiveRuns++;
     summary.archiveUpgraded += a.upgraded.length;
     fitCliInfo(`[${i + 1}/${batch.length}] ${m.date} run ${m.runId}: ${a.status}, ${a.upgraded.length} upgraded${a.skipped.length ? `, ${a.skipped.length} left as scraped` : ""}${a.reason ? ` (${a.reason})` : ""}`);
-  }
-}
-
-function safeRead(path: string): string {
-  try {
-    return readFileSync(path, "utf8").slice(0, 4000);
-  } catch {
-    return "";
   }
 }
 
