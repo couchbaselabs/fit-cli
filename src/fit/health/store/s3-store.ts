@@ -8,25 +8,17 @@
  * Each SDK's data lives under its own prefix (<sdk>/...), so jobs for different SDKs never
  * touch each other's keys.
  *
- * It works within fit-cli-role's S3 permissions, which are GetObject and PutObject on
- * fit-cli/* - no ListBucket, no DeleteObject (terraform/aws/fit-cli-role.tf):
- *   - Keys are found through an index object per SDK, <sdk>/index.json, not by listing.
- *   - A push goes in stages: records and raw logs, then the manifests that vouch for them,
- *     then the index. A push that dies part-way therefore never leaves a manifest saying work
- *     is done when the data it describes didn't land; that run is simply redone next time.
- *   - Removing a key drops it from the index; its object stays behind, unreferenced.
- *   - The index is written only if it hasn't changed since it was read (S3's If-Match). Two
- *     commands for one SDK at once - a CI run and `fit health settings` from a laptop - would
- *     otherwise each rewrite it from their own snapshot and drop the other's keys; instead the
- *     later one re-reads it, adds its changes to what's there now, and tries again.
- *   - Without ListBucket, S3 answers a missing object with the same AccessDenied as a real
- *     permission problem. So a missing index is an error unless the caller says it is
- *     creating the store - otherwise a glitch could replace a real index with an empty one.
+ * A push goes in stages: records and raw logs, then the manifests that vouch for them, then
+ * the deletions. A push that dies part-way therefore never leaves a manifest saying work is
+ * done when the data it describes didn't land; that run is simply redone next time. The keys
+ * are found by listing the SDK's prefix, so two commands for one SDK at once (a CI run and
+ * `fit health settings` from a laptop) each write only their own objects and can't drop each
+ * other's. A new SDK's prefix is simply empty.
  *
  * Nothing defaults to S3: a command reads or writes the shared store only when told to, with
  * --store s3://… or FIT_HEALTH_STORE.
  */
-import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand } from "@aws-sdk/client-s3";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -64,8 +56,6 @@ export interface OpenedStore {
 }
 
 export interface OpenStoreOptions {
-  /** Create the SDK's part of an S3 store if it has no index yet. */
-  create?: boolean;
   /** Don't pull the raw CI logs: for commands that only read records, manifests and notes. */
   skipRawLogs?: boolean;
 }
@@ -80,43 +70,38 @@ async function inParallel<T>(items: T[], limit: number, worker: (item: T) => Pro
   );
 }
 
-/** The per-SDK index object: every key in that SDK's part of the store. */
-export const INDEX_KEY = "index.json";
-
-interface StoreIndex {
-  schema: 1;
-  keys: string[];
-}
-
 /**
- * The order changed keys are pushed in: everything else first, then the manifests, which
- * vouch for the records and logs of their run. (The index follows, after both.)
+ * The per-SDK index object the store kept before fit-cli-role could list the bucket. A
+ * listing that still finds one ignores it, and the next push deletes it.
  */
+export const LEGACY_INDEX = "index.json";
+
+/** The order changed keys are pushed in: everything else first, then the manifests, which vouch for the records and logs of their run. */
 export function pushStages(written: Iterable<string>): string[][] {
   const keys = [...written];
   const isManifest = (k: string) => /^[^/]+\/manifests\//.test(k);
   return [keys.filter((k) => !isManifest(k)), keys.filter(isManifest)].filter((stage) => stage.length);
 }
 
-/** The index after a command's changes: what was there, plus what was written, minus what was removed. */
-export function nextIndex(before: readonly string[], written: Iterable<string>, removed: Iterable<string>): string[] {
-  const keys = new Set(before);
-  for (const k of written) keys.add(k);
-  for (const k of removed) keys.delete(k);
-  return [...keys].sort();
+/** The store keys to pull from a listing of `<prefix><sdk>/`: relative to the store, without the legacy index, raw logs only if wanted. */
+export function keysToPull(objectKeys: readonly string[], prefix: string, sdk: string, opts: OpenStoreOptions = {}): string[] {
+  return objectKeys
+    .map((k) => k.slice(prefix.length))
+    .filter((k) => k !== `${sdk}/${LEGACY_INDEX}`)
+    .filter((k) => !(opts.skipRawLogs && k.startsWith(`${sdk}/raw/`)))
+    .sort();
 }
 
-/** S3 refusing a conditional write because the object changed (or appeared) since it was read. */
-export function isWriteConflict(err: unknown): boolean {
-  const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
-  return e?.name === "PreconditionFailed" || e?.name === "ConditionalRequestConflict" || e?.$metadata?.httpStatusCode === 412 || e?.$metadata?.httpStatusCode === 409;
-}
-
-const INDEX_WRITE_TRIES = 5;
-
-function isMissingOrDenied(err: unknown): boolean {
-  const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
-  return e?.name === "NoSuchKey" || e?.name === "AccessDenied" || e?.$metadata?.httpStatusCode === 404 || e?.$metadata?.httpStatusCode === 403;
+/** Every object key under `prefix` in `bucket`. */
+async function listKeys(bucket: string, prefix: string): Promise<string[]> {
+  const keys: string[] = [];
+  let token: string | undefined;
+  do {
+    const res = await s3Client.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix, ContinuationToken: token }));
+    for (const o of res.Contents ?? []) if (o.Key) keys.push(o.Key);
+    token = res.IsTruncated ? res.NextContinuationToken : undefined;
+  } while (token);
+  return keys;
 }
 
 /**
@@ -133,29 +118,20 @@ export async function openStore(spec: string | undefined, sdk: string, opts: Ope
   const prefix = key.endsWith("/") ? key : `${key}/`;
   const mirror = mkdtempSync(join(tmpdir(), "fit-health-store-"));
   const store = new TrackingHealthStore(mirror);
-  const indexKey = `${prefix}${sdk}/${INDEX_KEY}`;
-  let keys: string[] = [];
-  /** The index's ETag when read; undefined for a store being created. */
-  let etag: string | undefined;
+  const sdkPrefix = `${prefix}${sdk}/`;
+  let legacyIndex = false;
   // Until the store is handed back, nothing else can close it: a failed pull removes its own mirror.
   try {
+    let listed: string[];
     try {
-      const res = await s3Client.send(new GetObjectCommand({ Bucket: bucket, Key: indexKey }));
-      keys = (JSON.parse(await res.Body!.transformToString()) as StoreIndex).keys;
-      etag = res.ETag;
+      listed = await listKeys(bucket, sdkPrefix);
     } catch (err) {
-      if (!isMissingOrDenied(err)) throw err;
-      if (!opts.create) {
-        throw new Error(
-          `No fit health store for ${sdk} at s3://${bucket}/${prefix} (could not read ${INDEX_KEY}). ` +
-            `If this is the first run for ${sdk}, pass --create-store; otherwise check the AWS credentials.`,
-          { cause: err },
-        );
-      }
-      fitCliInfo(`fit health: creating a new store for ${sdk} at s3://${bucket}/${prefix}`);
+      throw new Error(`Could not list the fit health store for ${sdk} at s3://${bucket}/${sdkPrefix}: check the AWS credentials.`, { cause: err });
     }
-    const pull = opts.skipRawLogs ? keys.filter((k) => !k.startsWith(`${sdk}/raw/`)) : keys;
-    fitCliInfo(`fit health: pulling ${pull.length} objects for ${sdk} from s3://${bucket}/${prefix}${sdk}/`);
+    legacyIndex = listed.includes(`${sdkPrefix}${LEGACY_INDEX}`);
+    const pull = keysToPull(listed, prefix, sdk, opts);
+    if (!listed.length) fitCliInfo(`fit health: no data for ${sdk} at s3://${bucket}/${sdkPrefix} yet; starting a new store`);
+    fitCliInfo(`fit health: pulling ${pull.length} objects for ${sdk} from s3://${bucket}/${sdkPrefix}`);
     await inParallel(pull, 16, async (k) => {
       const res = await s3Client.send(new GetObjectCommand({ Bucket: bucket, Key: `${prefix}${k}` }));
       // Written straight to the cache, bypassing the tracking: pulled keys aren't changes.
@@ -177,35 +153,19 @@ export async function openStore(spec: string | undefined, sdk: string, opts: Ope
           await s3Client.send(new PutObjectCommand({ Bucket: bucket, Key: `${prefix}${k}`, Body: readFileSync(store.path(k)) }));
         });
       }
-      if (!written.length && !removed.length) return { written: 0, removed: 0 };
-      // The index goes last: until it lands, the previous index still describes the store.
-      for (let attempt = 1; ; attempt++) {
-        const index: StoreIndex = { schema: 1, keys: nextIndex(keys, written, removed) };
-        try {
-          const res = await s3Client.send(
-            new PutObjectCommand({
-              Bucket: bucket,
-              Key: indexKey,
-              Body: JSON.stringify(index),
-              ContentType: "application/json",
-              ...(etag ? { IfMatch: etag } : { IfNoneMatch: "*" }),
-            }),
-          );
-          keys = index.keys;
-          etag = res.ETag;
-          break;
-        } catch (err) {
-          if (!isWriteConflict(err) || attempt >= INDEX_WRITE_TRIES) throw err;
-          // Someone else wrote the index since we read it: start again from theirs.
-          const res = await s3Client.send(new GetObjectCommand({ Bucket: bucket, Key: indexKey }));
-          keys = (JSON.parse(await res.Body!.transformToString()) as StoreIndex).keys;
-          etag = res.ETag;
-          fitCliInfo(`fit health: the ${sdk} index changed while this ran; merging into the newer one (attempt ${attempt + 1})`);
-        }
+      // Deletions last: a removed record's replacement and its manifest have landed by now.
+      await inParallel(removed, 16, async (k) => {
+        await s3Client.send(new DeleteObjectCommand({ Bucket: bucket, Key: `${prefix}${k}` }));
+      });
+      if (legacyIndex) {
+        await s3Client.send(new DeleteObjectCommand({ Bucket: bucket, Key: `${sdkPrefix}${LEGACY_INDEX}` }));
+        legacyIndex = false;
       }
       store.written.clear();
       store.removed.clear();
-      fitCliInfo(`fit health: pushed ${written.length} changed objects${removed.length ? ` and dropped ${removed.length} from the index` : ""} to s3://${bucket}/${prefix}`);
+      if (written.length || removed.length) {
+        fitCliInfo(`fit health: pushed ${written.length} changed objects${removed.length ? ` and deleted ${removed.length}` : ""} to s3://${bucket}/${prefix}`);
+      }
       return { written: written.length, removed: removed.length };
     },
     close: () => rmSync(mirror, { recursive: true, force: true }),

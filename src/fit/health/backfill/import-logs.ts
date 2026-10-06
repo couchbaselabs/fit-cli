@@ -42,7 +42,6 @@ Usage:
   --dir     Directory of <runId>.log / <runId>.log.gz files.
   --runs    \`gh run list --json databaseId,createdAt,event,headSha,headBranch,attempt\` output.
   --store   Store: a directory, or s3://bucket/prefix/ (default: ${defaultHealthStoreRoot()}, or $FIT_HEALTH_STORE).
-  --create-store  Create the SDK's part of an S3 store if it doesn't exist yet.
 
 Only scheduled runs are imported. Runs already stored are skipped.`;
 }
@@ -61,7 +60,7 @@ export async function runImportLogsCommand(argv: string[], prefix: string): Prom
   const runsFile = opt("runs");
   if (!sdk || !dir || !runsFile) throw new Error(`Name an SDK, --dir and --runs.\n\n${importLogsHelp(prefix)}`);
   const optIn = healthOptIn(sdk);
-  const opened = await openStore(opt("store") ?? process.env.FIT_HEALTH_STORE, sdk, { create: argv.includes("--create-store") });
+  const opened = await openStore(opt("store") ?? process.env.FIT_HEALTH_STORE, sdk);
   const store = opened.store;
 
   const runs = new Map<number, GhRunListEntry>(

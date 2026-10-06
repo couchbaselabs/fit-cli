@@ -146,7 +146,6 @@ Usage:
               ${defaultHealthStoreRoot()}, or $FIT_HEALTH_STORE).
   --dry-run   List what would be fetched; fetch nothing.
   --no-archives  Don't read JUnit from the runs' S3 archives (needs AWS credentials).
-  --create-store  Create the SDK's part of an S3 store if it doesn't exist yet (first run only).
 
 Two passes, both safe to rerun (anything already done is skipped):
   1. fetch each nightly's log with \`gh\` and scrape it (GitHub keeps logs 90 days);
@@ -162,18 +161,16 @@ export interface BackfillArgs {
   store?: string;
   dryRun: boolean;
   skipArchives: boolean;
-  createStore: boolean;
 }
 
 export function parseBackfillArgs(argv: string[]): BackfillArgs {
-  const out: { sdk?: string; limit?: number; store?: string; dryRun: boolean; skipArchives: boolean; createStore: boolean } = { dryRun: false, skipArchives: false, createStore: false };
+  const out: { sdk?: string; limit?: number; store?: string; dryRun: boolean; skipArchives: boolean } = { dryRun: false, skipArchives: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--limit") out.limit = Number(argv[++i]);
     else if (a === "--store") out.store = argv[++i];
     else if (a === "--dry-run") out.dryRun = true;
     else if (a === "--no-archives") out.skipArchives = true;
-    else if (a === "--create-store") out.createStore = true;
     else if (!a.startsWith("-") && !out.sdk) out.sdk = a;
     else throw new Error(`Unexpected argument: ${a}`);
   }
@@ -188,7 +185,7 @@ export async function runBackfillCommand(argv: string[], prefix: string): Promis
   }
   const args = parseBackfillArgs(argv);
   if (!args.sdk) throw new Error(`Name an SDK.\n\n${backfillHelp(prefix)}`);
-  const opened = await openStore(args.store ?? process.env.FIT_HEALTH_STORE, args.sdk, { create: args.createStore });
+  const opened = await openStore(args.store ?? process.env.FIT_HEALTH_STORE, args.sdk);
   try {
     return await backfillAndCheck({ ...args, sdk: args.sdk }, opened);
   } finally {

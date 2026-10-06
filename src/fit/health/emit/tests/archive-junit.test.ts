@@ -86,10 +86,11 @@ test("an archive upgrade is tried once; only a read error is retried, and only a
   assert.equal(needsArchiveUpgrade(m({ status: "error", upgraded: [], skipped: [], attempts: MAX_FETCH_ATTEMPTS })), false);
 });
 
-test("an expired archive reads as missing: without ListBucket, S3 answers 403, not 404", async () => {
+test("an expired archive reads as missing (404); a 403 is a permission problem, not an expired archive", async () => {
   const { isMissingObject } = await import("../../backfill/upgrade-from-archive.js");
   assert.equal(isMissingObject({ name: "NoSuchKey" }), true);
-  assert.equal(isMissingObject({ name: "AccessDenied", $metadata: { httpStatusCode: 403 } }), true);
+  assert.equal(isMissingObject({ name: "NotFound", $metadata: { httpStatusCode: 404 } }), true);
+  assert.equal(isMissingObject({ name: "AccessDenied", $metadata: { httpStatusCode: 403 } }), false);
   assert.equal(isMissingObject({ $metadata: { httpStatusCode: 404 } }), true);
   assert.equal(isMissingObject({ name: "TimeoutError" }), false);
   assert.equal(isMissingObject({ $metadata: { httpStatusCode: 500 } }), false);

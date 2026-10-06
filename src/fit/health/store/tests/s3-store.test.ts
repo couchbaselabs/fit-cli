@@ -1,6 +1,6 @@
 /**
- * Unit tests for the S3 store's index: the list of keys that stands in for bucket listing,
- * which fit-cli-role is not allowed to do.
+ * Unit tests for the S3 store: which listed keys are pulled, the order changes are pushed in,
+ * and that a key can't land outside the store.
  *
  * Run on their own:
  *   node --import tsx --test src/fit/health/store/tests/s3-store.test.ts
@@ -11,18 +11,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { LocalHealthStore } from "../health-store.js";
-import { nextIndex } from "../s3-store.js";
+import { keysToPull, pushStages } from "../s3-store.js";
 
-test("the next index keeps what was there, adds what was written, drops what was removed", () => {
-  assert.deepEqual(nextIndex(["dotnet/a", "dotnet/b"], ["dotnet/c", "dotnet/a"], ["dotnet/b"]), ["dotnet/a", "dotnet/c"]);
+test("a listing becomes store keys: relative to the store, without the old index, raw logs only if wanted", () => {
+  const listed = ["health-dev/dotnet/index.json", "health-dev/dotnet/records/2026/a.json", "health-dev/dotnet/raw/1-1.log.gz", "health-dev/dotnet/manifests/1-1.json"];
+  assert.deepEqual(keysToPull(listed, "health-dev/", "dotnet"), ["dotnet/manifests/1-1.json", "dotnet/raw/1-1.log.gz", "dotnet/records/2026/a.json"]);
+  assert.deepEqual(keysToPull(listed, "health-dev/", "dotnet", { skipRawLogs: true }), ["dotnet/manifests/1-1.json", "dotnet/records/2026/a.json"]);
+  // A new SDK's prefix lists nothing: an empty store, not an error.
+  assert.deepEqual(keysToPull([], "health-dev/", "python"), []);
 });
 
-test("a first push to a new store indexes exactly what was written", () => {
-  assert.deepEqual(nextIndex([], ["dotnet/z", "dotnet/m"], []), ["dotnet/m", "dotnet/z"]);
-});
-
-test("manifests are pushed only after the records and logs they vouch for", async () => {
-  const { pushStages } = await import("../s3-store.js");
+test("manifests are pushed only after the records and logs they vouch for", () => {
   assert.deepEqual(
     pushStages(["dotnet/manifests/1-1.json", "dotnet/records/2026/a.json", "dotnet/raw/1-1.log.gz", "dotnet/notes.json"]),
     [["dotnet/records/2026/a.json", "dotnet/raw/1-1.log.gz", "dotnet/notes.json"], ["dotnet/manifests/1-1.json"]],
@@ -45,15 +44,4 @@ test("a store key that would land outside the store is refused", () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-});
-
-test("a concurrent writer's index is merged with, never overwritten", async () => {
-  const { isWriteConflict } = await import("../s3-store.js");
-  // A laptop wrote settings.json while CI was working from an older snapshot: CI's retry
-  // starts from the newer index, so both writers' keys survive.
-  const newer = nextIndex(["dotnet/a"], ["dotnet/settings.json"], []);
-  assert.deepEqual(nextIndex(newer, ["dotnet/records/r.json"], []), ["dotnet/a", "dotnet/records/r.json", "dotnet/settings.json"]);
-  assert.equal(isWriteConflict({ name: "PreconditionFailed", $metadata: { httpStatusCode: 412 } }), true);
-  assert.equal(isWriteConflict({ name: "ConditionalRequestConflict", $metadata: { httpStatusCode: 409 } }), true);
-  assert.equal(isWriteConflict({ name: "AccessDenied", $metadata: { httpStatusCode: 403 } }), false);
 });

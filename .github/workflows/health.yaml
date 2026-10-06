@@ -26,11 +26,6 @@ on:
         required: false
         type: string
         default: s3://fit-cli/health-dev/
-      create_store:
-        description: Create the SDK's part of the store if it doesn't exist yet (first run for an SDK only).
-        required: false
-        type: boolean
-        default: false
       slack:
         description: Post Slack digests for SDKs that configure a channel.
         required: false
@@ -133,8 +128,7 @@ jobs:
         env:
           SDK: ${{ matrix.sdk }}
           GH_TOKEN: ${{ steps.gh-secret.outputs.token }}
-          CREATE: ${{ inputs.create_store && '--create-store' || '' }}
-        run: bun src/fit/main/main.ts health backfill "$SDK" $CREATE
+        run: bun src/fit/main/main.ts health backfill "$SDK"
 
       # Report on what's stored even if backfill failed: a bad night shouldn't cost the report.
       - name: Report ${{ matrix.sdk }}

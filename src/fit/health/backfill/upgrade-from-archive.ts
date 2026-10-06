@@ -18,13 +18,13 @@ export function isCredentialError(err: unknown): boolean {
 }
 
 /**
- * An archive that no longer exists (S3 expires runs/ after 180 days). fit-cli-role has no
- * s3:ListBucket, and without it S3 answers a request for a missing key with 403, not 404 -
- * but the role can read everything under fit-cli/*, so a 403 here means "not there".
+ * An archive that no longer exists (S3 expires runs/ after 180 days). fit-cli-role can list
+ * the bucket, so S3 answers a missing key with 404; a 403 is a real permission problem and
+ * is not mistaken for an expired archive.
  */
 export function isMissingObject(err: unknown): boolean {
   const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
-  return ["NotFound", "NoSuchKey", "AccessDenied", "Forbidden"].includes(e?.name ?? "") || [403, 404].includes(e?.$metadata?.httpStatusCode ?? 0);
+  return ["NotFound", "NoSuchKey"].includes(e?.name ?? "") || e?.$metadata?.httpStatusCode === 404;
 }
 
 /**

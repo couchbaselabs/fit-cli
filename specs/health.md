@@ -18,7 +18,7 @@ Nothing here changes how a test run behaves: records are built afterwards, by re
 ## Where records live
 - On a laptop: a local store, `~/.fit-cli/health` by default.
 - In CI: the shared S3 store (`s3://fit-cli/health-dev/` while proving it, then `s3://fit-cli/health/`), given explicitly with `--store s3://…` or `FIT_HEALTH_STORE`. A command pulls the SDK's part of the store into a local cache, works on it, and pushes back only what it changed. Nothing defaults to S3.
-- fit-cli-role may only get and put objects in the bucket - it can't list or delete - so each SDK's keys are listed in an index object, `<sdk>/index.json`, pushed last. A store's first run needs `--create-store`.
+- A command finds the SDK's keys by listing its prefix, `<sdk>/`, so a new SDK's part of the store is simply empty until its first run. A push writes records and raw logs first, then the manifests that vouch for them, then deletes what was removed.
 
 The `FIT health` workflow (`.github/workflows/health.yaml`) runs daily for every opted-in SDK: `backfill`, then `report`. It writes the job summary, uploads the report as an artifact, posts the Slack digest where one is configured, and (from `main` only) publishes each SDK's page to the repo's GitHub Pages site at `/health/<sdk>/`. The site's top page, `/health/`, has one chart per SDK over the last 30 days: failing tests per night as bars, tests run per night as a line. Each chart has its own scales, and the SDKs are listed by name: the page shows each SDK's own trend and does not rank them.
 
@@ -27,8 +27,7 @@ An SDK opts in with an entry in `src/fit/health/registry/health-opt-ins.ts`: its
 
 Steps:
 1. Add the entry and commit it.
-2. Run the `FIT health` workflow for the SDK once with the `create_store` input, which creates its part of the shared store. Later runs are the daily schedule.
-3. Optionally, Slack: invite fitbot to the channel, then `fit health settings <sdk> --slack-channel <channel ID>` against the shared store. No PR needed.
+2. Optionally, Slack: invite fitbot to the channel, then `fit health settings <sdk> --slack-channel <channel ID>` against the shared store. No PR needed.
 
 ## Commands
 - `fit health backfill <sdk>` - fetches the nightly logs GitHub still holds, then rebuilds each run's records from its S3 archive. Safe to rerun: only missing runs are fetched. Ends with `check`.
