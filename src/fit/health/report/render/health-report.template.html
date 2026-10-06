@@ -559,8 +559,9 @@ function months() {
   return `<div class="months">` + D.dates.map((d) => `<span>${d.endsWith('-01') ? MONTHS[+d.split('-')[1] - 1] : ''}</span>`).join('') + `</div>`;
 }
 function row(s, t) {
-  const since = t.cls === 'failing' && t.since ? ` ${fmt(t.since)}` : '';
+  const since = t.cls === 'failing' && t.since ? (t.sinceFirstNight ? ' the first night' : ` ${fmt(t.since)}`) : '';
   const extra = [];
+  if (t.cls === 'failing' && t.sinceFirstNight) extra.push(`failing on every night since the first one reported (${fmt(t.since)}): when it started failing isn't known`);
   if (t.cls === 'failing' && !t.streak && t.cleanTail) extra.push(`passed the last ${t.cleanTail} night${t.cleanTail > 1 ? 's' : ''}`);
   if (t.flakyBefore) extra.push(`failed ${t.flakyBefore}× before the ${WIN}-day window`);
   if (t.cls === 'stopped') extra.push(`last ran ${fmt(t.lastRan)} (${RESULT[t.lastResult]}) · not run since ${fmt(t.notRunSince)}`);

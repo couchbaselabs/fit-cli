@@ -81,6 +81,20 @@ test("the report lists what started and stopped failing in the last two weeks", 
   assert.equal(report.commits["2026-09-28"], "sha2026-0", "commits are shortened to 9 characters");
 });
 
+test("a test already failing on the series' first night is failing since then, not started failing", () => {
+  // couchbase-cxx-client's nightly began on 3 Oct, with tests that were already failing: the
+  // history can't say when they started. A test that broke later in the same series did start.
+  const rs = days(24, 28).map((d, i) => rec(d, { failing: ["Old.broken", ...(i >= 2 ? ["New.broke"] : [])] }));
+  const report = buildHealthReport("dotnet", rs, [], { end: "2026-09-28", now: new Date("2026-09-28T12:00:00Z") });
+  const [s] = report.series;
+  const old = s.tests.find((t) => t.test === "Old.broken")!;
+  assert.equal(old.cls, "failing");
+  assert.equal(old.since, "2026-09-24");
+  assert.equal(old.sinceFirstNight, true);
+  assert.equal(s.tests.find((t) => t.test === "New.broke")!.sinceFirstNight, undefined);
+  assert.deepEqual(s.started.map((t) => [t.test, t.since]), [["New.broke", "2026-09-26"]]);
+});
+
 test("two presets differing only by one run parameter are compared over the nights both ran", () => {
   const pub = (d: string, f: string[]) =>
     rec(d, { preset: "op-capella-sit-lite", kind: "situational", cluster: "Capella:8.0", params: { privateEndpoint: false }, failing: f });

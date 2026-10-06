@@ -47,6 +47,12 @@ export interface ReportTest extends Classification {
   seq: string;
   runs: number;
   fails: number;
+  /**
+   * The current failure run began on the series' first night with results, so when the test
+   * started failing isn't known: it was failing when the history begins. Such a test is not
+   * listed as having started failing.
+   */
+  sinceFirstNight?: boolean;
 }
 
 /**
@@ -195,6 +201,7 @@ function reportSeries(s: Series, end: string, notes: ReportNotes): ReportSeries 
       runs: seq.filter(isKnown).length,
       fails: seq.filter(isFailure).length,
       ...c,
+      ...(c.since && c.since === s.ran[0] ? { sinceFirstNight: true } : {}),
     });
   }
   const order = (c: TestClass) => CLASS_ORDER.indexOf(c);
@@ -249,7 +256,7 @@ function reportSeries(s: Series, end: string, notes: ReportNotes): ReportSeries 
     counts,
     tests,
     started: tests
-      .filter((t) => t.cls === "failing" && t.streak && t.since && daysBetween(t.since, end) < RECENT_DAYS)
+      .filter((t) => t.cls === "failing" && t.streak && t.since && !t.sinceFirstNight && daysBetween(t.since, end) < RECENT_DAYS)
       .map((t) => ({ test: t.test, since: t.since!, nights: t.streak })),
     stopped: tests
       .filter((t) => t.cls === "recovered" && t.lastFail && daysBetween(t.lastFail, end) < RECENT_DAYS)

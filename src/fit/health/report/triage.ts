@@ -58,6 +58,11 @@ export interface TriageFinding {
     label: string;
     /** For "failing": the night the current failure run began. */
     since?: string;
+    /**
+     * True when `since` is the series' first night with results: the test was already failing
+     * when the history begins, so when it started failing isn't known.
+     */
+    sinceFirstNight?: boolean;
     streak: number;
     episodes: number;
     windowFails: number;
@@ -205,6 +210,7 @@ function finding(rs: ReportSeries, s: Series, t: ReportTest, notes: ReportNotes,
       class: t.cls,
       label: CLASS_LABELS[t.cls],
       ...(t.since ? { since: t.since } : {}),
+      ...(t.sinceFirstNight ? { sinceFirstNight: true } : {}),
       streak: t.streak,
       episodes: t.episodes,
       windowFails: t.windowFails,

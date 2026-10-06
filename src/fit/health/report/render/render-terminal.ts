@@ -36,7 +36,7 @@ export function renderTerminal(report: HealthReport): string {
   lines.push("", "Failing now:");
   for (const s of active) {
     for (const t of s.tests.filter((x) => x.cls === "always" || x.cls === "failing")) {
-      const tag = t.cls === "always" ? "always" : `since ${t.since}`;
+      const tag = t.cls === "always" ? "always" : t.sinceFirstNight ? `since first night` : `since ${t.since}`;
       lines.push(`  ${s.short.padEnd(26)} ${tag.padEnd(17)} ${t.test}`);
     }
   }
