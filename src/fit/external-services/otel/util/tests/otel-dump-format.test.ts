@@ -20,6 +20,8 @@ import {
   renderTraceIndex,
   type JaegerTrace,
   type OtelWindow,
+  MAX_PARSE_BYTES,
+  tooLargeToParse,
 } from "../otel-dump-format.js";
 
 const WINDOW: OtelWindow = { start: "2026-08-13T14:22:00.000Z", end: "2026-08-13T14:24:30.000Z" };
@@ -156,4 +158,18 @@ test("prometheusGraphUrl never emits a sub-minute range, which Prometheus render
   const brief: OtelWindow = { start: "2026-08-13T14:22:00.000Z", end: "2026-08-13T14:22:03.000Z" };
   const url = new URL(prometheusGraphUrl("http://localhost:19090", brief, "up"));
   assert.equal(url.searchParams.get("g0.range_input"), "60s");
+});
+
+test("a response up to the parse limit is parsed; one byte over is refused, saying why", () => {
+  assert.equal(tooLargeToParse(0), undefined);
+  assert.equal(tooLargeToParse(MAX_PARSE_BYTES), undefined);
+  const why = tooLargeToParse(MAX_PARSE_BYTES + 1);
+  assert.match(why ?? "", /over the 64\.0 MB that is safe to parse/);
+  assert.match(why ?? "", /Prometheus snapshot/);
+});
+
+test("the parse limit leaves room for healthy dumps and refuses the one that killed the .NET runner", () => {
+  // Java's query_range response, the largest healthy one seen, is ~15 MB; .NET's ~1.5 GB.
+  assert.equal(tooLargeToParse(15 * 1024 * 1024), undefined);
+  assert.notEqual(tooLargeToParse(1.5 * 1024 * 1024 * 1024), undefined);
 });

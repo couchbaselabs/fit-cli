@@ -28,7 +28,7 @@
  *   bun src/fit/external-services/otel/stop/dump-otel-data.ts
  *   bun src/fit/external-services/otel/stop/dump-otel-data.ts --dir /tmp/fit-cli/<run>/instances/0
  */
-import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { artifactFromPath, type Artifact, type Detail, type RunOutput } from "../../../../util/non-fit/artifacts.js";
 import { isMain, runCli } from "../../../../util/non-fit/cli.js";
@@ -51,6 +51,7 @@ import {
   prometheusGraphUrl,
   renderMetricIndex,
   renderTraceIndex,
+  tooLargeToParse,
   type JaegerTrace,
   type OtelWindow,
   type PrometheusRangeSeries,
@@ -98,9 +99,15 @@ export async function curlToLocalFile(execution: FitExecutionContext, url: strin
   return tightenPermissions(collected);
 }
 
-/** {@link curlToLocalFile} for a response we parse and discard rather than keep. */
+/**
+ * {@link curlToLocalFile} for a response we parse and discard rather than keep. Refuses
+ * one too large to parse safely (see MAX_PARSE_BYTES): the caller's dump then warns and is
+ * skipped, instead of exhausting the runner's memory and losing the whole run.
+ */
 async function fetchJson<T>(execution: FitExecutionContext, url: string, localPath: string, extraArgs: string[] = []): Promise<T> {
   await curlToLocalFile(execution, url, localPath, extraArgs);
+  const tooLarge = tooLargeToParse(statSync(localPath).size);
+  if (tooLarge) throw new Error(tooLarge);
   return JSON.parse(readFileSync(localPath, "utf8")) as T;
 }
 

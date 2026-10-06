@@ -9,6 +9,7 @@
  * container log can be interleaved by a plain `sort` when working out what the
  * driver was doing when a span appeared.
  */
+import { formatBytes } from "../../../../util/non-fit/fit-cli-log.js";
 
 /**
  * The parts of a Jaeger `/api/traces` response this module reads. Deliberately
@@ -138,6 +139,26 @@ const INTERNAL_METRIC_PREFIXES = ["prometheus_", "promhttp_", "go_", "process_",
 
 export function isInternalMetricName(name: string): boolean {
   return INTERNAL_METRIC_PREFIXES.some((prefix) => name.startsWith(prefix)) || name === "up";
+}
+
+/**
+ * Above this, a response is too big to read into memory and parse on a CI runner. Parsing
+ * it, re-serialising it and rendering its index take some 10-30x the file in memory, and a
+ * GitHub-hosted runner that runs out is killed outright, losing everything the run had not
+ * yet uploaded - its JUnit and logs included. That is how the .NET on-prem nightly lost its
+ * archive from 2 Oct 2026: its query_range response was 28 MB gzipped, an estimated 1.5 GB.
+ *
+ * 64 MiB is about 4x the largest healthy dump seen (Java's, an estimated 15 MB), and peaks
+ * at 1-2 GB.
+ * Skipping the readable copy loses no data: the Prometheus TSDB snapshot and Jaeger's
+ * badger store are taken separately and keep everything, whatever the size.
+ */
+export const MAX_PARSE_BYTES = 64 * 1024 * 1024;
+
+/** Why a response of `bytes` must not be parsed, or undefined when it is safe to. */
+export function tooLargeToParse(bytes: number, limit: number = MAX_PARSE_BYTES): string | undefined {
+  if (bytes <= limit) return undefined;
+  return `the response is ${formatBytes(bytes)}, over the ${formatBytes(limit)} that is safe to parse; the full data is in the Prometheus snapshot and Jaeger's badger store`;
 }
 
 /** The metric names worth dumping, sorted, with the self-monitoring noise dropped. */
