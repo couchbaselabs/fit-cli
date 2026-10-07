@@ -167,7 +167,7 @@ export function formatClustersTable(
  * block (see its cmd/init.go). They go through the environment, not init flags, so
  * the API secret and password never appear on a command line.
  */
-function capellaInitEnv(capella: ResolvedCapellaConfig): Record<string, string> {
+export function capellaInitEnv(capella: ResolvedCapellaConfig): Record<string, string> {
   return {
     CAPELLA_USER: capella.username ?? "",
     CAPELLA_PASS: capella.password,
@@ -178,6 +178,7 @@ function capellaInitEnv(capella: ResolvedCapellaConfig): Record<string, string> 
     CAPELLA_API_SECRET: capella.apiSecret,
     ...(capella.internalSupportToken ? { CAPELLA_INTERNAL_SUPPORT_TOKEN: capella.internalSupportToken } : {}),
     ...(capella.overrideToken ? { CAPELLA_OVERRIDE_TOKEN: capella.overrideToken } : {}),
+    ...(capella.projectId ? { CAPELLA_PROJECT_ID: capella.projectId } : {}),
   };
 }
 

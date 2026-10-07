@@ -7,8 +7,10 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { ResolvedCapellaConfig } from "../../../fit/util/config.js";
 import {
   CLEANUP_TIMEOUT,
+  capellaInitEnv,
   cleanupArgs,
   destroyFailedAnnotation,
   destroyFailedClusters,
@@ -113,4 +115,24 @@ test("formatClustersTable shows the purpose and marks the expired clusters", () 
 test("formatClustersTable shows a cluster with no purpose and no expiry as neither", () => {
   const row = formatClustersTable([cluster({ id: "bare" })], NOW).split("\n")[2];
   assert.match(row, /bare\s+\| server\s+\| healthy\s+\| \(none\)\s+\| none\s+\| -/);
+});
+
+const CAPELLA: ResolvedCapellaConfig = {
+  username: "sdk_qe@couchbase.com",
+  endpoint: "https://api.dev.example",
+  v4Endpoint: "https://cloudapi.dev.example",
+  organizationId: "oid-dev",
+  password: "pw",
+  apiKey: "key",
+  apiSecret: "secret",
+};
+
+test("capellaInitEnv forwards CAPELLA_PROJECT_ID when the project id is set", () => {
+  const env = capellaInitEnv({ ...CAPELLA, projectId: "pid-dev" });
+  assert.equal(env.CAPELLA_PROJECT_ID, "pid-dev");
+  assert.equal(env.CAPELLA_OID, "oid-dev");
+});
+
+test("capellaInitEnv leaves CAPELLA_PROJECT_ID out when the project id is unset", () => {
+  assert.equal("CAPELLA_PROJECT_ID" in capellaInitEnv(CAPELLA), false);
 });
