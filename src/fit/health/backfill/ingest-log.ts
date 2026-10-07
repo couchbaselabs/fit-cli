@@ -8,7 +8,7 @@
  */
 import { gzipSync } from "node:zlib";
 import { MANIFEST_SCHEMA, MAX_FETCH_ATTEMPTS, rawLogKey, type ArchiveUpgrade, type RunManifest } from "../record/run-manifest.js";
-import { recordKey, type CiContext } from "../record/run-record.js";
+import { recordKey, type CiContext, type RunRecord } from "../record/run-record.js";
 import { LOG_PARSER_VERSION, buildRecords, parseRunLog } from "../log-parse/parse-run-log.js";
 import type { LocalHealthStore } from "../store/health-store.js";
 
@@ -36,6 +36,25 @@ export function reconcileUpgraded(
   return { keep, drop, archive: drop.length ? undefined : previousArchive };
 }
 
+/**
+ * Why a new parse can't replace the run's earlier records: some earlier record - scraped or
+ * JUnit - has no record of the same preset, kind and cluster in the new parse. A record whose
+ * key only moved (a variant was added) still has one, and is replaced as usual. Undefined if
+ * nothing was lost.
+ */
+export function lostRuns(store: LocalHealthStore, previous: RunManifest, records: readonly RunRecord[]): string | undefined {
+  const series = (r: Pick<RunRecord, "preset" | "kind" | "cluster">) => `${r.preset} ${r.kind}${r.cluster ? ` @${r.cluster}` : ""}`;
+  const found = new Set(records.map(series));
+  const lost = new Set<string>();
+  for (const key of new Set([...previous.records, ...(previous.archive?.upgraded ?? [])])) {
+    const raw = store.read(key);
+    if (!raw) continue;
+    const s = series(JSON.parse(raw.toString("utf8")) as RunRecord);
+    if (!found.has(s)) lost.add(s);
+  }
+  return lost.size ? `the new parse no longer finds ${[...lost].join(", ")}` : undefined;
+}
+
 /** Parse and store a run log. Returns the manifest written. */
 export function ingestLog(store: LocalHealthStore, meta: RunMeta, text: string, opts: { keepRaw?: boolean } = {}): RunManifest {
   if (opts.keepRaw ?? true) store.write(rawLogKey(meta.sdk, meta.ci.runId, meta.ci.runAttempt), gzipSync(text));
@@ -45,9 +64,11 @@ export function ingestLog(store: LocalHealthStore, meta: RunMeta, text: string, 
   const result = buildRecords(parsed, meta);
   // A parser that can't read a log an earlier one read is a parser problem, not news about the
   // run: keep the run's records (and their JUnit upgrades) as they were, note the failure, and
-  // leave the old parser version on the manifest so the next parser tries again.
-  if (result.parseError && previous?.status === "ok" && previous.records.length > 0) {
-    const kept: RunManifest = { ...previous, reparseError: { parserVersion: LOG_PARSER_VERSION, reason: result.parseError } };
+  // leave the old parser version on the manifest so the next parser tries again. The same goes
+  // for a parse that reads the log but no longer finds one of the runs an earlier parse found.
+  const reparseError = result.parseError ?? (previous?.status === "ok" ? lostRuns(store, previous, result.records) : undefined);
+  if (reparseError && previous?.status === "ok" && previous.records.length > 0) {
+    const kept: RunManifest = { ...previous, reparseError: { parserVersion: LOG_PARSER_VERSION, reason: reparseError } };
     store.writeManifest(kept);
     return kept;
   }

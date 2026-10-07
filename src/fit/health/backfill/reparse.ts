@@ -62,7 +62,8 @@ export async function runReparseCommand(argv: string[], prefix: string): Promise
       );
       done++;
       records += next.records.length;
-      if (next.status === "parse_error") parseErrors++;
+      // A run kept as it was because the new parse lost part of it counts too: its status stays "ok".
+      if (next.status === "parse_error" || next.reparseError?.parserVersion === LOG_PARSER_VERSION) parseErrors++;
     }
     fitCliInfo(`Reparsed ${done} run logs with ${LOG_PARSER_VERSION} → ${records} records (${parseErrors} parse errors).`);
     await opened.flush();

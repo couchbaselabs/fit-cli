@@ -6,7 +6,7 @@
  *   node --import tsx --test src/fit/health/record/tests/run-record.test.ts
  */
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -127,6 +127,56 @@ test("a reparse that fails keeps the run's records, rather than wiping a run an 
     assert.equal(m.parserVersion, "log-1", "still the old parser's, so the next one retries");
     assert.match(m.reparseError?.reason ?? "", /no FIT presets/);
     assert.ok(store.read("dotnet/records/2026/kept.json"), "the record is still there");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+const LOG = join(import.meta.dirname, "../../log-parse/tests/fixtures/dotnet-2026-09-27.txt");
+
+test("a reparse that no longer finds one of the run's presets keeps the run as it was", async () => {
+  const { LocalHealthStore } = await import("../../store/health-store.js");
+  const { ingestLog } = await import("../../backfill/ingest-log.js");
+  const { buildRecords, parseRunLog } = await import("../../log-parse/parse-run-log.js");
+  const root = mkdtempSync(join(tmpdir(), "fit-health-test-"));
+  try {
+    const store = new LocalHealthStore(root);
+    const text = readFileSync(LOG, "utf8");
+    const meta = { sdk: "dotnet", date: "2026-09-27", ci: { repo: "r", runId: 1, runAttempt: 1 } };
+    const scraped = buildRecords(parseRunLog(text), meta).records;
+    // A JUnit record for a preset the current parser doesn't find in the log - as if it had lost it.
+    const lost = store.writeRecord({ ...scraped[0], source: "run-archive-junit", preset: "op-lost-func-lite" });
+    const keys = [...scraped.map((r) => store.writeRecord(r)), lost];
+    store.writeManifest({ ...manifest({ records: keys, parserVersion: "log-1" }), archive: { status: "ok", upgraded: [lost], skipped: [], attempts: 1 } });
+    const m = ingestLog(store, meta, text, { keepRaw: false });
+    assert.equal(m.status, "ok");
+    assert.deepEqual(m.records, keys);
+    assert.equal(m.parserVersion, "log-1", "still the old parser's, so the next one retries");
+    assert.match(m.reparseError?.reason ?? "", /no longer finds op-lost-func-lite/);
+    assert.deepEqual(m.archive?.upgraded, [lost], "check can still compare the JUnit record");
+    assert.ok(store.read(lost), "the JUnit record is still there");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a reparse that only moves a record to a new key replaces it", async () => {
+  const { LocalHealthStore } = await import("../../store/health-store.js");
+  const { ingestLog } = await import("../../backfill/ingest-log.js");
+  const { buildRecords, parseRunLog } = await import("../../log-parse/parse-run-log.js");
+  const root = mkdtempSync(join(tmpdir(), "fit-health-test-"));
+  try {
+    const store = new LocalHealthStore(root);
+    const text = readFileSync(LOG, "utf8");
+    const meta = { sdk: "dotnet", date: "2026-09-27", ci: { repo: "r", runId: 1, runAttempt: 1 } };
+    const scraped = buildRecords(parseRunLog(text), meta).records;
+    // The same preset, kind and cluster under an older key.
+    const old = store.writeRecord({ ...scraped[0], variant: "old" });
+    store.writeManifest(manifest({ records: [old, ...scraped.slice(1).map((r) => store.writeRecord(r))], parserVersion: "log-1" }));
+    const m = ingestLog(store, meta, text, { keepRaw: false });
+    assert.equal(m.reparseError, undefined);
+    assert.deepEqual(m.records, scraped.map(recordKey));
+    assert.equal(store.read(old), undefined, "the old key is gone");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

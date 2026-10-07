@@ -85,9 +85,19 @@ export class LocalHealthStore {
     return key;
   }
 
+  /**
+   * The SDK's records that a manifest vouches for. A record file no manifest lists is not read:
+   * it is one a reparse replaced whose deletion didn't land (an S3 push that died after the
+   * manifests went up), or one whose manifest hasn't landed yet. Either way it isn't data.
+   */
   readRecords(sdk: string): RunRecord[] {
+    const vouched = new Set<string>();
+    for (const k of this.list(`${sdk}/manifests`)) {
+      const m = JSON.parse(this.read(k)!.toString("utf8")) as Partial<RunManifest>;
+      for (const r of [...(m.records ?? []), ...(m.archive?.upgraded ?? [])]) vouched.add(r);
+    }
     return this.list(`${sdk}/records`)
-      .filter((k) => k.endsWith(".json"))
+      .filter((k) => k.endsWith(".json") && vouched.has(k))
       .map((k) => JSON.parse(this.read(k)!.toString("utf8")) as RunRecord);
   }
 }

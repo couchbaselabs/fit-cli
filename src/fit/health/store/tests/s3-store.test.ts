@@ -45,3 +45,20 @@ test("a store key that would land outside the store is refused", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("a record no manifest lists is not read: a deletion that didn't land can't stay in reports", () => {
+  const root = mkdtempSync(join(tmpdir(), "fit-health-test-"));
+  try {
+    const store = new LocalHealthStore(root);
+    store.write("dotnet/records/2026/kept.json", JSON.stringify({ preset: "kept" }));
+    store.write("dotnet/records/2026/upgraded.json", JSON.stringify({ preset: "upgraded" }));
+    store.write("dotnet/records/2026/stale.json", JSON.stringify({ preset: "stale" }));
+    store.write(
+      "dotnet/manifests/1-1.json",
+      JSON.stringify({ records: ["dotnet/records/2026/kept.json"], archive: { upgraded: ["dotnet/records/2026/upgraded.json"] } }),
+    );
+    assert.deepEqual(store.readRecords("dotnet").map((r) => r.preset).sort(), ["kept", "upgraded"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

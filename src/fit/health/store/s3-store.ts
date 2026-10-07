@@ -10,7 +10,8 @@
  *
  * A push goes in stages: records and raw logs, then the manifests that vouch for them, then
  * the deletions. A push that dies part-way therefore never leaves a manifest saying work is
- * done when the data it describes didn't land; that run is simply redone next time. The keys
+ * done when the data it describes didn't land; that run is simply redone next time. A
+ * deletion that doesn't land leaves a record no manifest lists, which readRecords ignores. The keys
  * are found by listing the SDK's prefix, so two commands for one SDK at once (a CI run and
  * `fit health settings` from a laptop) each write only their own objects and can't drop each
  * other's. A new SDK's prefix is simply empty.
