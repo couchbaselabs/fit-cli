@@ -227,7 +227,7 @@ function remoteCapellaConfigPath(rootDir: string): string {
   return join(rootDir, REMOTE_CAPELLA_CONFIG_FILENAME);
 }
 
-function capellaConfigScript(capella: ResolvedCapellaConfig): string {
+export function capellaConfigScript(capella: ResolvedCapellaConfig): string {
   // The env var names cbdinocluster's `init` reads (see its cmd/init.go). With
   // CAPELLA_API_SECRET present, `init --auto` enables Capella and fills the block
   // from these; without it the cloud deployer is silently left disabled. The v2
@@ -251,6 +251,9 @@ function capellaConfigScript(capella: ResolvedCapellaConfig): string {
   }
   if (capella.overrideToken) {
     lines.push(`export CAPELLA_OVERRIDE_TOKEN=${posixQuote(capella.overrideToken)}`);
+  }
+  if (capella.projectId) {
+    lines.push(`export CAPELLA_PROJECT_ID=${posixQuote(capella.projectId)}`);
   }
   return lines.join("\n") + "\n";
 }

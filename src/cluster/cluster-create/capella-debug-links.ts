@@ -9,7 +9,8 @@
  * control-plane endpoint (verified against both prod ->
  * https://cloud.couchbase.com and dev -> https://dev.nonprod-project-avengers.com);
  * the org id reuses environments.capella[env].oid, the same org the shared
- * sdk_qe@couchbase.com account uses for API calls.
+ * sdk_qe@couchbase.com account uses for API calls. When the environment sets
+ * environments.capella[env].projectId, the link also opens that project.
  *
  * The Fleet Manager host is *not* independently confirmed for every environment
  * — only "dev" is verified (https://api.dev.nonprod-project-avengers.com ->
@@ -48,7 +49,8 @@ export function capellaUiUrl(
     return undefined;
   }
   const uiHost = capellaEnv.endpoint.replace(/^https:\/\/api\./, "https://");
-  return `${uiHost}/databases?oid=${capellaEnv.oid}`;
+  const projectId = capellaEnv.projectId?.trim();
+  return `${uiHost}/databases?oid=${capellaEnv.oid}${projectId ? `&pid=${projectId}` : ""}`;
 }
 
 /**
