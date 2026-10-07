@@ -29,6 +29,25 @@ export function prefixJobLog(name: string, text: string): string {
   return lines.map((l) => `${name}\t${STEP}\t${l}`).join("\n");
 }
 
+/**
+ * The `gh api` arguments for one job's log. Since gh 2.97.0, `gh api` refuses a non-JSON
+ * response that contains terminal escape sequences, even into a pipe or a file, unless given
+ * --allow-escape-sequences - and a FIT job log is full of colour codes. An older gh doesn't
+ * know the flag and rejects it, so it is passed only when this gh's help lists it.
+ */
+export function jobLogArgs(repo: string, jobId: number, allowEscapes: boolean): string[] {
+  return ["api", ...(allowEscapes ? ["--allow-escape-sequences"] : []), `repos/${repo}/actions/jobs/${jobId}/logs`];
+}
+
+let allowEscapesProbe: Promise<boolean> | undefined;
+/** Whether this gh has --allow-escape-sequences on `gh api` (asked once per process). */
+function ghAllowsEscapes(): Promise<boolean> {
+  return (allowEscapesProbe ??= capture("gh", ["api", "--help"], process.cwd(), { quiet: true }).then(
+    (help) => help.includes("--allow-escape-sequences"),
+    () => false,
+  ));
+}
+
 /** A job GitHub never ran has no log to fetch. */
 export const hasLog = (job: RunJob) => job.conclusion !== "skipped";
 
@@ -57,10 +76,11 @@ export async function listRunJobs(repo: string, runId: number, attempt: number):
 export async function fetchRunLog(repo: string, runId: number, attempt: number, scratch: string): Promise<string> {
   const jobs = (await listRunJobs(repo, runId, attempt)).filter(hasLog);
   const parts: string[] = [];
+  const allowEscapes = await ghAllowsEscapes();
   for (const job of jobs) {
     rmSync(scratch, { force: true });
     try {
-      await streamToFile("gh", ["api", `repos/${repo}/actions/jobs/${job.id}/logs`], scratch, process.cwd(), { quiet: true });
+      await streamToFile("gh", jobLogArgs(repo, job.id, allowEscapes), scratch, process.cwd(), { quiet: true });
     } catch (err) {
       // streamToFile's error only carries the exit code; gh's own message is in the file.
       const ghSaid = readScratch(scratch).filter((l) => l.trim()).join(" ").trim().slice(0, 500);

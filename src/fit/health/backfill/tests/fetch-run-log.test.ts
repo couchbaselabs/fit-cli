@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseRunLog } from "../../log-parse/parse-run-log.js";
-import { hasLog, prefixJobLog } from "../fetch-run-log.js";
+import { hasLog, jobLogArgs, prefixJobLog } from "../fetch-run-log.js";
 
 test("each line gets the job name and a step column, as gh run view --log prints it", () => {
   const out = prefixJobLog("fit / op-onprem-func-lite", "﻿2026-10-06T04:20:18Z one\r\n2026-10-06T04:20:19Z two\n");
@@ -42,4 +42,10 @@ test("a job GitHub skipped has no log to fetch; any other job does", () => {
   assert.equal(hasLog({ id: 1, name: "fit / aggregate-matrix-results", conclusion: "skipped" }), false);
   assert.equal(hasLog({ id: 2, name: "fit / op-capella-sit-lite", conclusion: "cancelled" }), true);
   assert.equal(hasLog({ id: 3, name: "fit / op-onprem-func-lite", conclusion: "failure" }), true);
+});
+
+test("the escape-sequence flag is passed only to a gh that has it", () => {
+  // gh 2.97.0+ refuses a job log's colour codes without it; an older gh rejects the flag.
+  assert.deepEqual(jobLogArgs("o/r", 7, true), ["api", "--allow-escape-sequences", "repos/o/r/actions/jobs/7/logs"]);
+  assert.deepEqual(jobLogArgs("o/r", 7, false), ["api", "repos/o/r/actions/jobs/7/logs"]);
 });
