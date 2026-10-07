@@ -223,8 +223,43 @@
     },
     SDK_EVENTING_RESUMING_FUNCTION_STATUS: {
       number: 40,
-      jira: "",
+      jira: "CBD-6681",
       description: "The SDK supports the RESUMING status in the result of functions_status() of the eventing management API.",
+    },
+    SDK_SEARCH_SCORE_FUSION: {
+      number: 41,
+      jira: "CBD-6712",
+      description: "The SDK supports hybrid search score fusion (SDK-RFC 52).",
+    },
+    SDK_QUERY_2120: {
+      number: 42,
+      jira: "SDK-34",
+      description: "SDK handles query code 2120.",
+    },
+    SDK_GET_REPLICA: {
+      number: 43,
+      jira: "CBD-6263",
+      description: "The SDK has support for the Collection.GetReplica API. This includes the new DocumentNotFoundOnReplicaException, ReplicaIndexOutOfBoundsException and ReplicaIndexCurrentlyUnavailableException exceptions.",
+    },
+    SDK_SCOPE_EVENTING_FUNCTION_MANAGER: {
+      number: 44,
+      jira: "",
+      description: "The performer supports the ScopeEventingFunctionManager API. This is everything under sdk.scope.eventing_function_manager",
+    },
+    SDK_HTTP_400_INVALID_ARGUMENT: {
+      number: 45,
+      jira: "SDK-46",
+      description: "The SDK raises InvalidArgumentException for an HTTP 400 from any HTTP service when no more specific error applies (SDK-RFC 58 revision 22).",
+    },
+    SDK_EVENTING_ERRORS: {
+      number: 46,
+      jira: "",
+      description: "The SDK has support for the eventing-specific error types defined in SDK-RFC 62 (see shared.exceptions.proto).",
+    },
+    SDK_SEARCH_CUSTOM_SCRIPT_QUERIES: {
+      number: 47,
+      jira: "SDK-44",
+      description: "The SDK has support for the CustomScoreQuery and CustomFilterQuery SearchQuery types",
     }
   },
   transactions: {
