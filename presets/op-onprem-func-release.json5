@@ -93,7 +93,7 @@
             {
               count: 3,
               version: '{{environments.defaults.clusterVersion}}',
-              services: ['kv', 'n1ql', 'index', 'fts'],
+              services: ['kv', 'n1ql', 'index', 'fts', 'eventing'],
             },
           ],
           docker: {
@@ -112,7 +112,7 @@
             {
               count: 3,
               version: '{{environments.defaults.previousClusterVersion}}',
-              services: ['kv', 'n1ql', 'index', 'fts'],
+              services: ['kv', 'n1ql', 'index', 'fts', 'eventing'],
             },
           ],
           docker: {
@@ -131,7 +131,7 @@
             {
               count: 3,
               version: '{{environments.defaults.nextClusterVersion}}',
-              services: ['kv', 'n1ql', 'index', 'fts'],
+              services: ['kv', 'n1ql', 'index', 'fts', 'eventing'],
             },
           ],
           docker: {
