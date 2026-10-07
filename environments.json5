@@ -203,11 +203,14 @@
     FUNCTIONAL_SET_RELEASE: "all",
   },
 
+  // projectId names the project cbdinocluster puts every cluster in. It belongs to the env's org.
+  // fit-cli forwards it as CAPELLA_PROJECT_ID to the box and the hourly sweep. Optional per env.
   capella: {
     prod: {
       endpoint: "https://api.cloud.couchbase.com",
       v4Endpoint: "https://cloudapi.cloud.couchbase.com",
       oid: "62488bdd-d416-467e-84f7-fc7c1583a083",
+      projectId: "e2a68ac1-0d1f-4acb-8e66-089959220abd",
       username: "sdk_qe@couchbase.com",
       secretId: "fit-cli/capella/prod",
     },
@@ -215,6 +218,7 @@
       endpoint: "https://api.dev.nonprod-project-avengers.com",
       v4Endpoint: "https://cloudapi.dev.nonprod-project-avengers.com",
       oid: "6af08c0a-8cab-4c1c-b257-b521575c16d0",
+      projectId: "2b8d76dd-9881-4365-9c6c-7bcb009d3547",
       username: "sdk_qe@couchbase.com",
       secretId: "fit-cli/capella/dev",
     },
