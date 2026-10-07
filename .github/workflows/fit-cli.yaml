@@ -220,6 +220,39 @@ jobs:
           path: ${{ runner.temp }}/slack-results
           merge-multiple: false
 
+      # A matrix job whose runner is lost (killed for using too much memory, or a hosted-runner
+      # outage) runs none of its remaining steps, so it uploads no result - not even the
+      # write-placeholder row - and would be left out of the summary without a trace. Give each such
+      # preset a failed row of its own. strategy.job-index follows the order of the preset list, so
+      # slack-result-<i> belongs to the i-th preset.
+      - name: Add a failed row for each preset that uploaded no result
+        env:
+          PRESETS: ${{ needs.preset-matrix.outputs.presets }}
+          RESULTS_DIR: ${{ runner.temp }}/slack-results
+        run: |
+          [ -n "$PRESETS" ] || exit 0
+          missing=()
+          i=0
+          while IFS= read -r preset; do
+            if [ ! -d "$RESULTS_DIR/slack-result-$i" ]; then
+              missing+=("$preset")
+              mkdir -p "$RESULTS_DIR/no-result-$i"
+              jq -n --arg preset "$preset" '{passed: false, results: [{label: $preset, sdk: $preset, ok: false,
+                failureSnippet: "its runner was lost before the job uploaded a result"}]}' \
+                > "$RESULTS_DIR/no-result-$i/slack-result.json"
+            fi
+            i=$((i + 1))
+          done < <(jq -r '.[]' <<<"$PRESETS")
+          [ "${#missing[@]}" -gt 0 ] || exit 0
+          {
+            echo "> [!WARNING]"
+            echo "> These presets uploaded no result, so their runs are missing from this workflow's summaries:"
+            for preset in "${missing[@]}"; do echo "> - \`$preset\`"; done
+          } >> "$GITHUB_STEP_SUMMARY"
+          for preset in "${missing[@]}"; do
+            echo "::warning title=No result::$preset uploaded no result; its runner was probably lost."
+          done
+
       - name: Post combined Slack summary
         env:
           CHANNEL: ${{ inputs.channel }}
