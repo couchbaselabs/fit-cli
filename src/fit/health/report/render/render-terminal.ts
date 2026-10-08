@@ -21,15 +21,15 @@ export function renderTerminal(report: HealthReport): string {
 
   const started = active.flatMap((s) => s.started.map((t) => ({ ...t, series: s.short })));
   const stopped = active.flatMap((s) => s.stopped.map((t) => ({ ...t, series: s.short })));
-  lines.push("", `Started failing, last 14 days (${started.length}):`);
+  lines.push("", `Started failing, last ${report.classes.recentDays} days (${started.length}):`);
   for (const t of started) {
     lines.push(`  ${t.series.padEnd(26)} since ${t.since}  ${t.test}`);
   }
-  lines.push("", `Stopped failing, last 14 days (${stopped.length}):`);
+  lines.push("", `Stopped failing, last ${report.classes.recentDays} days (${stopped.length}):`);
   for (const t of stopped) lines.push(`  ${t.series.padEnd(26)} last ${t.last}  ${t.test}${t.fix?.ticket ? `  (${t.fix.ticket})` : ""}`);
   const stoppedRunning = active.flatMap((s) => s.stoppedRunning.map((t) => ({ ...t, series: s.short })));
   if (stoppedRunning.length) {
-    lines.push("", `Stopped running, last 14 days (${stoppedRunning.length}):`);
+    lines.push("", `Stopped running, last ${report.classes.recentDays} days (${stoppedRunning.length}):`);
     for (const t of stoppedRunning) lines.push(`  ${t.series.padEnd(26)} not run since ${t.since}  ${t.test}`);
   }
 

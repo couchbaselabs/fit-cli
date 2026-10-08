@@ -4,9 +4,8 @@
  * fails every night - so the workflow run page shows the result without opening an artifact.
  */
 import type { HealthReport, ReportSeries } from "../build-report.js";
+import { shortDate } from "../dates.js";
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const day = (d: string) => `${Number(d.slice(8, 10))} ${MONTHS[Number(d.slice(5, 7)) - 1]}`;
 const code = (s: string) => `\`${s.replace(/`/g, "'")}\``;
 
 const RESULT = { p: "passed", f: "failed", e: "errored" } as const;
@@ -23,7 +22,7 @@ export function renderMarkdown(report: HealthReport, sdkName: string): string {
   const func = active.filter((s) => s.kind === "functional");
   const failingNow = (s: ReportSeries) => s.counts.always + s.counts.failing;
   const lines: string[] = [
-    `## ${sdkName} FIT health · as of ${day(report.end)}`,
+    `## ${sdkName} FIT health · as of ${shortDate(report.end)}`,
     "",
     `${report.source.records} run records over ${report.dates.length} nights (last ${report.classes.windowDays} days classified).`,
     "",
@@ -33,14 +32,14 @@ export function renderMarkdown(report: HealthReport, sdkName: string): string {
   ];
   const started = func.flatMap((s) => s.started.map((t) => ({ ...t, where: s.short })));
   const stopped = func.flatMap((s) => s.stopped.map((t) => ({ ...t, where: s.short })));
-  if (started.length) lines.push("", "### Started failing (last 14 days)", "", ...started.map((t) => `- ${code(t.test)} since ${day(t.since)} (${t.where})`));
-  if (stopped.length) lines.push("", "### Stopped failing (last 14 days)", "", ...stopped.map((t) => `- ${code(t.test)} last failed ${day(t.last)} (${t.where})${t.fix?.ticket ? ` - ${t.fix.ticket}` : ""}`));
+  if (started.length) lines.push("", `### Started failing (last ${report.classes.recentDays} days)`, "", ...started.map((t) => `- ${code(t.test)} since ${shortDate(t.since)} (${t.where})`));
+  if (stopped.length) lines.push("", `### Stopped failing (last ${report.classes.recentDays} days)`, "", ...stopped.map((t) => `- ${code(t.test)} last failed ${shortDate(t.last)} (${t.where})${t.fix?.ticket ? ` - ${t.fix.ticket}` : ""}`));
   const stoppedRunning = func.flatMap((s) => s.stoppedRunning.map((t) => ({ ...t, where: s.short })));
-  if (stoppedRunning.length) lines.push("", "### Stopped running (last 14 days)", "", ...stoppedRunning.map((t) => `- ${code(t.test)} not run since ${day(t.since)}, last ran ${day(t.lastRan)} (${RESULT[t.lastResult]}) (${t.where})`));
+  if (stoppedRunning.length) lines.push("", `### Stopped running (last ${report.classes.recentDays} days)`, "", ...stoppedRunning.map((t) => `- ${code(t.test)} not run since ${shortDate(t.since)}, last ran ${shortDate(t.lastRan)} (${RESULT[t.lastResult]}) (${t.where})`));
   const always = func.flatMap((s) => s.tests.filter((t) => t.cls === "always").map((t) => `- ${code(t.test)} (${s.short})`));
   if (always.length) lines.push("", `### Failed every night they ran in the last ${report.classes.windowDays} days`, "", ...always);
   if (report.blackout.length || report.source.unreadableRuns.length) {
-    lines.push("", `_Nights with no usable results: ${report.blackout.map(day).join(", ") || "none"}. Runs with no readable log: ${report.source.unreadableRuns.map((r) => day(r.date)).join(", ") || "none"}._`);
+    lines.push("", `_Nights with no usable results: ${report.blackout.map(shortDate).join(", ") || "none"}. Runs with no readable log: ${report.source.unreadableRuns.map((r) => shortDate(r.date)).join(", ") || "none"}._`);
   }
   return lines.join("\n") + "\n";
 }

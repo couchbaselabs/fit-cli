@@ -12,11 +12,12 @@
  */
 import type { RunRecord } from "../record/run-record.js";
 import { sdkCommitOf, type RunManifest } from "../record/run-manifest.js";
-import { RECENT_DAYS, addDays, type HealthReport, type ReportNotes, type ReportSeries, type ReportTest } from "./build-report.js";
+import { RECENT_DAYS, type HealthReport, type ReportNotes, type ReportSeries, type ReportTest } from "./build-report.js";
 import { CLASS_LABELS, WINDOW_DAYS, isFailure, type NightOutcome, type TestClass } from "./classify.js";
 import { buildSeries, type Series } from "./series.js";
 import type { ChangeAnalysis, Commit, DriverChanges } from "./changes.js";
 import type { CrossSdk } from "./cross.js";
+import { addDays } from "./dates.js";
 
 export const TRIAGE_SCHEMA = "fit-health-triage/1" as const;
 

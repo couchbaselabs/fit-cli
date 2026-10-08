@@ -340,6 +340,7 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 const splitName = (t) => { const i = t.indexOf('.'); return i < 0 ? [t, ' (whole class)'] : [t.slice(0, i), t.slice(i)]; };
 const nameHtml = (t) => { const [c, m] = splitName(t); return `<b>${esc(c)}</b><span class="m">${esc(m)}</span>`; };
 const WIN = D.classes.windowDays;
+const RECENT = D.classes.recentDays;
 const FUNC = D.series.filter((s) => s.kind === 'functional' && s.active);
 const SIT = D.series.filter((s) => s.kind === 'situational' && s.active);
 const OLD = D.series.filter((s) => !s.active);
@@ -395,8 +396,8 @@ const sum = (f) => FUNC.reduce((a, s) => a + f(s), 0);
 const split = (f) => FUNC.map((s) => `${f(s)} ${esc(s.short)}`).join(' · ');
 $('summary').innerHTML = [
   ['Failing now', sum((s) => cnt(s, 'always', 'failing')), 'bad', split((s) => cnt(s, 'always', 'failing'))],
-  ['Started failing, last 14 days', sum((s) => s.started.length), 'bad', split((s) => s.started.length)],
-  ['Stopped failing, last 14 days', sum((s) => s.stopped.length), 'good', split((s) => s.stopped.length)],
+  [`Started failing, last ${RECENT} days`, sum((s) => s.started.length), 'bad', split((s) => s.started.length)],
+  [`Stopped failing, last ${RECENT} days`, sum((s) => s.stopped.length), 'good', split((s) => s.stopped.length)],
   ['Intermittent', sum((s) => cnt(s, 'intermittent')), '', split((s) => cnt(s, 'intermittent'))],
 ].map(([l, n, c, s]) => `<div class="stat"><span class="label">${l}</span><span class="big ${c}">${n}</span><span class="split">${s}</span></div>`).join('') + lastNightStat();
 
@@ -425,8 +426,7 @@ function changeLine(c) {
   return parts.length ? `<div class="sub">${parts.join(' · ')}</div>` : '';
 }
 // The same test on the other SDKs (fit health cross), when the reports were compared.
-const SDK_NAME = { dotnet: '.NET', java: 'Java', scala: 'Scala', kotlin: 'Kotlin', go: 'Go', 'columnar-java': 'Java Columnar', node: 'Node.js', python: 'Python', cpp: 'C++', ruby: 'Ruby', rust: 'Rust' };
-const sdkNames = (xs) => xs.map((x) => esc(SDK_NAME[x] || x)).join(', ');
+const sdkNames = (xs) => xs.map((x) => esc(D.sdkNames[x] || x)).join(', ');
 function crossLine(seriesId, test) {
   const x = D.cross && D.cross[seriesId] && D.cross[seriesId][test];
   if (!x || x.category === 'not-enough-data') return '';
@@ -441,7 +441,7 @@ $('new').innerHTML = groups.map((g) => {
   const change = changeLine(D.changes && D.changes[g.series] && D.changes[g.series][g.tests[0]]);
   const cross = crossLine(g.series, g.tests[0]);
   return `<li>${names}<div class="sub"><span class="num">since ${fmt(g.since)} · ${g.nights} nights</span><span>${esc(g.suite)}</span>${commit}</div>${change}${cross ? `<div class="sub">${cross}</div>` : ''}</li>`;
-}).join('') || '<li class="sub">Nothing started failing in the last 14 days.</li>';
+}).join('') || `<li class="sub">Nothing started failing in the last ${RECENT} days.</li>`;
 const unchanged = groups.filter((g) => sameCommit(g.since)).length;
 $('new-callout').innerHTML = unchanged ? `${unchanged} of these groups began on a night with no SDK commit since the night before.` : '';
 if (!$('new-callout').innerHTML) $('new-callout').hidden = true;
@@ -449,7 +449,7 @@ if (!$('new-callout').innerHTML) $('new-callout').hidden = true;
 const fixedItems = FUNC.flatMap((s) => s.stopped.map((f) => ({ ...f, suite: s.short })));
 $('fixed').innerHTML = fixedItems.map((f) => `<li><div class="tname">${nameHtml(f.test)}</div>
   <div class="sub"><span class="num">last failed ${fmt(f.last)} after ${f.run} straight nights · clean ${f.clean} nights</span><span>${esc(f.suite)}</span>${f.fix && f.fix.ticket ? `<span class="chip">${esc(f.fix.ticket)}</span>` : ''}</div>
-  ${f.fix ? `<div class="sub">${esc(f.fix.text)}</div>` : ''}</li>`).join('') || '<li class="sub">Nothing stopped failing in the last 14 days.</li>';
+  ${f.fix ? `<div class="sub">${esc(f.fix.text)}</div>` : ''}</li>`).join('') || `<li class="sub">Nothing stopped failing in the last ${RECENT} days.</li>`;
 
 // Tests that failed, then stopped running (skipped, or gone from the results): not fixed, just unwatched.
 const RESULT = { p: 'passed', f: 'failed', e: 'errored' };
@@ -659,13 +659,13 @@ function nightSeries(s, d) {
   if (!t) return `<div class="night-series">${label}<p class="counts">${d < (s.ran[0] || '') ? 'Not running yet.' : 'No results this night: the run aborted, or this preset did not run.'}</p></div>`;
   const i = s.ran.indexOf(d);
   const failed = i < 0 ? [] : s.tests.filter((x) => x.seq[i] === 'f' || x.seq[i] === 'e');
-  // A test that stopped running more than 14 days ago is no longer in the report, so it can't
+  // A test that stopped running more than RECENT days ago is no longer in the report, so it can't
   // be named here: say how many such failures there are rather than list fewer than the count.
   const unnamed = t.failing - failed.length;
   const items = failed.map((x) => `<li><span class="tname">${nameHtml(x.test)}</span><span class="pill p-${x.cls}" title="${esc(D.classes.blurbs[x.cls])}">${esc(LABEL[x.cls])}</span>${x.seq[i] === 'e' ? '<span class="sub">errored</span>' : ''}</li>`).join('');
   return `<div class="night-series">${label}<p class="counts">${testsLine(t)}</p>
     ${items ? `<ul class="items">${items}</ul>` : t.failing ? '' : '<p class="sub">No failures.</p>'}
-    ${unnamed > 0 ? `<p class="sub">${unnamed} more failing test${unnamed > 1 ? 's are' : ' is'} not named: the report no longer follows tests that stopped running more than 14 days ago.</p>` : ''}</div>`;
+    ${unnamed > 0 ? `<p class="sub">${unnamed} more failing test${unnamed > 1 ? 's are' : ' is'} not named: the report no longer follows tests that stopped running more than ${RECENT} days ago.</p>` : ''}</div>`;
 }
 function showNight(d) {
   document.querySelectorAll('.strip i.sel').forEach((c) => c.classList.remove('sel'));
@@ -696,7 +696,7 @@ $('limit-source').innerHTML = D.source.scraped
 $('footer').innerHTML = [
   `<span>Generated by <code>fit health report ${esc(D.sdk)}</code> on ${fmtY(D.generatedAt.slice(0, 10))}, from ${D.source.records} run records over ${D.dates.length} nights.</span>`,
   D.blackout.length ? `<span>Nights with no usable functional results: ${D.blackout.map(fmt).join(', ')}.</span>` : '',
-  (() => { const n = FUNC.reduce((a, s) => a + (s.stoppedRunningEarlier || 0), 0); return n ? `<span>${n} test${n > 1 ? 's' : ''} that failed and then stopped running more than 14 days ago ${n > 1 ? 'are' : 'is'} no longer shown.</span>` : ''; })(),
+  (() => { const n = FUNC.reduce((a, s) => a + (s.stoppedRunningEarlier || 0), 0); return n ? `<span>${n} test${n > 1 ? 's' : ''} that failed and then stopped running more than ${RECENT} days ago ${n > 1 ? 'are' : 'is'} no longer shown.</span>` : ''; })(),
   OLD.length ? `<span>Older series not shown (no runs in the last ${WIN} days): ${OLD.map((s) => `${esc(s.label)} (${s.ran.length ? `${fmt(s.ran[0])}–${fmt(s.ran[s.ran.length - 1])}` : 'no results'})`).join('; ')}.</span>` : '',
   D.source.unreadableRuns.length ? `<span>Runs with no usable log: ${D.source.unreadableRuns.map((r) => `${fmt(r.date)} (${esc(r.status)})`).join(', ')}.</span>` : '',
 ].filter(Boolean).join('');

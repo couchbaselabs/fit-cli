@@ -13,6 +13,7 @@
  * counted as a pass - except that a test that has stopped running altogether is classed as
  * such, not judged on the failures it had before it stopped.
  */
+import { addDays } from "./dates.js";
 
 export const WINDOW_DAYS = 30;
 /** Consecutive failures that make a clean test "failing". */
@@ -102,18 +103,12 @@ export function episodes(seq: readonly ("p" | "f")[]): number[] {
   return out;
 }
 
-function daysBefore(isoDate: string, days: number): string {
-  const d = new Date(`${isoDate}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - days);
-  return d.toISOString().slice(0, 10);
-}
-
 /**
  * Classify one test. `dates` and `seq` are aligned, oldest first; `end` is the report's last
  * date, and the window is the WINDOW_DAYS days ending there.
  */
 export function classify(dates: readonly string[], seq: readonly NightOutcome[], end: string): Classification {
-  const start = daysBefore(end, WINDOW_DAYS - 1);
+  const start = addDays(end, -(WINDOW_DAYS - 1));
   const known: [string, "p" | "f"][] = [];
   dates.forEach((d, i) => {
     const x = seq[i];

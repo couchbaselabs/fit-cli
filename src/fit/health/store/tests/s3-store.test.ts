@@ -55,8 +55,11 @@ test("a record no manifest lists is not read: a deletion that didn't land can't 
     store.write("dotnet/records/2026/stale.json", JSON.stringify({ preset: "stale" }));
     store.write(
       "dotnet/manifests/1-1.json",
-      JSON.stringify({ records: ["dotnet/records/2026/kept.json"], archive: { upgraded: ["dotnet/records/2026/upgraded.json"] } }),
+      JSON.stringify({ schema: 1, records: ["dotnet/records/2026/kept.json"], archive: { upgraded: ["dotnet/records/2026/upgraded.json"] } }),
     );
+    // A manifest of another schema is not read, so it vouches for nothing.
+    store.write("dotnet/manifests/2-1.json", JSON.stringify({ schema: 99, records: ["dotnet/records/2026/stale.json"] }));
+    assert.deepEqual(store.listManifests("dotnet").map((m) => m.records), [["dotnet/records/2026/kept.json"]]);
     assert.deepEqual(store.readRecords("dotnet").map((r) => r.preset).sort(), ["kept", "upgraded"]);
   } finally {
     rmSync(root, { recursive: true, force: true });

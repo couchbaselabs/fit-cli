@@ -17,6 +17,7 @@
  */
 import type { TestClass } from "./classify.js";
 import type { TriageFinding, TriageReport } from "./triage.js";
+import { daysBetween } from "./dates.js";
 
 export type PeerStatus = "failing" | "intermittent" | "recovered" | "stopped" | "passing" | "not_run" | "unknown";
 export type CrossCategory = "only-this-sdk" | "every-sdk" | "family" | "mixed" | "not-enough-data";
@@ -62,9 +63,7 @@ const RAN = new Set<PeerStatus>(["failing", "intermittent", "recovered", "stoppe
 
 const kindOf = (t: TriageReport, f: TriageFinding) => t.series.find((s) => s.id === f.series)?.kind ?? "functional";
 
-function daysApart(a: string, b: string): number {
-  return Math.abs(Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86_400_000;
-}
+const daysApart = (a: string, b: string) => Math.abs(daysBetween(a, b));
 
 /** How `peer` fared on `test` (of `kind`), seen from a finding that started failing on `start`. */
 export function peerStatus(peer: TriageReport, test: string, kind: "functional" | "situational", start: string | undefined, family?: string): CrossPeer {

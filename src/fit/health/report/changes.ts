@@ -27,6 +27,7 @@ import type { DriverCheckout } from "../log-parse/parse-run-log.js";
 import type { TriageFinding, TriageNight, TriageReport } from "./triage.js";
 import { sdkByValue } from "../../../util/sdk/sdks.js";
 import { ANALYTICS_TEST_DRIVER_MODULE, DEFAULT_TEST_DRIVER_MODULE } from "../../shared/run-test-driver/run-test-driver.js";
+import { addDays, daysBetween, startOfDay } from "./dates.js";
 
 export const DRIVER_REPO = "couchbaselabs/transactions-fit-performer";
 
@@ -258,8 +259,8 @@ export async function analyseChanges(
   let tree: string[] | undefined;
   let driverProblem: string | undefined;
   try {
-    const since = new Date(Date.parse(`${triage.window.start}T00:00:00Z`) - 7 * 86_400_000).toISOString();
-    const until = new Date(Date.parse(`${triage.window.end}T00:00:00Z`) + 2 * 86_400_000).toISOString();
+    const since = startOfDay(addDays(triage.window.start, -7));
+    const until = startOfDay(addDays(triage.window.end, 2));
     [history, tree] = await Promise.all([ctx.source.history(DRIVER_REPO, DRIVER_BRANCH, since, until), ctx.source.tree(DRIVER_REPO, DRIVER_BRANCH)]);
   } catch (err) {
     driverProblem = `couldn't read ${DRIVER_REPO}: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300);
@@ -327,7 +328,7 @@ export async function analyseChanges(
         };
       }
       f.driverChanges = driver;
-      const days = Math.round((Date.parse(`${after.date}T00:00:00Z`) - Date.parse(`${before.date}T00:00:00Z`)) / 86_400_000);
+      const days = daysBetween(before.date, after.date);
       const analysis = categorise(sdk, driver);
       const wide = days > WIDE_SPAN_DAYS ? `the two nights are ${days} days apart, so the commits cover more than one night` : undefined;
       f.changeAnalysis = {

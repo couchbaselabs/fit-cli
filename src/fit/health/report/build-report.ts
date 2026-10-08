@@ -24,6 +24,8 @@ import {
   type TestClass,
 } from "./classify.js";
 import { buildSeries, testHistories, type Series } from "./series.js";
+import { addDays, calendarDays, daysBetween } from "./dates.js";
+import { SDKS } from "../../../util/sdk/sdks.js";
 
 export const HEALTH_REPORT_SCHEMA = 1 as const;
 
@@ -141,7 +143,13 @@ export interface HealthReport {
   commits: Record<string, string>;
   /** Nights with no functional results at all (every functional run aborted or missing). */
   blackout: string[];
-  classes: { order: readonly TestClass[]; labels: Record<TestClass, string>; blurbs: Record<TestClass, string>; windowDays: number };
+  /**
+   * `windowDays`: the days a test is classified over. `recentDays`: how far back "started" and
+   * "stopped failing" (and "stopped running") look.
+   */
+  classes: { order: readonly TestClass[]; labels: Record<TestClass, string>; blurbs: Record<TestClass, string>; windowDays: number; recentDays: number };
+  /** Every SDK's display name by its value ("dotnet" -> ".NET"), for naming other SDKs. */
+  sdkNames: Record<string, string>;
   series: ReportSeries[];
   comparisons: ParamComparison[];
   /** What changed around each finding's change point, when it was looked up (see changes.ts). */
@@ -152,25 +160,6 @@ export interface HealthReport {
 }
 
 const PRESET_ORDER = ["op-onprem-func", "op-cng-func", "op-capella-func", "op-capella-sit", "op-capella-pe-sit", "op-cng-sit"];
-
-/** Each day from `from` to `to` inclusive, as YYYY-MM-DD; empty when `from` is missing or later. */
-/** `date` moved by `n` days (negative for earlier), as YYYY-MM-DD. */
-export function addDays(date: string, n: number): string {
-  return new Date(Date.parse(`${date}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
-}
-
-export function calendarDays(from: string | undefined, to: string): string[] {
-  const out: string[] = [];
-  if (!from) return out;
-  for (let t = Date.parse(`${from}T00:00:00Z`), last = Date.parse(`${to}T00:00:00Z`); t <= last; t += 86_400_000) {
-    out.push(new Date(t).toISOString().slice(0, 10));
-  }
-  return out;
-}
-
-export function daysBetween(a: string, b: string): number {
-  return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
-}
 
 /** Where a preset runs, for labels: "on-prem", "CNG", "Capella · private endpoint". */
 export function presetWhere(preset: string, params: Record<string, unknown>): string {
@@ -378,7 +367,8 @@ export function buildHealthReport(
     dates,
     commits,
     blackout,
-    classes: { order: CLASS_ORDER, labels: CLASS_LABELS, blurbs: CLASS_BLURBS, windowDays: WINDOW_DAYS },
+    classes: { order: CLASS_ORDER, labels: CLASS_LABELS, blurbs: CLASS_BLURBS, windowDays: WINDOW_DAYS, recentDays: RECENT_DAYS },
+    sdkNames: Object.fromEntries(SDKS.map((s) => [s.value, s.name])),
     series,
     comparisons: paramComparisons(series, historyOf),
     source: {

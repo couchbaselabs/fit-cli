@@ -22,7 +22,7 @@ import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { printWithoutTimestamps } from "../../../util/non-fit/fit-cli-log.js";
 import { compareRecords, type RecordComparison } from "../emit/compare-records.js";
 import { buildRecords, parseRunLog } from "../log-parse/parse-run-log.js";
-import { rawLogKey, type RunManifest } from "../record/run-manifest.js";
+import { rawLogKey } from "../record/run-manifest.js";
 import { recordKey, type RunRecord } from "../record/run-record.js";
 import { type LocalHealthStore } from "../store/health-store.js";
 import { openStore } from "../store/s3-store.js";
@@ -47,8 +47,7 @@ export const performerSdk = (performer: string) => performer.slice(0, performer.
 
 export function checkStore(store: LocalHealthStore, sdk: string, nights = 3): CheckReport {
   const manifests = store
-    .list(`${sdk}/manifests`)
-    .map((k) => JSON.parse(store.read(k)!.toString("utf8")) as RunManifest)
+    .listManifests(sdk)
     .sort((a, b) => b.date.localeCompare(a.date));
   const records = store.readRecords(sdk);
 

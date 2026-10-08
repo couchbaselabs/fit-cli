@@ -7,7 +7,7 @@
  * carries (`testCounts`) - so it needs nothing beyond what the SDK pages publish.
  */
 import type { HealthReport, ReportSeries } from "./build-report.js";
-import { addDays } from "./build-report.js";
+import { addDays } from "./dates.js";
 import { WINDOW_DAYS } from "./classify.js";
 
 export const OVERVIEW_SCHEMA = "fit-health-overview/1";

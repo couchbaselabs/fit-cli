@@ -117,7 +117,7 @@ export async function runReportCommand(argv: string[], prefix: string): Promise<
   try {
     records = store.readRecords(sdk);
     if (records.length === 0) throw new Error(`No run records for ${sdk} in ${location}. Run \`fit health backfill ${sdk}\` first.`);
-    manifests = store.list(`${sdk}/manifests`).map((k) => JSON.parse(store.read(k)!.toString("utf8")) as RunManifest);
+    manifests = store.listManifests(sdk);
     // Notes live in the store (fit health notes); --notes reads a file instead, for trying them out.
     const notesFile = values.notes;
     notes = notesFile ? (JSON.parse(readFileSync(notesFile, "utf8")) as ReportNotes) : readNotes(store, sdk);

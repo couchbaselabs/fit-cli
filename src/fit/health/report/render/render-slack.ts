@@ -9,6 +9,7 @@
  * Slack mrkdwn, not Markdown: *bold*, _italic_, <url|text> links.
  */
 import type { HealthReport, ReportSeries } from "../build-report.js";
+import { addDays, shortDate } from "../dates.js";
 
 export interface SlackDigest {
   headline: string;
@@ -18,8 +19,6 @@ export interface SlackDigest {
 /** Slack truncates long messages; keep each list readable and well inside the limit. */
 const MAX_ITEMS = 15;
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const day = (d: string) => `${Number(d.slice(8, 10))} ${MONTHS[Number(d.slice(5, 7)) - 1]}`;
 
 /** Escape the three characters Slack treats as control characters in message text. */
 export function slackEscape(s: string): string {
@@ -70,42 +69,43 @@ export function renderSlackDigest(report: HealthReport, sdkName: string, reportU
   const stopped = func.flatMap((s) => s.stopped.map((t) => ({ ...t, where: s.short })));
 
   // What the data can't vouch for, stated every time.
-  const windowStart = new Date(Date.parse(`${report.end}T00:00:00Z`) - (report.classes.windowDays - 1) * 86_400_000).toISOString().slice(0, 10);
+  const recent = report.classes.recentDays;
+  const windowStart = addDays(report.end, -(report.classes.windowDays - 1));
   const gaps = report.blackout.filter((d) => d >= windowStart);
   const unreadable = report.source.unreadableRuns.filter((r) => r.date >= windowStart);
   const caveats = [
-    gaps.length && `${gaps.length} night${gaps.length > 1 ? "s" : ""} with no usable results (${gaps.map(day).join(", ")})`,
+    gaps.length && `${gaps.length} night${gaps.length > 1 ? "s" : ""} with no usable results (${gaps.map(shortDate).join(", ")})`,
     unreadable.length && `${unreadable.length} run${unreadable.length > 1 ? "s" : ""} with no readable log`,
   ].filter(Boolean);
 
   const headline = [
-    `*${slackEscape(sdkName)} FIT health* · as of ${day(report.end)} · last ${report.classes.windowDays} days`,
+    `*${slackEscape(sdkName)} FIT health* · as of ${shortDate(report.end)} · last ${report.classes.windowDays} days`,
     `• Failing now: *${sum(failingNow)}* (${split(failingNow)})`,
     ...lastNightTests(func),
-    `• Last 14 days: *${started.length}* started failing · *${stopped.length}* stopped · *${sum((s) => s.counts.intermittent)}* intermittent`,
+    `• Last ${recent} days: *${started.length}* started failing · *${stopped.length}* stopped · *${sum((s) => s.counts.intermittent)}* intermittent`,
     ...(caveats.length ? [`_Data: ${caveats.join("; ")}._`] : []),
     ...(reportUrl ? [`<${reportUrl}|Full report>`] : []),
   ].join("\n");
 
   const thread: string[] = [];
   if (started.length) {
-    thread.push("*Started failing (last 14 days)*");
+    thread.push(`*Started failing (last ${recent} days)*`);
     thread.push(
       ...list(
         grouped(started, (t) => t.since).map((g) => {
-          return `\`${g.cls}\` ${slackEscape(methods(g.tests).join(", "))} — since ${day(g.first.since)}, ${g.first.where}`;
+          return `\`${g.cls}\` ${slackEscape(methods(g.tests).join(", "))} — since ${shortDate(g.first.since)}, ${g.first.where}`;
         }),
       ),
     );
   }
   if (stopped.length) {
-    thread.push("", "*Stopped failing (last 14 days)*");
-    thread.push(...list(stopped.map((t) => `\`${slackEscape(t.test)}\` — last failed ${day(t.last)}, ${t.where}${t.fix?.ticket ? ` (${t.fix.ticket})` : ""}`)));
+    thread.push("", `*Stopped failing (last ${recent} days)*`);
+    thread.push(...list(stopped.map((t) => `\`${slackEscape(t.test)}\` — last failed ${shortDate(t.last)}, ${t.where}${t.fix?.ticket ? ` (${t.fix.ticket})` : ""}`)));
   }
   const stoppedRunning = func.flatMap((s) => s.stoppedRunning.map((t) => ({ ...t, where: s.short })));
   if (stoppedRunning.length) {
-    thread.push("", "*Stopped running (last 14 days)*");
-    thread.push(...list(stoppedRunning.map((t) => `\`${slackEscape(t.test)}\` — not run since ${day(t.since)}, ${t.where}`)));
+    thread.push("", `*Stopped running (last ${recent} days)*`);
+    thread.push(...list(stoppedRunning.map((t) => `\`${slackEscape(t.test)}\` — not run since ${shortDate(t.since)}, ${t.where}`)));
   }
   const chronic = func.flatMap((s) => s.tests.filter((t) => t.cls === "always").map((t) => `\`${slackEscape(t.test)}\` — ${s.short}`));
   if (chronic.length) thread.push("", `*Failed every night they ran in the last ${report.classes.windowDays} days*`, ...list(chronic));
@@ -114,6 +114,6 @@ export function renderSlackDigest(report: HealthReport, sdkName: string, reportU
     const b = report.series.find((s) => s.id === c.b)!;
     thread.push("", `*${a.short} vs ${b.short}*`, `• Nights with any failure: ${c.aRed}/${c.nights} vs ${c.bRed}/${c.nights} (both on ${c.bothRed})`);
   }
-  if (!thread.length) thread.push("_Nothing started or stopped failing in the last 14 days._");
+  if (!thread.length) thread.push(`_Nothing started or stopped failing in the last ${recent} days._`);
   return { headline, thread: thread.join("\n") };
 }

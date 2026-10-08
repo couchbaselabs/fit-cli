@@ -13,7 +13,7 @@ import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { fitCliInfo } from "../../../util/non-fit/fit-cli-log.js";
 import { gunzipSync } from "node:zlib";
 import { LOG_PARSER_VERSION } from "../log-parse/parse-run-log.js";
-import { rawLogKey, type RunManifest } from "../record/run-manifest.js";
+import { rawLogKey } from "../record/run-manifest.js";
 import type { RunRecord } from "../record/run-record.js";
 import { defaultHealthStoreRoot } from "../store/health-store.js";
 import { openStore } from "../store/s3-store.js";
@@ -45,8 +45,7 @@ export async function runReparseCommand(argv: string[], prefix: string): Promise
   let records = 0;
   let parseErrors = 0;
   try {
-    for (const key of store.list(`${sdk}/manifests`)) {
-      const m = JSON.parse(store.read(key)!.toString("utf8")) as RunManifest;
+    for (const m of store.listManifests(sdk)) {
       if (m.status !== "ok" && m.status !== "parse_error") continue;
       if (!all && m.parserVersion === LOG_PARSER_VERSION) continue;
       const raw = store.read(rawLogKey(sdk, m.runId, m.runAttempt));

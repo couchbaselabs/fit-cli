@@ -18,7 +18,7 @@ import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { fitCliInfo, fitCliWarn } from "../../../util/non-fit/fit-cli-log.js";
 import { ensureRunDir } from "../../../util/non-fit/replay.js";
 import { LOG_PARSER_VERSION } from "../log-parse/parse-run-log.js";
-import { MANIFEST_SCHEMA, needsArchiveUpgrade, needsWork, type RunManifest } from "../record/run-manifest.js";
+import { needsArchiveUpgrade, needsWork } from "../record/run-manifest.js";
 import { healthOptIn } from "../registry/health-opt-ins.js";
 import { type LocalHealthStore, defaultHealthStoreRoot } from "../store/health-store.js";
 import { openStore, type OpenedStore } from "../store/s3-store.js";
@@ -121,9 +121,8 @@ export async function backfill(sdk: string, opts: BackfillOptions): Promise<Back
  */
 async function upgradeAll(sdk: string, opts: BackfillOptions, summary: BackfillSummary): Promise<void> {
   const manifests = opts.store
-    .list(`${sdk}/manifests`)
-    .map((k) => JSON.parse(opts.store.read(k)!.toString("utf8")) as RunManifest)
-    .filter((m) => m.schema === MANIFEST_SCHEMA && needsArchiveUpgrade(m))
+    .listManifests(sdk)
+    .filter(needsArchiveUpgrade)
     .sort((a, b) => b.date.localeCompare(a.date));
   const batch = opts.limit ? manifests.slice(0, opts.limit) : manifests;
   if (!batch.length) return;

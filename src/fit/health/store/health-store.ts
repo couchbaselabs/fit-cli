@@ -71,6 +71,13 @@ export class LocalHealthStore {
     return m.schema === MANIFEST_SCHEMA ? m : undefined;
   }
 
+  /** Every manifest of the SDK's runs, in key order. One written under another schema is left out, as readManifest leaves it out. */
+  listManifests(sdk: string): RunManifest[] {
+    return this.list(`${sdk}/manifests`)
+      .map((k) => JSON.parse(this.read(k)!.toString("utf8")) as RunManifest)
+      .filter((m) => m.schema === MANIFEST_SCHEMA);
+  }
+
   writeManifest(manifest: RunManifest): void {
     this.write(manifestKey(manifest.sdk, manifest.runId, manifest.runAttempt), JSON.stringify(manifest, null, 1) + "\n");
   }
@@ -88,9 +95,8 @@ export class LocalHealthStore {
    */
   readRecords(sdk: string): RunRecord[] {
     const vouched = new Set<string>();
-    for (const k of this.list(`${sdk}/manifests`)) {
-      const m = JSON.parse(this.read(k)!.toString("utf8")) as Partial<RunManifest>;
-      for (const r of [...(m.records ?? []), ...(m.archive?.upgraded ?? [])]) vouched.add(r);
+    for (const m of this.listManifests(sdk)) {
+      for (const r of [...m.records, ...(m.archive?.upgraded ?? [])]) vouched.add(r);
     }
     return this.list(`${sdk}/records`)
       .filter((k) => k.endsWith(".json") && vouched.has(k))
