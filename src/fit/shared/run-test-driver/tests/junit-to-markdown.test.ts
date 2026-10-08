@@ -140,6 +140,13 @@ test("parseFailingTestCases: decodes &#10; entities in message attribute", () =>
   assert.ok(msg.startsWith("Did not get back"), "message text should be preserved");
 });
 
+test("parseFailingTestCases: decodes each entity once, so an escaped entity stays literal text", () => {
+  // The message text is "expected &lt;T&gt;" - in XML, "&amp;lt;T&amp;gt;". Decoding &amp;
+  // first and then &lt; would turn it into "<T>".
+  const xml = `<testsuite><testcase classname="a.B" name="c"><failure message="expected &amp;lt;T&amp;gt; &#x1F600;">x</failure></testcase></testsuite>`;
+  assert.equal(parseFailingTestCases(xml)[0].issues[0].message, "expected &lt;T&gt; \u{1F600}");
+});
+
 test("parseFailingTestCases: strips CDATA wrappers from body", () => {
   const cases = parseFailingTestCases(SUREFIRE_SUITE);
   const body = cases[0].issues[0].body;
