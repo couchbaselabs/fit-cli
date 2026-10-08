@@ -72,6 +72,7 @@
   "java/com/couchbase/client/management/query/collection/CollectionQueryIndexManagerTest.java",
   "java/com/couchbase/client/management/search/ScopeSearchIndexManagerUnsupportedTest.java",
   "java/com/couchbase/client/management/search/SearchIndexManagerExistingIndexTest.java",
+  "java/com/couchbase/client/management/search/SearchIndexManagerSimulatedErrorTest.java",
   "java/com/couchbase/client/management/search/SearchIndexManagerTest.java",
   "java/com/couchbase/client/management/search/VectorSearchBase64IndexManagerUnsupportedTest.java",
   "java/com/couchbase/client/management/search/VectorSearchIndexManagerUnsupportedTest.java",
