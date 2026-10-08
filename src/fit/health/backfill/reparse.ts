@@ -50,7 +50,7 @@ export async function runReparseCommand(argv: string[], prefix: string): Promise
       if (m.status !== "ok" && m.status !== "parse_error") continue;
       if (!all && m.parserVersion === LOG_PARSER_VERSION) continue;
       const raw = store.read(rawLogKey(sdk, m.runId, m.runAttempt));
-      if (!raw) continue; // an emitted-only run has no log to reparse
+      if (!raw) continue; // no stored log to reparse
       // Older manifests don't carry the CI context; take it from one of their records.
       const fromRecord = m.records.map((k) => store.read(k)).find((b): b is Buffer => !!b);
       const ci = m.ci ?? (fromRecord ? (JSON.parse(fromRecord.toString("utf8")) as RunRecord).ci : undefined);

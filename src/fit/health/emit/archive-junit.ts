@@ -15,9 +15,8 @@
  *     but situational presets wrote the same path and overwrote each other - so where a
  *     record's tarball can't be identified unambiguously it is left as scraped, never guessed.
  */
-import type { RunRecord } from "../record/run-record.js";
-import { recordFromJunit } from "./build-record.js";
-import { junitOutcomes, junitXmlFromTarGz } from "./junit-outcomes.js";
+import { RUN_RECORD_SCHEMA, type RunRecord } from "../record/run-record.js";
+import { junitOutcomes, junitXmlFromTarGz, type JunitOutcomes } from "./junit-outcomes.js";
 import { stripAnsi } from "../log-parse/parse-run-log.js";
 
 const UPLOADED = /✓ Uploaded run artifacts to (s3:\/\/\S+\.zip)/;
@@ -67,12 +66,39 @@ export function matchTarball(record: RunRecord, tarballs: string[], peers: RunRe
  * not. A tarball with no test results in it (no TEST-*.xml, or none with a test case) is
  * refused: zero counts would read as a clean night and replace the log's real results.
  */
+/**
+ * The record a scraped one becomes with its run's full JUnit results: the scraped record says
+ * which run it was, the JUnit every outcome. Copied field by field, so the scraped record's
+ * source, parserVersion and tests can't leak into it.
+ */
+export function recordFromJunit(junit: JunitOutcomes, scraped: RunRecord, archive: { uri: string; member: string }): RunRecord {
+  const c = junit.counts;
+  return {
+    schema: RUN_RECORD_SCHEMA,
+    source: "run-archive-junit",
+    sdk: scraped.sdk,
+    preset: scraped.preset,
+    ...(scraped.performer ? { performer: scraped.performer } : {}),
+    kind: scraped.kind,
+    cluster: scraped.cluster,
+    ...(scraped.variant ? { variant: scraped.variant } : {}),
+    params: { ...scraped.params },
+    date: scraped.date,
+    ci: { ...scraped.ci },
+    outcome: c.failed + c.errored > 0 ? "tests_failed" : "passed",
+    counts: c,
+    passesKnown: true,
+    packages: junit.packages,
+    archive,
+    tests: junit.tests,
+  };
+}
+
 export async function upgradeRecord(scraped: RunRecord, tarGz: Buffer, archive: string, tarball: string): Promise<RunRecord | { reason: string }> {
   const junit = junitOutcomes(await junitXmlFromTarGz(tarGz));
   const c = junit.counts;
   if (junit.files === 0 || c.passed + c.failed + c.errored + c.skipped === 0) {
     return { reason: `${tarball} holds no JUnit results (${junit.files} TEST-*.xml files)` };
   }
-  const rec = recordFromJunit(junit, scraped);
-  return { ...rec, source: "run-archive-junit", archive: { uri: archive, member: tarball } };
+  return recordFromJunit(junit, scraped, { uri: archive, member: tarball });
 }

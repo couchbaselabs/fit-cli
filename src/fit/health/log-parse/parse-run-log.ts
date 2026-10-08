@@ -80,9 +80,6 @@ const SEVERITY = [UNCLASSIFIED, "FatalToRun", "FatalToSession", "FatalToCluster"
 
 const SUITE_ALIAS: Record<string, string> = { func: "functional", "sit:standard-qe": "situational:standard-qe" };
 
-/** The log format a line's failure markers and table use. */
-export type LogFormat = "log-v1" | "log-v2";
-
 export interface ParsedRun {
   preset: string;
   /** The raw suite from the tag, e.g. "functional", "functional:cng", "situational:standard-qe". */
@@ -91,8 +88,6 @@ export interface ParsedRun {
   cluster?: string;
   params: Record<string, string | number | boolean>;
   counts?: ResultCounts;
-  /** Format of this run's table: v2 has an Err column. Undefined when no table was seen. */
-  format?: LogFormat;
   failing: Set<string>;
   /** The names in `failing` marked only 💥 (errored), never ❌ (failed an assertion). */
   errored: Set<string>;
@@ -140,7 +135,6 @@ export interface ParsedLog {
   aborts: Record<string, PresetAbort>;
   /** Presets named by banners or job names, whether or not they produced any tagged line. */
   presetsSeen: string[];
-  sawAnyTag: boolean;
 }
 
 /** Strip the literal-or-real ANSI colour codes gh leaves in the log. */
@@ -156,7 +150,6 @@ export function parseRunLog(text: string): ParsedLog {
   const params = new Map<string, Record<string, string | number | boolean>>();
   const presetsSeen = new Set<string>();
   const aborts: Record<string, PresetAbort> = {};
-  let sawAnyTag = false;
 
   const paramsFor = (preset: string) => {
     let p = params.get(preset);
@@ -215,7 +208,6 @@ export function parseRunLog(text: string): ParsedLog {
         ? "situational"
         : undefined;
     if (!kind) continue;
-    sawAnyTag = true;
     if (!preset) continue; // never guess which preset a line belongs to
 
     const version = fields.find((f) => VER.test(f));
@@ -256,7 +248,6 @@ export function parseRunLog(text: string): ParsedLog {
         failed: Number(rm[4]),
         errored: Number(rm[5] ?? 0),
       };
-      run.format = rm[5] === undefined ? "log-v1" : "log-v2";
     }
   }
 
@@ -275,7 +266,7 @@ export function parseRunLog(text: string): ParsedLog {
     if (run.kind !== "situational") delete run.params.privateEndpoint;
     if (run.suite.includes(":cng")) run.params.gateway = "cng";
   }
-  return { runs: [...runs.values()], driver, performerRevision, aborts, presetsSeen: [...presetsSeen].sort(), sawAnyTag };
+  return { runs: [...runs.values()], driver, performerRevision, aborts, presetsSeen: [...presetsSeen].sort() };
 }
 
 export interface RecordBuildResult {

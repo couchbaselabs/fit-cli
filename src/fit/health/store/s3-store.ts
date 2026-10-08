@@ -51,7 +51,7 @@ export interface OpenedStore {
   /** Where the store really is, for messages: a directory, or s3://bucket/prefix. */
   location: string;
   /** Push the command's changes back (a no-op for a local store). */
-  flush: () => Promise<{ written: number; removed: number }>;
+  flush: () => Promise<void>;
   /** Delete the local mirror (a no-op for a local store). Call it once the command is done. */
   close: () => void;
 }
@@ -112,7 +112,7 @@ async function listKeys(bucket: string, prefix: string): Promise<string[]> {
 export async function openStore(spec: string | undefined, sdk: string, opts: OpenStoreOptions = {}): Promise<OpenedStore> {
   const where = spec ?? defaultHealthStoreRoot();
   if (!where.startsWith("s3://")) {
-    return { store: new LocalHealthStore(where), location: where, flush: () => Promise.resolve({ written: 0, removed: 0 }), close: () => {} };
+    return { store: new LocalHealthStore(where), location: where, flush: () => Promise.resolve(), close: () => {} };
   }
 
   const { bucket, key } = parseS3Uri(where.endsWith("/") ? where : `${where}/`);
@@ -167,7 +167,6 @@ export async function openStore(spec: string | undefined, sdk: string, opts: Ope
       if (written.length || removed.length) {
         fitCliInfo(`fit health: pushed ${written.length} changed objects${removed.length ? ` and deleted ${removed.length}` : ""} to s3://${bucket}/${prefix}`);
       }
-      return { written: written.length, removed: removed.length };
     },
     close: () => rmSync(mirror, { recursive: true, force: true }),
   };

@@ -5,9 +5,8 @@
  * rewriting history.
  *
  * Two sources write the same shape:
- *   - "fit-cli":        emitted from the run's own JUnit results. Every outcome, passes included.
- *   - "run-archive-junit": backfilled from the JUnit results in the run's S3 archive. The same
- *                       content as "fit-cli", recovered after the fact.
+ *   - "run-archive-junit": backfilled from the JUnit results in the run's S3 archive. Every
+ *                       outcome, passes included.
  *   - "run-log-scrape": backfilled from a GitHub Actions log. Only failures are named there -
  *                       and at most 3 per package, see hiddenFailures - so `passesKnown` is false
  *                       and an unlisted test's pass is only inferred.
@@ -15,7 +14,7 @@
 
 export const RUN_RECORD_SCHEMA = 1 as const;
 
-export type RecordSource = "fit-cli" | "run-archive-junit" | "run-log-scrape";
+export type RecordSource = "run-archive-junit" | "run-log-scrape";
 
 /**
  * How the run ended.

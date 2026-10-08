@@ -30,7 +30,6 @@ export interface Series {
   id: string;
   preset: string;
   kind: RunRecord["kind"];
-  suite: string;
   /** Set when the series is one of a run's same-preset records (see RunRecord.variant). */
   variant?: string;
   params: Record<string, string | number | boolean>;
@@ -123,7 +122,6 @@ export function buildSeries(allRecords: RunRecord[]): Series[] {
       id,
       preset: first.preset,
       kind: first.kind,
-      suite: String(first.params.suite ?? first.kind),
       ...(first.variant ? { variant: first.variant } : {}),
       params,
       clusters: Object.fromEntries(dated.map(([d, r]) => [d, r.cluster])),

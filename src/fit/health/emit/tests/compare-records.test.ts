@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { RUN_RECORD_SCHEMA, type RunRecord } from "../../record/run-record.js";
-import { recordFromJunit } from "../build-record.js";
+import { recordFromJunit } from "../archive-junit.js";
 import { junitOutcomes } from "../junit-outcomes.js";
 import { compareRecords } from "../compare-records.js";
 
@@ -29,13 +29,16 @@ const scraped: RunRecord = {
   tests: { LockTest: { f: ["getAndLock"] } },
 };
 
+const ARCHIVE = { uri: "s3://fit-cli/runs/x.zip", member: "a/surefire-reports.tar.gz" };
 const xml = (cases: string) => `<testsuite name="x">${cases}</testsuite>`;
 const tc = (name: string, inner = "") =>
   inner ? `<testcase name="${name}" classname="com.couchbase.LockTest">${inner}</testcase>` : `<testcase name="${name}" classname="com.couchbase.LockTest"/>`;
 
-test("a record built from JUnit is a fit-cli record that names passes, described like the scraped one", () => {
-  const rec = recordFromJunit(junitOutcomes([xml(tc("getAndLock", "<failure/>") + tc("upsert") + tc("skipMe", "<skipped/>"))]), scraped);
-  assert.equal(rec.source, "fit-cli");
+test("a record built from the archive's JUnit names passes, and takes only the run's description from the scraped one", () => {
+  const rec = recordFromJunit(junitOutcomes([xml(tc("getAndLock", "<failure/>") + tc("upsert") + tc("skipMe", "<skipped/>"))]), scraped, ARCHIVE);
+  assert.equal(rec.source, "run-archive-junit");
+  assert.deepEqual(rec.archive, ARCHIVE);
+  assert.equal(rec.parserVersion, undefined);
   assert.equal(rec.passesKnown, true);
   assert.equal(rec.outcome, "tests_failed");
   assert.deepEqual(rec.tests, { LockTest: { f: ["getAndLock"], p: ["upsert"], s: ["skipMe"] } });
@@ -43,14 +46,13 @@ test("a record built from JUnit is a fit-cli record that names passes, described
 });
 
 test("agreement: the same failing tests and the same counts", () => {
-  const rec = recordFromJunit(junitOutcomes([xml(tc("getAndLock", "<failure/>") + tc("upsert") + tc("skipMe", "<skipped/>"))]), scraped);
+  const rec = recordFromJunit(junitOutcomes([xml(tc("getAndLock", "<failure/>") + tc("upsert") + tc("skipMe", "<skipped/>"))]), scraped, ARCHIVE);
   const r = compareRecords(rec, scraped);
   assert.equal(r.agree, true);
-  assert.equal(r.passesNamed, 1);
 });
 
 test("disagreement names the tests each side has alone, and the counts", () => {
-  const rec = recordFromJunit(junitOutcomes([xml(tc("getAndLock") + tc("upsert", "<error/>"))]), scraped);
+  const rec = recordFromJunit(junitOutcomes([xml(tc("getAndLock") + tc("upsert", "<error/>"))]), scraped, ARCHIVE);
   const r = compareRecords(rec, scraped);
   assert.equal(r.agree, false);
   assert.deepEqual(r.onlyJunit, ["LockTest.upsert"]);
@@ -61,7 +63,7 @@ test("disagreement names the tests each side has alone, and the counts", () => {
 
 test("failures the log hid behind fit-cli's per-package cap are explained, not counted as disagreement", () => {
   const log: RunRecord = { ...scraped, counts: { passed: 0, failed: 0, errored: 3, skipped: 0 }, tests: { LockTest: { e: ["getAndLock"] } }, hiddenFailures: { "com.couchbase": 2 } };
-  const rec = recordFromJunit(junitOutcomes([xml(tc("getAndLock", "<error/>") + tc("upsert", "<error/>") + tc("doubleLock", "<error/>"))]), log);
+  const rec = recordFromJunit(junitOutcomes([xml(tc("getAndLock", "<error/>") + tc("upsert", "<error/>") + tc("doubleLock", "<error/>"))]), log, ARCHIVE);
   const r = compareRecords(rec, log);
   assert.deepEqual(r.hiddenByCap, ["LockTest.doubleLock", "LockTest.upsert"]);
   assert.deepEqual(r.onlyJunit, []);
@@ -87,6 +89,7 @@ test("a hidden failure is matched to its own class's package when two classes sh
   const rec = recordFromJunit(
     junitOutcomes([xml(client("bucketFlush", "<failure/>").repeat(3) + client("kvReplace", "<failure/>") + txn("commit"))]),
     log,
+    ARCHIVE,
   );
   const r = compareRecords(rec, log);
   assert.deepEqual(r.hiddenByCap, ["ObservabilityTest.kvReplace"]);
@@ -104,7 +107,7 @@ test("classes that errored as a whole, hidden behind the cap, are explained too"
     tests: { ATest: { classError: true }, BTest: { classError: true }, CTest: { classError: true }, XTest: { classError: true } },
     hiddenFailures: { "com.couchbase.kv": 1 },
   };
-  const rec = recordFromJunit(junitOutcomes([xml(["ATest", "BTest", "CTest", "DTest"].map((n) => cls("kv", n)).join("") + cls("query", "XTest"))]), log);
+  const rec = recordFromJunit(junitOutcomes([xml(["ATest", "BTest", "CTest", "DTest"].map((n) => cls("kv", n)).join("") + cls("query", "XTest"))]), log, ARCHIVE);
   const r = compareRecords(rec, log);
   assert.deepEqual(r.hiddenByCap, ["DTest"]);
   assert.deepEqual(r.classErrorsOnlyJunit, []);
@@ -117,6 +120,6 @@ test("classes that errored as a whole, hidden behind the cap, are explained too"
 });
 
 test("a record built from JUnit keeps the scraped record's variant, so both have one key", () => {
-  const rec = recordFromJunit(junitOutcomes([xml(tc("getAndLock"))]), { ...scraped, variant: "rebalance" });
+  const rec = recordFromJunit(junitOutcomes([xml(tc("getAndLock"))]), { ...scraped, variant: "rebalance" }, ARCHIVE);
   assert.equal(rec.variant, "rebalance");
 });

@@ -366,7 +366,7 @@ const clusterText = (s) => s.clusters.length > 1
   : (s.clusters[0] ? s.clusters[0].cluster : '');
 $('meta').innerHTML = [
   `<span>${fmtY(D.start)} → ${fmtY(D.end)}</span>`,
-  `<span>${[`${D.source.records} run records`, D.source.emitted && `${D.source.emitted} emitted by fit-cli`, D.source.archive && `${D.source.archive} from full JUnit results`, D.source.scraped && `${D.source.scraped} from CI logs`].filter(Boolean).join(' · ')}</span>`,
+  `<span>${[`${D.source.records} run records`, D.source.archive && `${D.source.archive} from full JUnit results`, D.source.scraped && `${D.source.scraped} from CI logs`].filter(Boolean).join(' · ')}</span>`,
   ...FUNC.filter((s) => s.clusters.length > 1).map((s) => `<span>${esc(s.short)}: ${esc(clusterText(s))}</span>`),
 ].join('');
 
@@ -689,8 +689,6 @@ const nightFromHash = () => { const m = /^#night-(\d{4}-\d{2}-\d{2})$/.exec(loca
 window.addEventListener('hashchange', () => showNight(nightFromHash()));
 showNight(nightFromHash());
 
-// The "what this can't tell you" section describes backfilled data; hide it once every record is emitted.
-if (D.source.emitted && !D.source.scraped && !D.source.archive) $('sec-next').hidden = true;
 $('limit-source').innerHTML = D.source.scraped
   ? `<span><b>Some nights come only from CI logs.</b> ${D.source.archive ? `${D.source.archive} of ${D.source.records} run records are rebuilt from the full JUnit results in each run's S3 archive; the other ${D.source.scraped} are read from the CI log, which` : 'Every record is read from the CI log, which'} names only failing tests, and at most 3 per Java package. On those nights a pass is inferred, and an unnamed test in a package with hidden failures is marked unknown.</span>`
   : `<span><b>Records are rebuilt after the fact.</b> Every result comes from the JUnit reports in the runs' S3 archives, not from fit-cli at run time, so a run whose archive has expired can't be recovered.</span>`;

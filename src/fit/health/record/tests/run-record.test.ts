@@ -90,7 +90,6 @@ test("a reparse keeps a run's JUnit records only while their keys survive, and r
   // The parser moved k/b to k/c: the JUnit k/b is stale and the run must be upgraded again.
   const moved = reconcileUpgraded(archive, ["k/a", "k/c"]);
   assert.deepEqual([...moved.keep], ["k/a"]);
-  assert.deepEqual(moved.drop, ["k/b"]);
   assert.equal(moved.archive, undefined);
 });
 

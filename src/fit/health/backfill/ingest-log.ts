@@ -28,12 +28,11 @@ export interface RunMeta {
 export function reconcileUpgraded(
   previousArchive: ArchiveUpgrade | undefined,
   newKeys: readonly string[],
-): { keep: Set<string>; drop: string[]; archive: ArchiveUpgrade | undefined } {
+): { keep: Set<string>; archive: ArchiveUpgrade | undefined } {
   const upgraded = previousArchive?.upgraded ?? [];
   const keep = new Set(upgraded.filter((k) => newKeys.includes(k)));
-  const drop = upgraded.filter((k) => !keep.has(k));
-  // Anything dropped means this run's archive upgrade is incomplete: clear it so backfill redoes it.
-  return { keep, drop, archive: drop.length ? undefined : previousArchive };
+  // Anything not kept means this run's archive upgrade is incomplete: clear it so backfill redoes it.
+  return { keep, archive: keep.size < upgraded.length ? undefined : previousArchive };
 }
 
 /**
@@ -75,9 +74,9 @@ export function ingestLog(store: LocalHealthStore, meta: RunMeta, text: string, 
   // A record already upgraded from the run's JUnit archive is better than anything the log
   // can say, so a reparse keeps it rather than overwriting it with the scraped version -
   // as long as the new parse still produces its key.
-  const newKeys = result.parseError ? [] : result.records.map(recordKey);
-  const { keep, archive } = reconcileUpgraded(previous?.archive, newKeys);
-  const keys = result.parseError ? [] : result.records.map((r) => (keep.has(recordKey(r)) ? recordKey(r) : store.writeRecord(r)));
+  // (A parse error yields no records, so a run with one keeps none.)
+  const { keep, archive } = reconcileUpgraded(previous?.archive, result.records.map(recordKey));
+  const keys = result.records.map((r) => (keep.has(recordKey(r)) ? recordKey(r) : store.writeRecord(r)));
   // A reparse must not leave behind a record the new parse no longer produces, JUnit or not.
   for (const stale of new Set([...(previous?.records ?? []), ...(previous?.archive?.upgraded ?? [])])) {
     if (!keys.includes(stale)) store.remove(stale);

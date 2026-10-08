@@ -32,10 +32,6 @@ export class LocalHealthStore {
     return p;
   }
 
-  has(key: string): boolean {
-    return existsSync(this.path(key));
-  }
-
   read(key: string): Buffer | undefined {
     const p = this.path(key);
     return existsSync(p) ? readFileSync(p) : undefined;

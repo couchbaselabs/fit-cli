@@ -1,9 +1,5 @@
-#!/usr/bin/env node
 /**
  * Read single members out of a zip on S3 with ranged GETs, without downloading the zip.
- *
- *   bun src/fit/health/emit/s3-zip.ts list s3://fit-cli/runs/20260928-001945-4510.zip [--grep surefire]
- *   bun src/fit/health/emit/s3-zip.ts get  s3://fit-cli/runs/20260928-001945-4510.zip <member> <out file>
  *
  * The run archives in s3://fit-cli/runs/ reach 1.5 GB, but what `fit health` needs from one
  * (surefire-reports.tar.gz) is a few MB. A zip keeps its index - the central directory - at
@@ -11,10 +7,8 @@
  * handled, since archiver writes it for large archives.
  */
 import { GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
-import { writeFileSync } from "node:fs";
 import { inflateRawSync } from "node:zlib";
 import { s3Client } from "../../../cloud/util/aws/aws-clients.js";
-import { isMain, runCli } from "../../../util/non-fit/cli.js";
 
 export interface ZipEntry {
   name: string;
@@ -141,30 +135,4 @@ export class S3Zip {
     const bytes = await getRange(this.bucket, this.key, entry.localHeaderOffset, entry.localHeaderOffset + 30 + 0xffff * 2 + entry.compressedSize);
     return extractMember(entry, bytes);
   }
-}
-
-if (isMain(import.meta.url)) {
-  const [cmd, uri, member, out] = process.argv.slice(2);
-  if (!cmd || cmd === "--help" || cmd === "-h" || !uri) {
-    console.log(`Read members of a zip on S3 without downloading it.
-
-Usage:
-  bun src/fit/health/emit/s3-zip.ts list <s3://bucket/key.zip> [--grep <text>]
-  bun src/fit/health/emit/s3-zip.ts get  <s3://bucket/key.zip> <member> <out file>`);
-    process.exit(cmd ? 0 : 1);
-  }
-  runCli(async () => {
-    const zip = await S3Zip.open(uri);
-    if (cmd === "list") {
-      const grep = process.argv.indexOf("--grep");
-      const filter = grep >= 0 ? process.argv[grep + 1] : undefined;
-      for (const e of zip.entries.filter((x) => !filter || x.name.includes(filter))) console.log(`${String(e.size).padStart(12)}  ${e.name}`);
-      console.log(`${zip.entries.length} entries`);
-    } else if (cmd === "get") {
-      const entry = zip.entries.find((e) => e.name === member);
-      if (!entry) throw new Error(`${member} is not in ${uri}`);
-      writeFileSync(out, await zip.read(entry));
-      console.log(`wrote ${out}`);
-    }
-  });
 }

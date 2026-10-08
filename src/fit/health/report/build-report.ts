@@ -100,8 +100,6 @@ export interface ReportSeries {
   degraded: string[];
   /** Distinct failing tests per night; null on a degraded night, where a count would mislead. */
   perNight: Record<string, number | null>;
-  /** Tests per night from the results table. */
-  totals: Record<string, number>;
   /** Per night: how many tests ran, and how they did (see NightTests). */
   testCounts: Record<string, NightTests>;
   /**
@@ -150,7 +148,7 @@ export interface HealthReport {
   changes?: Record<string, Record<string, ChangeSummary>>;
   /** The same tests on the other SDKs, when the reports were compared (see cross.ts). */
   cross?: Record<string, Record<string, CrossSummary>>;
-  source: { records: number; scraped: number; archive: number; emitted: number; unreadableRuns: { date: string; runId: number; status: string; reason?: string }[] };
+  source: { records: number; scraped: number; archive: number; unreadableRuns: { date: string; runId: number; status: string; reason?: string }[] };
 }
 
 const PRESET_ORDER = ["op-onprem-func", "op-cng-func", "op-capella-func", "op-capella-sit", "op-capella-pe-sit", "op-cng-sit"];
@@ -220,11 +218,8 @@ function reportSeries(s: Series, end: string, notes: ReportNotes): ReportSeries 
       if (isFailure(x) && n !== null) perNight[s.ran[i]] = n + 1;
     });
   }
-  const totals: Record<string, number> = {};
   const testCounts: Record<string, NightTests> = {};
   for (const n of s.nights) {
-    const c = n.record.counts!;
-    totals[n.date] = c.passed + c.failed + c.skipped + c.errored;
     testCounts[n.date] = nightTests(n.record);
   }
   const lastNight = s.ran.at(-1);
@@ -254,7 +249,6 @@ function reportSeries(s: Series, end: string, notes: ReportNotes): ReportSeries 
     aborted: s.aborted,
     degraded: s.degraded,
     perNight,
-    totals,
     testCounts,
     ...(lastNight ? { latest: { date: lastNight, ...testCounts[lastNight], usable: lastNight === end && !s.degraded.includes(lastNight) } } : {}),
     counts,
@@ -391,7 +385,6 @@ export function buildHealthReport(
       records: inRange.length,
       scraped: inRange.filter((r) => r.source === "run-log-scrape").length,
       archive: inRange.filter((r) => r.source === "run-archive-junit").length,
-      emitted: inRange.filter((r) => r.source === "fit-cli").length,
       unreadableRuns: manifestsInRange
         .filter((m) => m.status !== "ok")
         .map((m) => ({ date: m.date, runId: m.runId, status: m.status, reason: m.reason }))

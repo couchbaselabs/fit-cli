@@ -7,10 +7,9 @@
  * `fit health check` runs this on each SDK's most recent nights to confirm the log parser
  * reads that SDK's output correctly.
  */
-import { failingTests, recordKey, type RunRecord } from "../record/run-record.js";
+import { failingTests, type RunRecord } from "../record/run-record.js";
 
 export interface RecordComparison {
-  key: string;
   label: string;
   agree: boolean;
   /** Failing in JUnit but not named in the log, and the reverse. */
@@ -26,13 +25,12 @@ export interface RecordComparison {
   countsJunit?: RunRecord["counts"];
   countsLog?: RunRecord["counts"];
   countsAgree: boolean;
-  /** Class-level errors: the log keeps them apart from tests, so they are compared separately. */
-  classErrorsJunit: string[];
-  classErrorsLog: string[];
-  /** Class errors one side has alone, after those hidden by the cap (which are in hiddenByCap). */
+  /**
+   * Class-level errors one side has alone, after those hidden by the cap (which are in
+   * hiddenByCap). The log keeps them apart from tests, so they are compared separately.
+   */
   classErrorsOnlyJunit: string[];
   classErrorsOnlyLog: string[];
-  passesNamed: number;
 }
 
 const classErrors = (r: RunRecord) => Object.entries(r.tests).filter(([, o]) => o.classError).map(([c]) => c).sort();
@@ -43,12 +41,12 @@ const classErrors = (r: RunRecord) => Object.entries(r.tests).filter(([, o]) => 
  */
 export const asLogged = (id: string) => id.replace(/^[^.]*\//, "");
 
-export function compareRecords(emitted: RunRecord, scraped: RunRecord): RecordComparison {
-  const j = new Set(failingTests(emitted).map(asLogged));
+export function compareRecords(junit: RunRecord, scraped: RunRecord): RecordComparison {
+  const j = new Set(failingTests(junit).map(asLogged));
   const l = new Set(failingTests(scraped));
   const missing = [...j].filter((t) => !l.has(t)).sort();
   // Class-level errors, by the name the log prints (a reused class name is one name there).
-  const cj = [...new Set(classErrors(emitted).map(asLogged))].sort();
+  const cj = [...new Set(classErrors(junit).map(asLogged))].sort();
   const clog = classErrors(scraped);
   const missingClasses = cj.filter((c) => !clog.includes(c));
   const hidden = scraped.hiddenFailures ?? {};
@@ -58,11 +56,11 @@ export function compareRecords(emitted: RunRecord, scraped: RunRecord): RecordCo
   // be given the other class's package - so a logged name can have more than one package.
   const pkgsOf = new Map<string, Set<string>>();
   const addPkg = (cls: string, logged: string) => {
-    const p = emitted.packages?.[cls];
+    const p = junit.packages?.[cls];
     if (p) (pkgsOf.get(logged) ?? pkgsOf.set(logged, new Set()).get(logged)!).add(p);
   };
-  for (const t of failingTests(emitted)) addPkg(t.slice(0, t.indexOf(".")), asLogged(t));
-  for (const c of classErrors(emitted)) addPkg(c, asLogged(c));
+  for (const t of failingTests(junit)) addPkg(t.slice(0, t.indexOf(".")), asLogged(t));
+  for (const c of classErrors(junit)) addPkg(c, asLogged(c));
   // The cap counts a class error like a failing test: both are a failure line it didn't print.
   const unnamed = [...missing, ...missingClasses];
   const byPkg = new Map<string, string[]>();
@@ -81,11 +79,10 @@ export function compareRecords(emitted: RunRecord, scraped: RunRecord): RecordCo
   const onlyLog = [...l].filter((t) => !j.has(t)).sort();
   const classErrorsOnlyJunit = missingClasses.filter((c) => !hiddenByCap.includes(c));
   const classErrorsOnlyLog = clog.filter((c) => !cj.includes(c));
-  const ce = emitted.counts;
+  const ce = junit.counts;
   const cl = scraped.counts;
   const countsAgree = !!ce && !!cl && ce.passed === cl.passed && ce.failed === cl.failed && ce.errored === cl.errored && ce.skipped === cl.skipped;
   return {
-    key: recordKey(scraped),
     label: `${scraped.date} ${scraped.preset} ${scraped.kind}${scraped.cluster ? ` @${scraped.cluster}` : ""}`,
     agree: onlyJunit.length === 0 && onlyLog.length === 0 && countsAgree && classErrorsOnlyJunit.length === 0 && classErrorsOnlyLog.length === 0,
     onlyJunit,
@@ -94,10 +91,7 @@ export function compareRecords(emitted: RunRecord, scraped: RunRecord): RecordCo
     countsJunit: ce,
     countsLog: cl,
     countsAgree,
-    classErrorsJunit: cj,
-    classErrorsLog: clog,
     classErrorsOnlyJunit,
     classErrorsOnlyLog,
-    passesNamed: Object.values(emitted.tests).reduce((a, o) => a + (o.p?.length ?? 0), 0),
   };
 }

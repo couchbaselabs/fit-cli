@@ -253,7 +253,7 @@ export function buildTriageReport(report: HealthReport, records: RunRecord[], no
     sdk: report.sdk,
     generatedAt: report.generatedAt,
     window: { start: report.start, end: report.end, nights: report.dates.length, classificationDays: WINDOW_DAYS, recentDays: RECENT_DAYS },
-    coverage: { records: report.source.records, fromJunit: report.source.archive + report.source.emitted, fromLog: report.source.scraped },
+    coverage: { records: report.source.records, fromJunit: report.source.archive, fromLog: report.source.scraped },
     blackout: report.blackout,
     unreadableRuns: report.source.unreadableRuns,
     series: report.series.map((rs) => ({
