@@ -1066,6 +1066,7 @@ async function allocate(
   loadBalanced: boolean,
   privateEndpoint = false,
   capellaEnvironment?: string,
+  purpose?: string,
 ): Promise<SetupDeclarativeClusterResult> {
   const resolvedConfig = {
     ...config,
@@ -1087,6 +1088,7 @@ async function allocate(
       cycleDir,
       cng,
       capellaEnvironment,
+      purpose,
     );
     console.log("\n✓ setup-cluster: cbdinocluster allocated the cluster");
   } catch (err) {
@@ -1215,6 +1217,7 @@ export async function setupDeclarativeCluster(plan: {
    * Defaults to {@link DEFAULT_CAPELLA_ENV} so standalone/manual callers still get a best-effort link.
    */
   capellaEnvironment?: string;
+  purpose?: string;
 }, execution: ClusterCommandExecutor = localClusterCommandExecutor(), cycleDir: string = ensureRunDir()): Promise<SetupDeclarativeClusterResult> {
   const cng = plan.cng ?? false;
   // A self-managed Enterprise Analytics cluster is fronted by an nginx load
@@ -1359,6 +1362,7 @@ export async function setupDeclarativeCluster(plan: {
     loadBalanced,
     plan.capella?.privateEndpoint !== undefined,
     effectiveDeployer === "cloud" ? (plan.capellaEnvironment ?? DEFAULT_CAPELLA_ENV) : undefined,
+    plan.purpose,
   );
   return { ...allocated, ...poolResult };
 }

@@ -67,13 +67,13 @@ test("allocateCluster tags a local allocate with --purpose", async () => {
   assert.ok(executor.capturedArgs.includes(`--purpose=${allocatePurpose()}`));
 });
 
-test("allocateCluster tags a remote allocate with --purpose too", async () => {
+test("allocateCluster tags a remote allocate with the purpose it is given", async () => {
   const cycleDir = join(ensureRunDir(), "instances", "0", "clusters", "0");
   const executor = fakeExecutor("remote");
-  await allocateCluster("cbdinocluster", "def", "cloud", executor, cycleDir);
+  await allocateCluster("cbdinocluster", "def", "cloud", executor, cycleDir, false, undefined, "fitcli-20260101-000000-abcd");
   assert.ok(executor.capturedArgs.includes("allocate"));
   assert.deepEqual(
     executor.capturedArgs.filter((arg) => arg.startsWith("--purpose")),
-    [`--purpose=${allocatePurpose()}`],
+    ["--purpose=fitcli-20260101-000000-abcd"],
   );
 });

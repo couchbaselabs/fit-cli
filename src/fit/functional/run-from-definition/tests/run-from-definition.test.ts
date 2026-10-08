@@ -24,6 +24,7 @@ import {
 import { formatRunLabel } from "../../../shared/util/run-labels.js";
 import { loadEnvironments } from "../../../util/environments.js";
 import { allocatePurpose } from "../../../../cluster/cluster-create/allocate-purpose.js";
+import type { RunState } from "../resume-state.js";
 
 function functionalCycle(): ResolvedFunctionalExecutionGroup {
   const sdk = sdkByValue("java");
@@ -197,6 +198,21 @@ test("setupCluster leaves the iterations unchanged when allocation fails", async
   assert.deepEqual(result.group.sessions.flatMap((s) => s.runs.map((r) => r.cluster)), [undefined, undefined]);
 });
 
+test("setupCluster hands teardown the key pool when allocation fails after init created it", async () => {
+  const result = await setupCluster(functionalCycle(), executor(), () =>
+    Promise.resolve({
+      allocated: false,
+      cbdinocluster: "cbdinocluster",
+      capellaKeyPool: true,
+      artifacts: [],
+      details: [],
+    }),
+  );
+
+  assert.equal(result.clusterState, undefined);
+  assert.deepEqual(result.capellaKeyPool, { cbdinoclusterCommand: "cbdinocluster" });
+});
+
 test("cbdinoclusterSetupFailed flags a missing cycle cluster after the cluster phase ran", () => {
   assert.equal(cbdinoclusterSetupFailed(functionalCycle(), true), true);
 
@@ -316,16 +332,17 @@ test("runTests gives FIT the run stamp in resourceCreation.cluster.cbdinocluster
 });
 
 test("runStamp prefers the stamp saved by the original run", () => {
-  assert.equal(
-    runStamp({ cluster: cluster(), allocated: true, purpose: "fitcli-20260101-000000-abcd" }),
-    "fitcli-20260101-000000-abcd",
-  );
+  assert.equal(runStamp({ ...savedRunState(), purpose: "fitcli-20260101-000000-abcd" }), "fitcli-20260101-000000-abcd");
 });
 
 test("runStamp falls back to this run's stamp", () => {
   assert.equal(runStamp(undefined), allocatePurpose());
-  assert.equal(runStamp({ cluster: cluster(), allocated: false }), allocatePurpose());
+  assert.equal(runStamp(savedRunState()), allocatePurpose());
 });
+
+function savedRunState(): RunState {
+  return { version: 1, executionGroupIndex: 0, target: { kind: "local" }, performers: [] };
+}
 
 test("runTests leaves resourceCreation off for a Capella cbdinocluster run (no Docker deployer)", async () => {
   let receivedFitConfig: { config?: Record<string, unknown> } | undefined;
@@ -473,6 +490,7 @@ function teardownInputs(overrides: Partial<Parameters<typeof teardownRun>[0]> = 
     teardown: { kind: "local" },
     forceLocalhost: false,
     forceAws: false,
+    purpose: "fitcli-20260101-000000-abcd",
     performers: [],
     performerStates: [],
     externalServices: [],
