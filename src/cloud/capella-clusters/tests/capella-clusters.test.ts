@@ -133,6 +133,6 @@ test("capellaInitEnv forwards CAPELLA_PROJECT_ID when the project id is set", ()
   assert.equal(env.CAPELLA_OID, "oid-dev");
 });
 
-test("capellaInitEnv leaves CAPELLA_PROJECT_ID out when the project id is unset", () => {
-  assert.equal("CAPELLA_PROJECT_ID" in capellaInitEnv(CAPELLA), false);
+test("capellaInitEnv clears CAPELLA_PROJECT_ID when the project id is unset", () => {
+  assert.equal(capellaInitEnv(CAPELLA).CAPELLA_PROJECT_ID, "");
 });

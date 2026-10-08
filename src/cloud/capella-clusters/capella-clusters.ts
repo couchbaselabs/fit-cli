@@ -178,7 +178,7 @@ export function capellaInitEnv(capella: ResolvedCapellaConfig): Record<string, s
     CAPELLA_API_SECRET: capella.apiSecret,
     ...(capella.internalSupportToken ? { CAPELLA_INTERNAL_SUPPORT_TOKEN: capella.internalSupportToken } : {}),
     ...(capella.overrideToken ? { CAPELLA_OVERRIDE_TOKEN: capella.overrideToken } : {}),
-    ...(capella.projectId ? { CAPELLA_PROJECT_ID: capella.projectId } : {}),
+    CAPELLA_PROJECT_ID: capella.projectId ?? "",
   };
 }
 
