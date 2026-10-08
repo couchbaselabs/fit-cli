@@ -26,6 +26,7 @@ import { rawLogKey, type RunManifest } from "../record/run-manifest.js";
 import { recordKey, type RunRecord } from "../record/run-record.js";
 import { type LocalHealthStore } from "../store/health-store.js";
 import { openStore } from "../store/s3-store.js";
+import { STORE_OPTION, parseHealthArgs } from "../cli-args.js";
 
 export interface CheckReport {
   sdk: string;
@@ -117,24 +118,24 @@ export function renderChecks(c: CheckReport): string {
 }
 
 export async function runChecksCommand(argv: string[], prefix: string): Promise<Partial<RunOutput>> {
-  if (argv.includes("--help") || argv.includes("-h") || argv.length === 0) {
-    console.log(`Check that an SDK's backfilled records can be trusted (identity, coverage, agreement).
+  const usage = `Check that an SDK's backfilled records can be trusted (identity, coverage, agreement).
 
 Usage:
   ${prefix} <sdk> [--store <dir>] [--nights N]
 
-  --nights  How many recent nights to cross-check JUnit against the log (default 3).`);
+  --nights  How many recent nights to cross-check JUnit against the log (default 3).`;
+  const { values, sdk, help } = parseHealthArgs(argv, { ...STORE_OPTION, nights: { type: "string" } }, usage);
+  if (help || argv.length === 0) {
+    console.log(usage);
     return {};
   }
-  const opt = (name: string) => {
-    const i = argv.indexOf(`--${name}`);
-    return i >= 0 ? argv[i + 1] : undefined;
-  };
-  const sdk = argv.find((a, i) => !a.startsWith("-") && !argv[i - 1]?.startsWith("--"))!;
-  const { store, close } = await openStore(opt("store") ?? process.env.FIT_HEALTH_STORE, sdk);
+  if (!sdk) throw new Error(`Name an SDK.\n\n${usage}`);
+  const nights = Number(values.nights ?? 3);
+  if (!Number.isInteger(nights) || nights < 1) throw new Error(`--nights must be a whole number, at least 1; got ${values.nights}`);
+  const { store, close } = await openStore(values.store ?? process.env.FIT_HEALTH_STORE, sdk);
   let c: CheckReport;
   try {
-    c = checkStore(store, sdk, Number(opt("nights") ?? 3));
+    c = checkStore(store, sdk, nights);
   } finally {
     close();
   }

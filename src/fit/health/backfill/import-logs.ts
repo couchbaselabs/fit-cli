@@ -22,6 +22,7 @@ import { healthOptIn } from "../registry/health-opt-ins.js";
 import { defaultHealthStoreRoot } from "../store/health-store.js";
 import { openStore } from "../store/s3-store.js";
 import { ingestLog } from "./ingest-log.js";
+import { STORE_OPTION, parseHealthArgs } from "../cli-args.js";
 
 interface GhRunListEntry {
   databaseId: number;
@@ -47,20 +48,15 @@ Only scheduled runs are imported. Runs already stored are skipped.`;
 }
 
 export async function runImportLogsCommand(argv: string[], prefix: string): Promise<Partial<RunOutput>> {
-  if (argv.includes("--help") || argv.includes("-h") || argv.length === 0) {
+  const { values, sdk, help } = parseHealthArgs(argv, { ...STORE_OPTION, dir: { type: "string" }, runs: { type: "string" } }, importLogsHelp(prefix));
+  if (help || argv.length === 0) {
     console.log(importLogsHelp(prefix));
     return {};
   }
-  const opt = (name: string) => {
-    const i = argv.indexOf(`--${name}`);
-    return i >= 0 ? argv[i + 1] : undefined;
-  };
-  const sdk = argv.find((a, i) => !a.startsWith("-") && !argv[i - 1]?.startsWith("--"));
-  const dir = opt("dir");
-  const runsFile = opt("runs");
+  const { dir, runs: runsFile } = values;
   if (!sdk || !dir || !runsFile) throw new Error(`Name an SDK, --dir and --runs.\n\n${importLogsHelp(prefix)}`);
   const optIn = healthOptIn(sdk);
-  const opened = await openStore(opt("store") ?? process.env.FIT_HEALTH_STORE, sdk);
+  const opened = await openStore(values.store ?? process.env.FIT_HEALTH_STORE, sdk);
   const store = opened.store;
 
   const runs = new Map<number, GhRunListEntry>(

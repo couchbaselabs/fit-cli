@@ -32,6 +32,7 @@ import { renderMarkdown } from "./render/render-markdown.js";
 import { appendFileSync } from "node:fs";
 import { postDigest } from "./post-digest.js";
 import { healthOptIn } from "../registry/health-opt-ins.js";
+import { STORE_OPTION, parseHealthArgs } from "../cli-args.js";
 
 export function reportHelp(prefix: string): string {
   return `Report which FIT tests fail consistently or intermittently for an SDK, from its stored run records.
@@ -68,40 +69,57 @@ export type SlackDecision =
  * automatically in CI (GITHUB_ACTIONS), but a local run must ask with --slack, so someone
  * trying the report on a laptop never posts to the team's channel by accident.
  */
-export function slackDecision(argv: string[], configuredChannel: string | undefined, env: NodeJS.ProcessEnv): SlackDecision {
-  const i = argv.indexOf("--slack-channel");
-  const override = i >= 0 ? argv[i + 1] : undefined;
+export interface SlackFlags {
+  slack?: boolean;
+  "no-slack"?: boolean;
+  "slack-dry-run"?: boolean;
+  "slack-channel"?: string;
+}
+
+export function slackDecision(flags: SlackFlags, configuredChannel: string | undefined, env: NodeJS.ProcessEnv): SlackDecision {
+  const override = flags["slack-channel"];
   const channel = override ?? configuredChannel;
-  if (argv.includes("--slack-dry-run")) return { post: false, dryRun: true, why: "dry run", channel };
-  if (argv.includes("--no-slack")) return { post: false, dryRun: false, why: "--no-slack given" };
+  if (flags["slack-dry-run"]) return { post: false, dryRun: true, why: "dry run", channel };
+  if (flags["no-slack"]) return { post: false, dryRun: false, why: "--no-slack given" };
   if (!channel) return { post: false, dryRun: false, why: "no Slack channel configured for this SDK (set one with `fit health settings <sdk> --slack-channel <id>`)" };
   const ci = env.GITHUB_ACTIONS === "true";
-  if (!ci && !argv.includes("--slack") && !override) {
+  if (!ci && !flags.slack && !override) {
     return { post: false, dryRun: false, why: `a channel is configured, but this is a local run - pass --slack to post to ${channel}` };
   }
   return { post: true, channel };
 }
 
 export async function runReportCommand(argv: string[], prefix: string): Promise<Partial<RunOutput>> {
-  if (argv.includes("--help") || argv.includes("-h") || argv.length === 0) {
+  const { values, sdk, help } = parseHealthArgs(
+    argv,
+    {
+      ...STORE_OPTION,
+      notes: { type: "string" },
+      days: { type: "string" },
+      end: { type: "string" },
+      out: { type: "string" },
+      "no-changes": { type: "boolean" },
+      slack: { type: "boolean" },
+      "no-slack": { type: "boolean" },
+      "slack-dry-run": { type: "boolean" },
+      "slack-channel": { type: "string" },
+    },
+    reportHelp(prefix),
+  );
+  if (help || argv.length === 0) {
     console.log(reportHelp(prefix));
     return {};
   }
-  const opt = (name: string) => {
-    const i = argv.indexOf(`--${name}`);
-    return i >= 0 ? argv[i + 1] : undefined;
-  };
-  const sdk = argv.find((a, i) => !a.startsWith("-") && !argv[i - 1]?.startsWith("--"));
   if (!sdk) throw new Error(reportHelp(prefix));
   // Everything the report needs is read up front, so the store is closed straight after.
-  const { store, location, close } = await openStore(opt("store") ?? process.env.FIT_HEALTH_STORE, sdk, { skipRawLogs: true });
+  const { store, location, close } = await openStore(values.store ?? process.env.FIT_HEALTH_STORE, sdk, { skipRawLogs: true });
   let records: RunRecord[], manifests: RunManifest[], notes: ReportNotes, settings: HealthSettings;
   try {
     records = store.readRecords(sdk);
     if (records.length === 0) throw new Error(`No run records for ${sdk} in ${location}. Run \`fit health backfill ${sdk}\` first.`);
     manifests = store.list(`${sdk}/manifests`).map((k) => JSON.parse(store.read(k)!.toString("utf8")) as RunManifest);
     // Notes live in the store (fit health notes); --notes reads a file instead, for trying them out.
-    const notesFile = opt("notes");
+    const notesFile = values.notes;
     notes = notesFile ? (JSON.parse(readFileSync(notesFile, "utf8")) as ReportNotes) : readNotes(store, sdk);
     // Where the output goes (fit health settings), from the same store.
     settings = readSettings(store, sdk);
@@ -109,10 +127,10 @@ export async function runReportCommand(argv: string[], prefix: string): Promise<
     close();
   }
 
-  const daysArg = opt("days");
+  const daysArg = values.days;
   const days = daysArg === undefined ? undefined : Number(daysArg);
   if (days !== undefined && (!Number.isInteger(days) || days < 1)) throw new Error(`--days must be a whole number of days, at least 1; got ${daysArg}`);
-  const report = buildHealthReport(sdk, records, manifests, { end: opt("end"), days, notes });
+  const report = buildHealthReport(sdk, records, manifests, { end: values.end, days, notes });
   printWithoutTimestamps(renderTerminal(report));
 
   const sdkName = sdkByValue(sdk)?.name ?? sdk;
@@ -124,7 +142,7 @@ export async function runReportCommand(argv: string[], prefix: string): Promise<
   const triage = buildTriageReport(report, records, notes, manifests);
   // What changed around each change point, in the SDK and in the FIT driver: needs GitHub.
   const optIn = healthOptIn(sdk);
-  if (optIn && !argv.includes("--no-changes")) {
+  if (optIn && !values["no-changes"]) {
     const r = await analyseChanges(triage, { manifests, optIn, source: githubChanges });
     fitCliInfo(`Changes: looked up the SDK and driver commits for ${r.analysed} findings${r.failed ? ` (${r.failed} couldn't be: see triage.json)` : ""}.`);
     report.changes = summariseChanges(triage);
@@ -139,13 +157,13 @@ export async function runReportCommand(argv: string[], prefix: string): Promise<
   const slack = settings.slack;
   const digest = renderSlackDigest(report, sdkName, reportUrlFor(sdk, settings));
   writeFileSync(digestPath, `${digest.headline}\n\n--- thread ---\n${digest.thread}\n`);
-  const out = opt("out");
+  const out = values.out;
   if (out) {
     mkdirSync(out, { recursive: true });
     for (const p of [jsonPath, htmlPath, digestPath, triagePath]) copyFileSync(p, join(out, basename(p)));
   }
   const details = [{ label: "Open", value: `open ${htmlPath}` }];
-  const decision = slackDecision(argv, slack?.channel, process.env);
+  const decision = slackDecision(values, slack?.channel, process.env);
   if (decision.post) {
     // Posting is a side effect of the report, never a reason for it to fail.
     try {

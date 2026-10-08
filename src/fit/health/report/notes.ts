@@ -13,6 +13,7 @@ import { fitCliInfo, printWithoutTimestamps } from "../../../util/non-fit/fit-cl
 import type { LocalHealthStore } from "../store/health-store.js";
 import { openStore } from "../store/s3-store.js";
 import type { ReportNotes } from "./build-report.js";
+import { STORE_OPTION, parseHealthArgs } from "../cli-args.js";
 
 export const notesKey = (sdk: string) => `${sdk}/notes.json`;
 
@@ -35,23 +36,21 @@ export function validateNotes(n: unknown): string[] {
 }
 
 export async function runNotesCommand(argv: string[], prefix: string): Promise<Partial<RunOutput>> {
-  if (argv.includes("--help") || argv.includes("-h") || argv.length === 0) {
-    console.log(`Show or set an SDK's hand-written report notes (known fixes), kept in the store.
+  const usage = `Show or set an SDK's hand-written report notes (known fixes), kept in the store.
 
 Usage:
   ${prefix} <sdk> [--set <file.json5>] [--store <dir|s3://bucket/prefix/>]
 
 A notes file looks like:
-  { fixes: { "SetAuthenticatorTest.canSetAuthenticator": { ticket: "NCBC-4304", text: "..." } } }`);
+  { fixes: { "SetAuthenticatorTest.canSetAuthenticator": { ticket: "NCBC-4304", text: "..." } } }`;
+  const { values, sdk, help } = parseHealthArgs(argv, { ...STORE_OPTION, set: { type: "string" } }, usage);
+  if (help || argv.length === 0) {
+    console.log(usage);
     return {};
   }
-  const opt = (name: string) => {
-    const i = argv.indexOf(`--${name}`);
-    return i >= 0 ? argv[i + 1] : undefined;
-  };
-  const sdk = argv.find((a, i) => !a.startsWith("-") && !argv[i - 1]?.startsWith("--"))!;
-  const file = opt("set");
-  const opened = await openStore(opt("store") ?? process.env.FIT_HEALTH_STORE, sdk, { skipRawLogs: true });
+  if (!sdk) throw new Error(`Name an SDK.\n\n${usage}`);
+  const file = values.set;
+  const opened = await openStore(values.store ?? process.env.FIT_HEALTH_STORE, sdk, { skipRawLogs: true });
   try {
     if (file) {
       const notes = JSON5.parse<unknown>(readFileSync(file, "utf8"));

@@ -28,6 +28,7 @@ import { listNightlyRuns, type CiRun } from "./list-runs.js";
 import { upgradeFromArchive } from "./upgrade-from-archive.js";
 import { checkStore, renderChecks } from "./checks.js";
 import { printWithoutTimestamps } from "../../../util/non-fit/fit-cli-log.js";
+import { STORE_OPTION, parseHealthArgs } from "../cli-args.js";
 
 /** A fetch error that means GitHub no longer has the log, so retrying is pointless. */
 export function isExpiredLogError(message: string): boolean {
@@ -163,27 +164,19 @@ export interface BackfillArgs {
   skipArchives: boolean;
 }
 
-export function parseBackfillArgs(argv: string[]): BackfillArgs {
-  const out: { sdk?: string; limit?: number; store?: string; dryRun: boolean; skipArchives: boolean } = { dryRun: false, skipArchives: false };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--limit") out.limit = Number(argv[++i]);
-    else if (a === "--store") out.store = argv[++i];
-    else if (a === "--dry-run") out.dryRun = true;
-    else if (a === "--no-archives") out.skipArchives = true;
-    else if (!a.startsWith("-") && !out.sdk) out.sdk = a;
-    else throw new Error(`Unexpected argument: ${a}`);
-  }
-  if (out.limit !== undefined && !(Number.isInteger(out.limit) && out.limit > 0)) throw new Error("--limit must be a positive integer");
-  return out;
+export function parseBackfillArgs(argv: string[], usage = ""): BackfillArgs & { help: boolean } {
+  const { values, sdk, help } = parseHealthArgs(argv, { ...STORE_OPTION, limit: { type: "string" }, "dry-run": { type: "boolean" }, "no-archives": { type: "boolean" } }, usage);
+  const limit = values.limit === undefined ? undefined : Number(values.limit);
+  if (limit !== undefined && !(Number.isInteger(limit) && limit > 0)) throw new Error("--limit must be a positive integer");
+  return { sdk, limit, store: values.store, dryRun: values["dry-run"] === true, skipArchives: values["no-archives"] === true, help };
 }
 
 export async function runBackfillCommand(argv: string[], prefix: string): Promise<Partial<RunOutput>> {
-  if (argv.includes("--help") || argv.includes("-h")) {
+  const args = parseBackfillArgs(argv, backfillHelp(prefix));
+  if (args.help) {
     console.log(backfillHelp(prefix));
     return {};
   }
-  const args = parseBackfillArgs(argv);
   if (!args.sdk) throw new Error(`Name an SDK.\n\n${backfillHelp(prefix)}`);
   const opened = await openStore(args.store ?? process.env.FIT_HEALTH_STORE, args.sdk);
   try {

@@ -27,6 +27,7 @@ import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { isMain } from "../../../util/non-fit/cli.js";
+import { parseHealthArgs } from "../cli-args.js";
 import {
   RUN_RECORD_SCHEMA,
   addOutcome,
@@ -415,26 +416,22 @@ export function readLogFile(path: string): string {
 }
 
 if (isMain(import.meta.url)) {
-  const args = process.argv.slice(2);
-  if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
-    console.log(`Parse a GitHub Actions run log into fit health run records (prints them; writes nothing).
+  const usage = `Parse a GitHub Actions run log into fit health run records (prints them; writes nothing).
 
 Usage:
   bun src/fit/health/log-parse/parse-run-log.ts <log file[.gz]> [--sdk <sdk>] [--date YYYY-MM-DD]
 
   --sdk    SDK the log belongs to (default: dotnet)
   --date   UTC date of the run (default: today). Situational results before
-           ${SITUATIONAL_TRUSTED_FROM} are skipped, so the date matters.`);
-    process.exit(0);
+           ${SITUATIONAL_TRUSTED_FROM} are skipped, so the date matters.`;
+  const { values, sdk: file, help } = parseHealthArgs(process.argv.slice(2), { sdk: { type: "string" }, date: { type: "string" } }, usage);
+  if (help || !file) {
+    console.log(usage);
+    process.exit(help ? 0 : 1);
   }
-  const opt = (name: string) => {
-    const i = args.indexOf(`--${name}`);
-    return i >= 0 ? args[i + 1] : undefined;
-  };
-  const file = args[0];
   const result = buildRecords(parseRunLog(readLogFile(file)), {
-    sdk: opt("sdk") ?? "dotnet",
-    date: opt("date") ?? new Date().toISOString().slice(0, 10),
+    sdk: values.sdk ?? "dotnet",
+    date: values.date ?? new Date().toISOString().slice(0, 10),
     ci: { repo: "unknown", runId: 0, runAttempt: 1 },
   });
   console.log(JSON.stringify(result, null, 1));

@@ -74,14 +74,14 @@ test("long lists are cut short, and Slack's control characters are escaped", () 
 
 test("a configured channel posts automatically in CI, but a local run must ask with --slack", () => {
   const ci = { GITHUB_ACTIONS: "true" };
-  assert.deepEqual(slackDecision([], "C1", ci), { post: true, channel: "C1" });
-  assert.equal(slackDecision([], "C1", {}).post, false);
-  assert.deepEqual(slackDecision(["--slack"], "C1", {}), { post: true, channel: "C1" });
+  assert.deepEqual(slackDecision({}, "C1", ci), { post: true, channel: "C1" });
+  assert.equal(slackDecision({}, "C1", {}).post, false);
+  assert.deepEqual(slackDecision({ slack: true }, "C1", {}), { post: true, channel: "C1" });
   // No channel configured: never posts, even with --slack or in CI.
-  assert.equal(slackDecision(["--slack"], undefined, ci).post, false);
+  assert.equal(slackDecision({ slack: true }, undefined, ci).post, false);
   // An explicit channel is itself a request to post (it is how a DM test is done).
-  assert.deepEqual(slackDecision(["--slack-channel", "U9"], undefined, {}), { post: true, channel: "U9" });
-  assert.equal(slackDecision(["--no-slack"], "C1", ci).post, false);
-  const dry = slackDecision(["--slack-dry-run"], "C1", ci);
+  assert.deepEqual(slackDecision({ "slack-channel": "U9" }, undefined, {}), { post: true, channel: "U9" });
+  assert.equal(slackDecision({ "no-slack": true }, "C1", ci).post, false);
+  const dry = slackDecision({ "slack-dry-run": true }, "C1", ci);
   assert.ok(!dry.post && dry.dryRun);
 });

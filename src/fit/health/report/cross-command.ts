@@ -19,6 +19,7 @@ import type { HealthReport } from "./build-report.js";
 import { crossCompare, summariseCross } from "./cross.js";
 import { renderHtml } from "./render/render-html.js";
 import type { TriageReport } from "./triage.js";
+import { parseHealthArgs } from "../cli-args.js";
 
 export function crossHelp(prefix: string): string {
   return `Compare every SDK's report from one run with every other's: the same test on the other SDKs.
@@ -32,12 +33,12 @@ crossSdk on every finding, and its page a line saying where else the test fails.
 }
 
 export async function runCrossCommand(argv: string[], prefix: string): Promise<Partial<RunOutput>> {
-  if (argv.includes("--help") || argv.includes("-h")) {
+  const { values, help } = parseHealthArgs(argv, { dir: { type: "string" } }, crossHelp(prefix), 0);
+  if (help) {
     console.log(crossHelp(prefix));
     return {};
   }
-  const i = argv.indexOf("--dir");
-  const dir = i >= 0 ? argv[i + 1] : undefined;
+  const { dir } = values;
   if (!dir) throw new Error(crossHelp(prefix));
   const sdks = readdirSync(dir)
     .filter((d) => d.startsWith("health-report-") && existsSync(join(dir, d, "triage.json")))

@@ -18,6 +18,7 @@ import type { RunRecord } from "../record/run-record.js";
 import { defaultHealthStoreRoot } from "../store/health-store.js";
 import { openStore } from "../store/s3-store.js";
 import { ingestLog } from "./ingest-log.js";
+import { STORE_OPTION, parseHealthArgs } from "../cli-args.js";
 
 export function reparseHelp(prefix: string): string {
   return `Rebuild run records from the raw logs in the store (no GitHub access needed).
@@ -30,16 +31,15 @@ Usage:
 }
 
 export async function runReparseCommand(argv: string[], prefix: string): Promise<Partial<RunOutput>> {
-  if (argv.includes("--help") || argv.includes("-h") || argv.length === 0) {
+  const { values, sdk, help } = parseHealthArgs(argv, { ...STORE_OPTION, all: { type: "boolean" } }, reparseHelp(prefix));
+  if (help || argv.length === 0) {
     console.log(reparseHelp(prefix));
     return {};
   }
-  const sdk = argv.find((a, i) => !a.startsWith("-") && argv[i - 1] !== "--store");
   if (!sdk) throw new Error(reparseHelp(prefix));
-  const i = argv.indexOf("--store");
-  const opened = await openStore(i >= 0 ? argv[i + 1] : process.env.FIT_HEALTH_STORE, sdk);
+  const opened = await openStore(values.store ?? process.env.FIT_HEALTH_STORE, sdk);
   const store = opened.store;
-  const all = argv.includes("--all");
+  const all = values.all === true;
 
   let done = 0;
   let records = 0;

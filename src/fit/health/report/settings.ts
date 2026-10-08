@@ -12,6 +12,7 @@ import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { fitCliInfo, printWithoutTimestamps } from "../../../util/non-fit/fit-cli-log.js";
 import type { LocalHealthStore } from "../store/health-store.js";
 import { openStore } from "../store/s3-store.js";
+import { STORE_OPTION, parseHealthArgs } from "../cli-args.js";
 
 export interface HealthSettings {
   /** Post a digest - a headline in the channel, the detail in its thread - after each CI report. */
@@ -80,20 +81,20 @@ With no option, prints the current settings. A digest posts automatically only i
 }
 
 export async function runSettingsCommand(argv: string[], prefix: string): Promise<Partial<RunOutput>> {
-  if (argv.includes("--help") || argv.includes("-h") || argv.length === 0) {
+  const { values, sdk, help } = parseHealthArgs(
+    argv,
+    { ...STORE_OPTION, "slack-channel": { type: "string" }, "no-slack": { type: "boolean" }, "report-url": { type: "string" } },
+    settingsHelp(prefix),
+  );
+  if (help || argv.length === 0) {
     console.log(settingsHelp(prefix));
     return {};
   }
-  const opt = (name: string) => {
-    const i = argv.indexOf(`--${name}`);
-    return i >= 0 ? argv[i + 1] : undefined;
-  };
-  const sdk = argv.find((a, i) => !a.startsWith("-") && !argv[i - 1]?.startsWith("--"));
   if (!sdk) throw new Error(settingsHelp(prefix));
-  const args = { slackChannel: opt("slack-channel"), noSlack: argv.includes("--no-slack"), reportUrl: opt("report-url") };
+  const args = { slackChannel: values["slack-channel"], noSlack: values["no-slack"] === true, reportUrl: values["report-url"] };
   if (args.noSlack && (args.slackChannel || args.reportUrl)) throw new Error("--no-slack can't be combined with --slack-channel or --report-url");
   const changing = args.noSlack || !!args.slackChannel || !!args.reportUrl;
-  const opened = await openStore(opt("store") ?? process.env.FIT_HEALTH_STORE, sdk, { skipRawLogs: true });
+  const opened = await openStore(values.store ?? process.env.FIT_HEALTH_STORE, sdk, { skipRawLogs: true });
   try {
     const current = readSettings(opened.store, sdk);
     if (changing) {

@@ -16,6 +16,7 @@ import { sdkByValue } from "../../../util/sdk/sdks.js";
 import type { HealthReport } from "./build-report.js";
 import { buildOverview, type OverviewInput } from "./overview.js";
 import { renderOverviewHtml } from "./render/render-html.js";
+import { parseHealthArgs } from "../cli-args.js";
 
 export function overviewHelp(prefix: string): string {
   return `Write the health site's top page: each SDK's last nights, one chart per SDK.
@@ -29,12 +30,12 @@ An SDK with a page but no report.json is listed with a link only.`;
 }
 
 export async function runOverviewCommand(argv: string[], prefix: string): Promise<Partial<RunOutput>> {
-  if (argv.includes("--help") || argv.includes("-h")) {
+  const { values, help } = parseHealthArgs(argv, { dir: { type: "string" } }, overviewHelp(prefix), 0);
+  if (help) {
     console.log(overviewHelp(prefix));
     return {};
   }
-  const i = argv.indexOf("--dir");
-  const dir = i >= 0 ? argv[i + 1] : undefined;
+  const { dir } = values;
   if (!dir) throw new Error(overviewHelp(prefix));
   const reports: { input: OverviewInput; name: string }[] = [];
   const missing: { sdk: string; name: string }[] = [];
