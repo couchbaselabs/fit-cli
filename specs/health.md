@@ -53,6 +53,7 @@ The report is one JSON document per SDK. The page draws it (all of it except `te
   - `tests[]`: every test that failed in the 90 days (a test that stopped running more than `recentDays` ago is left out). See below.
 - `testsSeen`: for each test type, every test with a known result in the classification window. `complete` is false when some nights came only from the CI log, which names failures but not passes.
 - `comparisons`: pairs of presets that are different in only one parameter (for example, Capella with and without a private endpoint).
+- `digest`: what every view leads with, built once from the active functional series (situational presets stay out). It has the counts `failingNow`, `started`, `stopped` and `intermittent` (each a `total` and its part per series), `startedGroups` (the started tests grouped by class, night and series, newest first), `stoppedTests`, `stoppedRunning`, `always` (failed every night they ran in the window), `lastNight` (tests run, from the series whose latest night is `end` and usable), and `gaps` and `unreadableRuns` (only those in the classification window). The page, the Slack digest, the job summary and the terminal only format it.
 
 Each entry in `tests[]` is one test:
 - `test` is the exact test id: `Class.method`, or `Class` for a whole class that errored.

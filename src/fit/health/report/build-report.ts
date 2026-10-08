@@ -9,6 +9,7 @@
  */
 import type { ChangeAnalysis, DriverChanges, SdkChanges } from "./changes.js";
 import type { CrossSdk } from "./cross.js";
+import { buildDigest, type Digest } from "./digest.js";
 import { sdkCommitOf, type RunManifest } from "../record/run-manifest.js";
 import type { RunRecord } from "../record/run-record.js";
 import {
@@ -204,6 +205,8 @@ export interface HealthReport {
    */
   testsSeen: Record<RunRecord["kind"], { tests: string[]; complete: boolean }>;
   source: { records: number; scraped: number; archive: number; unreadableRuns: { date: string; runId: number; status: string; reason?: string }[] };
+  /** What every view leads with, built once from the series (digest.ts). */
+  digest: Digest;
 }
 
 const PRESET_ORDER = ["op-onprem-func", "op-cng-func", "op-capella-func", "op-capella-sit", "op-capella-pe-sit", "op-cng-sit"];
@@ -409,7 +412,7 @@ export function buildHealthReport(
   // degraded or truncated that night (perNight is null for those).
   const blackout = dates.filter((d) => !functional.some((s) => d in s.perNight && s.perNight[d] !== null));
 
-  return {
+  const report: Omit<HealthReport, "digest"> = {
     schema: HEALTH_REPORT_SCHEMA,
     sdk,
     ...(repo ? { repo } : {}),
@@ -433,6 +436,7 @@ export function buildHealthReport(
         .sort((a, b) => a.date.localeCompare(b.date)),
     },
   };
+  return { ...report, digest: buildDigest(report) };
 }
 
 

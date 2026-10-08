@@ -267,8 +267,7 @@ test("a night every preset ran but none could use is a blackout night too", () =
   assert.deepEqual(buildHealthReport("dotnet", rs, [], { end: "2026-09-10" }).blackout, ["2026-09-05"]);
 });
 
-test("only presets whose latest night is the report's end, and usable, count as last night", async () => {
-  const { lastNightTests } = await import("../render/render-slack.js");
+test("only presets whose latest night is the report's end, and usable, count as last night", () => {
   const junit = (d: string, preset: string, over: Partial<RunRecord> = {}) => {
     const tests = {};
     addOutcome(tests, "A.x", "p");
@@ -283,7 +282,7 @@ test("only presets whose latest night is the report's end, and usable, count as 
   const cng = r.series.find((x) => x.preset === "op-cng-func-lite")!;
   assert.equal(onprem.latest?.usable, true);
   assert.deepEqual([cng.latest?.date, cng.latest?.usable], ["2026-09-08", false]);
-  assert.match(lastNightTests(r.series).join(), /\*1\* tests ran \(1 on-prem\)/, "CNG's older night isn't added in");
+  assert.deepEqual(r.digest.lastNight, { tests: 1, skipped: 0, testCases: 100, bySeries: [{ series: "on-prem", tests: 1 }] }, "CNG's older night isn't added in");
 });
 
 test("a log-only night naming a reused class's test makes each qualified test unknown, not a history of its own", () => {

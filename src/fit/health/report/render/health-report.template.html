@@ -380,36 +380,26 @@ function testsLine(l) {
   if (l.tests == null) return `<span title="${num(l.testCases)} ${CASES_NOTE}">${num(l.testCases)} test cases · ${l.failing} failing tests (passes not known: read from the CI log)</span>`;
   return `<span title="${num(l.testCases)} ${CASES_NOTE}">${num(l.tests)} tests: ${num(l.passed)} passed · <b>${l.failing}</b> failing · ${num(l.skipped)} skipped</span>`;
 }
+// The lists and counts the page leads with are built once, in TS, as the report's digest
+// (digest.ts): the page only lays them out.
+const DG = D.digest;
 function lastNightStat() {
-  // Only presets whose latest night is the report's end and usable add up into "last night".
-  const known = FUNC.filter((s) => s.latest && s.latest.usable && s.latest.tests != null);
-  if (!known.length) return '';
-  const ran = (s) => s.latest.passed + s.latest.failing;
-  const skipped = known.reduce((a, s) => a + s.latest.skipped, 0);
-  const cases = known.reduce((a, s) => a + s.latest.testCases, 0);
-  return `<div class="stat" title="${num(cases)} ${CASES_NOTE}"><span class="label">Tests run, last night</span><span class="big">${num(known.reduce((a, s) => a + ran(s), 0))}</span><span class="split">${known.map((s) => `${num(ran(s))} ${esc(s.short)}`).join(' · ')} · ${num(skipped)} skipped</span></div>`;
+  const l = DG.lastNight;
+  if (!l) return '';
+  return `<div class="stat" title="${num(l.testCases)} ${CASES_NOTE}"><span class="label">Tests run, last night</span><span class="big">${num(l.tests)}</span><span class="split">${l.bySeries.map((x) => `${num(x.tests)} ${esc(x.series)}`).join(' · ')} · ${num(l.skipped)} skipped</span></div>`;
 }
 
 // ----- summary
-const cnt = (s, ...c) => c.reduce((a, k) => a + s.counts[k], 0);
-const sum = (f) => FUNC.reduce((a, s) => a + f(s), 0);
-const split = (f) => FUNC.map((s) => `${f(s)} ${esc(s.short)}`).join(' · ');
+const split = (c) => c.bySeries.map((x) => `${x.n} ${esc(x.series)}`).join(' · ');
 $('summary').innerHTML = [
-  ['Failing now', sum((s) => cnt(s, 'always', 'failing')), 'bad', split((s) => cnt(s, 'always', 'failing'))],
-  [`Started failing, last ${RECENT} days`, sum((s) => s.started.length), 'bad', split((s) => s.started.length)],
-  [`Stopped failing, last ${RECENT} days`, sum((s) => s.stopped.length), 'good', split((s) => s.stopped.length)],
-  ['Intermittent', sum((s) => cnt(s, 'intermittent')), '', split((s) => cnt(s, 'intermittent'))],
-].map(([l, n, c, s]) => `<div class="stat"><span class="label">${l}</span><span class="big ${c}">${n}</span><span class="split">${s}</span></div>`).join('') + lastNightStat();
+  ['Failing now', DG.failingNow, 'bad'],
+  [`Started failing, last ${RECENT} days`, DG.started, 'bad'],
+  [`Stopped failing, last ${RECENT} days`, DG.stopped, 'good'],
+  ['Intermittent', DG.intermittent, ''],
+].map(([l, n, c]) => `<div class="stat"><span class="label">${l}</span><span class="big ${c}">${n.total}</span><span class="split">${split(n)}</span></div>`).join('') + lastNightStat();
 
 // ----- what changed
-const newItems = FUNC.flatMap((s) => s.started.map((n) => ({ ...n, suite: s.short, series: s.id })));
-const groups = [];
-newItems.forEach((n) => {
-  const [cls] = splitName(n.test);
-  const g = groups.find((g) => g.cls === cls && g.since === n.since && g.suite === n.suite);
-  if (g) g.tests.push(n.test); else groups.push({ cls, since: n.since, suite: n.suite, series: n.series, nights: n.nights, tests: [n.test] });
-});
-groups.sort((a, b) => b.since.localeCompare(a.since));
+const groups = DG.startedGroups;
 // Each series' tests by name, for the details the lists above don't carry.
 const TESTS = new Map(D.series.map((s) => [s.id, new Map(s.tests.map((t) => [t.test, t]))]));
 const testOf = (seriesId, test) => (TESTS.get(seriesId) || new Map()).get(test);
@@ -452,24 +442,22 @@ $('new').innerHTML = groups.map((g) => {
   const commit = sdkUnchanged(t) ? `<span>no SDK change since ${fmt(t.lastGood || t.previousNight)}${sc.from === sc.to ? ` (<code>${short(sc.from)}</code> both nights)` : ''}</span>` : '';
   const change = changeLine(t);
   const cross = crossLine(t);
-  return `<li>${names}<div class="sub"><span class="num">since ${fmt(g.since)} · ${g.nights} nights</span><span>${esc(g.suite)}</span>${commit}</div>${change}${cross ? `<div class="sub">${cross}</div>` : ''}</li>`;
+  return `<li>${names}<div class="sub"><span class="num">since ${fmt(g.since)} · ${g.nights} nights</span><span>${esc(g.where)}</span>${commit}</div>${change}${cross ? `<div class="sub">${cross}</div>` : ''}</li>`;
 }).join('') || `<li class="sub">Nothing started failing in the last ${RECENT} days.</li>`;
 const unchanged = groups.filter((g) => sdkUnchanged(testOf(g.series, g.tests[0]))).length;
 $('new-callout').innerHTML = unchanged ? `${unchanged} of these groups began with no change to the SDK since the test last passed.` : '';
 if (!$('new-callout').innerHTML) $('new-callout').hidden = true;
 
-const fixedItems = FUNC.flatMap((s) => s.stopped.map((f) => ({ ...f, suite: s.short })));
-$('fixed').innerHTML = fixedItems.map((f) => `<li><div class="tname">${nameHtml(f.test)}</div>
-  <div class="sub"><span class="num">last failed ${fmt(f.last)} after ${f.run} straight nights · clean ${f.clean} nights</span><span>${esc(f.suite)}</span>${f.fix && f.fix.ticket ? `<span class="chip">${esc(f.fix.ticket)}</span>` : ''}</div>
+$('fixed').innerHTML = DG.stoppedTests.map((f) => `<li><div class="tname">${nameHtml(f.test)}</div>
+  <div class="sub"><span class="num">last failed ${fmt(f.last)} after ${f.run} straight nights · clean ${f.clean} nights</span><span>${esc(f.where)}</span>${f.fix && f.fix.ticket ? `<span class="chip">${esc(f.fix.ticket)}</span>` : ''}</div>
   ${f.fix ? `<div class="sub">${esc(f.fix.text)}</div>` : ''}</li>`).join('') || `<li class="sub">Nothing stopped failing in the last ${RECENT} days.</li>`;
 
 // Tests that failed, then stopped running (skipped, or gone from the results): not fixed, just unwatched.
 const RESULT = { p: 'passed', f: 'failed', e: 'errored' };
-const stoppedRunningItems = FUNC.flatMap((s) => (s.stoppedRunning || []).map((t) => ({ ...t, suite: s.short })));
-$('stopped-running').innerHTML = stoppedRunningItems.map((t) => `<li><div class="tname">${nameHtml(t.test)}</div>
-  <div class="sub"><span class="num">last ran ${fmt(t.lastRan)} (${RESULT[t.lastResult]}) · not run since ${fmt(t.since)}</span><span>${esc(t.suite)}</span></div></li>`).join('');
+$('stopped-running').innerHTML = DG.stoppedRunning.map((t) => `<li><div class="tname">${nameHtml(t.test)}</div>
+  <div class="sub"><span class="num">last ran ${fmt(t.lastRan)} (${RESULT[t.lastResult]}) · not run since ${fmt(t.since)}</span><span>${esc(t.where)}</span></div></li>`).join('');
 // .panel sets display, which would override the hidden attribute: remove the empty panel instead.
-if (!stoppedRunningItems.length) $('panel-stopped-running').remove();
+if (!DG.stoppedRunning.length) $('panel-stopped-running').remove();
 
 // ----- tooltip
 const tip = $('tip');
