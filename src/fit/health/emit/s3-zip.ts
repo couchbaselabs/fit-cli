@@ -9,6 +9,7 @@
 import { GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { inflateRawSync } from "node:zlib";
 import { s3Client } from "../../../cloud/util/aws/aws-clients.js";
+import { parseS3Uri } from "../../../cloud/util/aws/s3-uri.js";
 
 export interface ZipEntry {
   name: string;
@@ -99,12 +100,6 @@ export function extractMember(entry: ZipEntry, localAndData: Buffer): Buffer {
   throw new Error(`${entry.name}: unsupported zip compression method ${entry.method}`);
 }
 
-export function parseS3Uri(uri: string): { bucket: string; key: string } {
-  const m = /^s3:\/\/([^/]+)\/(.+)$/.exec(uri);
-  if (!m) throw new Error(`Not an s3:// URI: ${uri}`);
-  return { bucket: m[1], key: m[2] };
-}
-
 async function getRange(bucket: string, key: string, start: number, endInclusive: number): Promise<Buffer> {
   const res = await s3Client.send(new GetObjectCommand({ Bucket: bucket, Key: key, Range: `bytes=${start}-${endInclusive}` }));
   return Buffer.from(await res.Body!.transformToByteArray());
@@ -118,7 +113,7 @@ export class S3Zip {
   ) {}
 
   static async open(uri: string): Promise<S3Zip> {
-    const { bucket, key } = parseS3Uri(uri);
+    const { bucket, key } = parseS3Uri(uri, { requireKey: true });
     const head = await s3Client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
     const total = head.ContentLength ?? 0;
     const tailStart = Math.max(0, total - ZIP_TAIL_BYTES);

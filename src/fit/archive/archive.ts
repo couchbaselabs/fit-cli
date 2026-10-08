@@ -30,6 +30,7 @@ import { run } from "../../util/non-fit/proc.js";
 import { retryWhole } from "../../util/non-fit/retry.js";
 import { SITUATIONAL_RESULTS_DIR_NAME } from "../situational/configuration/build-situational-configuration.js";
 import { ARTIFACTS_BUCKET, ARTIFACTS_PREFIX } from "../util/aws/upload-run-artifacts.js";
+import { parseS3Uri } from "../../cloud/util/aws/s3-uri.js";
 
 /**
  * uploadCollectedResults (run-from-definition.ts) deletes the extracted results/
@@ -149,11 +150,7 @@ export async function uploadFileToS3(
   onProgress?: (transferred: number, total: number | undefined) => void,
   client: S3Client = s3Client,
 ): Promise<void> {
-  const match = s3Uri.match(/^s3:\/\/([^/]+)\/(.+)$/);
-  if (!match) {
-    throw new Error(`Invalid S3 URI for a single file (must include a key): ${s3Uri}`);
-  }
-  const [, bucket, key] = match;
+  const { bucket, key } = parseS3Uri(s3Uri, { requireKey: true });
   const total = statSync(localPath).size;
   await retryWhole(
     // The read stream is opened inside the attempt, not outside it: an attempt that
@@ -289,9 +286,7 @@ export async function downloadFileFromS3(
   localPath: string,
   onProgress?: (downloaded: number, total: number | undefined) => void,
 ): Promise<void> {
-  const match = s3Uri.match(/^s3:\/\/([^/]+)\/(.+)$/);
-  if (!match) throw new Error(`Invalid S3 URI: ${s3Uri}`);
-  const [, bucket, key] = match;
+  const { bucket, key } = parseS3Uri(s3Uri, { requireKey: true });
   mkdirSync(dirname(localPath), { recursive: true });
   const resp = await s3Client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
   if (!resp.Body) throw new Error(`Empty response body for ${s3Uri}`);

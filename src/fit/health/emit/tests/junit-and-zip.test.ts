@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { gzipSync } from "node:zlib";
 import { StreamSectionStripper, canonicalTestName, decodeXmlEntities, junitOutcomes, junitXmlFromTarGz } from "../junit-outcomes.js";
-import { extractMember, findCentralDirectory, parseCentralDirectory, parseS3Uri } from "../s3-zip.js";
+import { extractMember, findCentralDirectory, parseCentralDirectory } from "../s3-zip.js";
 
 const FIXTURES = join(import.meta.dirname, "fixtures");
 
@@ -58,11 +58,6 @@ for (const fixture of ["run.zip", "run-zip64.zip"]) {
     assert.equal(tests.ExtBinarySupportBasicTest.p?.length, 6, "passes are named, not just counted");
   });
 }
-
-test("s3:// URIs split into bucket and key", () => {
-  assert.deepEqual(parseS3Uri("s3://fit-cli/runs/20260928-001945-4510.zip"), { bucket: "fit-cli", key: "runs/20260928-001945-4510.zip" });
-  assert.throws(() => parseS3Uri("https://example.com/x.zip"));
-});
 
 /** A tar archive built by hand: `entries` are [header name, type, data]. */
 function tarGz(entries: [string, string, string][]): Buffer {

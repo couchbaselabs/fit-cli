@@ -25,8 +25,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { s3Client } from "../../../cloud/util/aws/aws-clients.js";
 import { fitCliInfo } from "../../../util/non-fit/fit-cli-log.js";
-import { parseS3Uri } from "../emit/s3-zip.js";
+import { parseS3Uri } from "../../../cloud/util/aws/s3-uri.js";
 import { LocalHealthStore, defaultHealthStoreRoot } from "./health-store.js";
+import { mapWithConcurrency } from "../../../util/non-fit/concurrency.js";
 
 /** A local store that remembers which keys were written or removed, so they can be pushed. */
 export class TrackingHealthStore extends LocalHealthStore {
@@ -59,16 +60,6 @@ export interface OpenedStore {
 export interface OpenStoreOptions {
   /** Don't pull the raw CI logs: for commands that only read records, manifests and notes. */
   skipRawLogs?: boolean;
-}
-
-/** Run `worker` over `items`, at most `limit` at a time. */
-async function inParallel<T>(items: T[], limit: number, worker: (item: T) => Promise<void>): Promise<void> {
-  let next = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, async () => {
-      while (next < items.length) await worker(items[next++]);
-    }),
-  );
 }
 
 /**
@@ -115,8 +106,9 @@ export async function openStore(spec: string | undefined, sdk: string, opts: Ope
     return { store: new LocalHealthStore(where), location: where, flush: () => Promise.resolve(), close: () => {} };
   }
 
-  const { bucket, key } = parseS3Uri(where.endsWith("/") ? where : `${where}/`);
-  const prefix = key.endsWith("/") ? key : `${key}/`;
+  const { bucket, key } = parseS3Uri(where);
+  // The store's prefix, "" for a whole bucket, and otherwise always ending in "/".
+  const prefix = key && !key.endsWith("/") ? `${key}/` : key;
   const mirror = mkdtempSync(join(tmpdir(), "fit-health-store-"));
   const store = new TrackingHealthStore(mirror);
   const sdkPrefix = `${prefix}${sdk}/`;
@@ -133,7 +125,7 @@ export async function openStore(spec: string | undefined, sdk: string, opts: Ope
     const pull = keysToPull(listed, prefix, sdk, opts);
     if (!listed.length) fitCliInfo(`fit health: no data for ${sdk} at s3://${bucket}/${sdkPrefix} yet; starting a new store`);
     fitCliInfo(`fit health: pulling ${pull.length} objects for ${sdk} from s3://${bucket}/${sdkPrefix}`);
-    await inParallel(pull, 16, async (k) => {
+    await mapWithConcurrency(pull, 16, async (k) => {
       const res = await s3Client.send(new GetObjectCommand({ Bucket: bucket, Key: `${prefix}${k}` }));
       // Written straight to the cache, bypassing the tracking: pulled keys aren't changes.
       LocalHealthStore.prototype.write.call(store, k, Buffer.from(await res.Body!.transformToByteArray()));
@@ -150,12 +142,12 @@ export async function openStore(spec: string | undefined, sdk: string, opts: Ope
       const written = [...store.written];
       const removed = [...store.removed];
       for (const stage of pushStages(written)) {
-        await inParallel(stage, 16, async (k) => {
+        await mapWithConcurrency(stage, 16, async (k) => {
           await s3Client.send(new PutObjectCommand({ Bucket: bucket, Key: `${prefix}${k}`, Body: readFileSync(store.path(k)) }));
         });
       }
       // Deletions last: a removed record's replacement and its manifest have landed by now.
-      await inParallel(removed, 16, async (k) => {
+      await mapWithConcurrency(removed, 16, async (k) => {
         await s3Client.send(new DeleteObjectCommand({ Bucket: bucket, Key: `${prefix}${k}` }));
       });
       if (legacyIndex) {
