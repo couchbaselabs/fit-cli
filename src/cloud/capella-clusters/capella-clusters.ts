@@ -3,9 +3,11 @@
  * Sweeps the Capella clusters that runs leave behind when they die before their
  * own teardown. Called by the scheduled cleanup-capella-clusters workflow.
  *
- * `cleanup` runs `cbdinocluster cleanup cloud`. It removes every expired
- * cbdinocluster project in the organization, whoever made it, because an expiry
- * means the owner is done with it. Live clusters are never touched. Clusters in
+ * `cleanup` runs `cbdinocluster cleanup cloud`. It removes the expired clusters
+ * in the environment's fit-cli project (its `projectId` in environments.json5).
+ * It also removes the expired legacy `cbdc2_` projects anywhere in the
+ * organization, with their clusters, whoever made them. An expiry means the owner
+ * is done with it. Live clusters are never touched. Clusters in
  * `destroyFailed` are left and flagged, since only Capella support can clear them.
  *
  * cbdinocluster runs here against a throwaway config in a temp file, so the
@@ -261,9 +263,9 @@ function reportDestroyFailed(clusters: readonly CbdinoclusterListItem[], envName
 }
 
 /**
- * The bound on the cleanup. A big backlog of expired projects is slow to delete.
- * The job cap is 120m, so this has to give up first for the summary to still be
- * written.
+ * The bound on the cleanup. A big backlog of expired clusters and legacy projects
+ * is slow to delete. The job cap is 120m, so this has to give up first for the
+ * summary to still be written.
  */
 export const CLEANUP_TIMEOUT = "90m";
 
@@ -272,18 +274,18 @@ export function cleanupArgs(dryRun: boolean): string[] {
   return dryRun ? ["cleanup", CAPELLA_DEPLOYER, "--dry-run"] : ["cleanup", CAPELLA_DEPLOYER, "--timeout", CLEANUP_TIMEOUT];
 }
 
-/** Remove every expired cbdinocluster project in the organization. Throws if cbdinocluster fails. */
-async function removeExpiredProjects(cbdinocluster: string, dryRun: boolean): Promise<void> {
+/** Remove the expired clusters and legacy projects. Throws if cbdinocluster fails. */
+async function removeExpired(cbdinocluster: string, dryRun: boolean): Promise<void> {
   console.log(
-    `\n${dryRun ? "Dry run of removing" : "Removing"} every expired cbdinocluster project ` +
-      `in the organization, whoever made it`,
+    `\n${dryRun ? "Dry run of removing" : "Removing"} the expired clusters in the fit-cli project ` +
+      `and the expired legacy cbdc2_ projects in the organization`,
   );
   try {
     await run(cbdinocluster, cleanupArgs(dryRun));
   } catch (err) {
     throw new Error(`Capella cleanup failed. ${(err as Error).message}`, { cause: err });
   }
-  console.log(`\n✓ ${dryRun ? "Dry run finished. Nothing was deleted." : "Removed every expired project in the organization."}`);
+  console.log(`\n✓ ${dryRun ? "Dry run finished. Nothing was deleted." : "Removed the expired clusters and legacy projects."}`);
 }
 
 function helpText(): string {
@@ -299,8 +301,9 @@ Subcommands:
   list      Show the Capella clusters cbdinocluster can see, with the purpose and
             expiry of each, and which of them fit-cli created.
   cleanup   Show the same table, then run \`cbdinocluster cleanup ${CAPELLA_DEPLOYER}\`. It removes
-            every expired cbdinocluster project in the organization, whoever made
-            it, because an expiry means the owner is done with it. Bounded at
+            the expired clusters in the environment's fit-cli project, and the
+            expired legacy cbdc2_ projects anywhere in the organization with their
+            clusters. An expiry means the owner is done with it. Bounded at
             ${CLEANUP_TIMEOUT}.
 
 Options:
@@ -346,7 +349,7 @@ async function cmdCleanup(argv: string[]): Promise<void> {
       console.log(formatClustersTable(clusters));
     }
     reportDestroyFailed(clusters, envName);
-    await removeExpiredProjects(cbdinocluster, dryRun);
+    await removeExpired(cbdinocluster, dryRun);
   });
 }
 
