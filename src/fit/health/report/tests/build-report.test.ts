@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { RUN_RECORD_SCHEMA, addOutcome, type RunRecord } from "../../record/run-record.js";
-import { buildHealthReport, presetWhere } from "../build-report.js";
+import { buildHealthReport, presetWhere, reportFindings, runUrl } from "../build-report.js";
 import { buildSeries, testHistories } from "../series.js";
 
 let runId = 1;
@@ -78,7 +78,7 @@ test("the report lists what started and stopped failing in the last two weeks", 
   assert.deepEqual(s.stopped.map((t) => [t.test, t.last, t.run]), [["Old.fixed", "2026-09-20", 10]]);
   assert.equal(s.counts.failing, 1);
   assert.equal(s.counts.recovered, 1);
-  assert.equal(report.commits["2026-09-28"], "sha2026-0", "commits are shortened to 9 characters");
+  assert.equal(s.nights["2026-09-28"].sdkCommit, "sha2026-09-28");
 });
 
 test("a test already failing on the series' first night is failing since then, not started failing", () => {
@@ -348,4 +348,74 @@ test("records of one run told apart by a variant are separate series, named by i
   const report = buildHealthReport("dotnet", rs, [], { end: "2026-09-05", now: new Date("2026-09-05T12:00:00Z") });
   assert.equal(report.series.length, 2);
   assert.deepEqual(report.series.map((s) => s.label).sort(), ["Functional · on-prem · rebalance", "Functional · on-prem · standard-qe"]);
+});
+
+function junit(date: string, outcomes: [string, "p" | "f" | "e"][], sha: string): RunRecord {
+  const tests = {};
+  for (const [t, o] of outcomes) addOutcome(tests, t, o);
+  const failed = outcomes.filter(([, o]) => o !== "p").length;
+  return rec(date, {
+    source: "run-archive-junit",
+    ci: { repo: "couchbase/couchbase-net-client", runId: runId++, runAttempt: 1, sha, job: "fit / op-onprem-func-lite" },
+    outcome: failed ? "tests_failed" : "passed",
+    counts: { passed: 100, failed, errored: 0, skipped: 0 },
+    passesKnown: true,
+    archive: { uri: `s3://fit-cli/runs/${date}.zip`, member: "runs/functional/surefire-reports.tar.gz" },
+    tests,
+  });
+}
+
+test("a test carries its latest failure run and the nights either side, and each night its CI run and commit", () => {
+  // Passing to the 5th on sha "aaa", failing from the 6th on sha "bbb"; Other.y always passes.
+  const rs = days(1, 10).map((d, i) => junit(d, [["A.x", i < 5 ? "p" : "f"], ["Other.y", "p"]], i < 5 ? "aaa" : "bbb"));
+  const report = buildHealthReport("dotnet", rs, [], { end: "2026-09-10", notes: { fixes: { "A.x": { ticket: "NCBC-1", text: "known" } } } });
+  const [s] = report.series;
+  const t = s.tests.find((x) => x.test === "A.x")!;
+  assert.deepEqual([t.cls, t.since, t.lastPass, t.lastRan, t.lastGood], ["failing", "2026-09-06", "2026-09-05", "2026-09-10", "2026-09-05"]);
+  assert.deepEqual(t.lastEpisode, { from: "2026-09-06", to: "2026-09-10", nights: 5 });
+  assert.deepEqual(t.fix, { ticket: "NCBC-1", text: "known" });
+  assert.equal(t.sdkChange, undefined, "looked up only by analyseChanges");
+  const first = s.nights[t.lastEpisode.from];
+  assert.equal(report.repo, "couchbase/couchbase-net-client");
+  assert.equal(first.repo, undefined, "only a night in another repo names it");
+  assert.match(runUrl(report.repo, first), /^https:\/\/github.com\/couchbase\/couchbase-net-client\/actions\/runs\/\d+\/attempts\/1$/);
+  assert.deepEqual([first.sdkCommit, first.sdkCommitFrom, first.archive?.uri, first.source], ["bbb", "workflow", "s3://fit-cli/runs/2026-09-06.zip", "run-archive-junit"]);
+  assert.equal(s.nights[t.lastGood!].sdkCommit, "aaa");
+  // Every test that ran in the window, for other SDKs' reports to say "it runs that test".
+  assert.deepEqual(report.testsSeen.functional, { tests: ["A.x", "Other.y"], complete: true });
+});
+
+test("a whole-class error is a test named by its class; a night it didn't run doesn't break its failure run", () => {
+  // The class errored as a whole every night it ran, and didn't run on the 4th.
+  const rs = days(1, 6).map((d, i) => (i === 3 ? junit(d, [["Other.y", "p"]], "aaa") : junit(d, [["Disc.", "e"], ["Disc.a", "p"]], "aaa")));
+  const [s] = buildHealthReport("dotnet", rs, [], { end: "2026-09-06" }).series;
+  const t = s.tests.find((x) => x.test === "Disc")!;
+  assert.equal(t.seq, "eeenee");
+  assert.deepEqual(t.lastEpisode, { from: "2026-09-01", to: "2026-09-06", nights: 5 });
+  assert.deepEqual([t.lastGood, t.previousNight], [undefined, undefined], "failing from the first night: no baseline");
+});
+
+test("the SDK commit under test is the performer image's revision, not the workflow's checkout", () => {
+  // The workflow checked out a newer commit than the image, which was built the evening before.
+  const rs = days(1, 4).map((d, i) => junit(d, [["A.x", i < 2 ? "p" : "f"]], i < 3 ? "old" : "merged-after-image"));
+  const manifests = rs.map((r) => ({
+    schema: 1 as const, sdk: "dotnet", runId: r.ci.runId, runAttempt: 1, date: r.date, status: "ok" as const, records: [],
+    performerRevision: { "fit / op-onprem-func-lite": "image" },
+  }));
+  const [s] = buildHealthReport("dotnet", rs, manifests, { end: "2026-09-04" }).series;
+  assert.deepEqual(s.nights["2026-09-04"], { ...s.nights["2026-09-04"], sdkCommit: "image", sdkCommitFrom: "performer-image", workflowCommit: "merged-after-image" });
+  // Without the revision (older logs), the workflow's commit is used and says so.
+  const [plain] = buildHealthReport("dotnet", rs, [], { end: "2026-09-04" }).series;
+  assert.deepEqual([plain.nights["2026-09-04"].sdkCommit, plain.nights["2026-09-04"].sdkCommitFrom], ["merged-after-image", "workflow"]);
+});
+
+test("the tests a report follows up are those that aren't dormant, in series that are still active", () => {
+  const rs = [
+    ...days(1, 10).map((d, i) => rec(d, { failing: i >= 7 ? ["A.x"] : [] })),
+    // A preset that last ran long before the window: shown, but not followed up.
+    rec("2026-06-01", { preset: "op-cng-func-lite", failing: ["Old.y"] }),
+  ];
+  const report = buildHealthReport("dotnet", rs, [], { end: "2026-09-10", days: 120 });
+  assert.deepEqual(report.series.map((s) => [s.preset, s.active]), [["op-onprem-func-lite", true], ["op-cng-func-lite", false]]);
+  assert.deepEqual(reportFindings(report).map((f) => f.test.test), ["A.x"]);
 });

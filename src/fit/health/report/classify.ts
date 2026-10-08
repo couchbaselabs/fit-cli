@@ -82,10 +82,42 @@ export interface Classification {
   cleanTail: number;
   /** Failures older than the window, shown on the calm classes so old flakiness isn't hidden. */
   flakyBefore: number;
-  /** For "stopped": the last night it ran, how it did then, and the first night it didn't. */
+  /** The last night it ran (passed or failed), and the last night it passed. */
   lastRan?: string;
+  lastPass?: string;
+  /** For "stopped": how it did the last night it ran, and the first night it didn't. */
   lastResult?: "p" | "f" | "e";
   notRunSince?: string;
+  /**
+   * The most recent unbroken run of failures anywhere in the history, not just the window:
+   * its first and last failing night and how many nights failed. Unknown and not-run nights
+   * neither break it nor count.
+   */
+  lastEpisode?: { from: string; to: string; nights: number };
+  /** The last passing night before `lastEpisode`. */
+  lastGood?: string;
+  /** With no `lastGood` (the test only just started running): the night before `lastEpisode`. */
+  previousNight?: string;
+}
+
+/** `lastEpisode`, `lastGood` and `previousNight` (see Classification), in one walk back from the end. */
+export function lastEpisode(dates: readonly string[], seq: readonly NightOutcome[]): Pick<Classification, "lastEpisode" | "lastGood" | "previousNight"> {
+  let last = seq.length - 1;
+  while (last >= 0 && !isFailure(seq[last])) last--;
+  if (last < 0) return {};
+  let first = last;
+  let nights = 0;
+  let i = last;
+  for (; i >= 0 && seq[i] !== "p"; i--) {
+    if (isFailure(seq[i])) {
+      first = i;
+      nights++;
+    }
+  }
+  return {
+    lastEpisode: { from: dates[first], to: dates[last], nights },
+    ...(i >= 0 ? { lastGood: dates[i] } : first > 0 ? { previousNight: dates[first - 1] } : {}),
+  };
 }
 
 /** Lengths of the unbroken fail runs in a pass/fail sequence, oldest first. */
@@ -165,8 +197,9 @@ export function classify(dates: readonly string[], seq: readonly NightOutcome[],
   const fails = known.filter(([, x]) => x === "f");
   const calm = cls === "new" || cls === "oneoff" || cls === "recovered" || cls === "dormant";
   const stopped = cls === "stopped" && lastRun
-    ? { lastRan: lastRun[0], lastResult: lastRun[1] as "p" | "f" | "e", notRunSince: decided[decided.length - notRun][0] }
+    ? { lastResult: lastRun[1] as "p" | "f" | "e", notRunSince: decided[decided.length - notRun][0] }
     : {};
+  const lastPass = known.filter(([, x]) => x === "p").at(-1)?.[0];
   return {
     cls,
     since,
@@ -177,6 +210,9 @@ export function classify(dates: readonly string[], seq: readonly NightOutcome[],
     lastFail: fails.at(-1)?.[0],
     cleanTail,
     flakyBefore: calm ? before.filter((x) => x === "f").length : 0,
+    ...(lastRun ? { lastRan: lastRun[0] } : {}),
+    ...(lastPass ? { lastPass } : {}),
     ...stopped,
+    ...lastEpisode(dates, seq),
   };
 }

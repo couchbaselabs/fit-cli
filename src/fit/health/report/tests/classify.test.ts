@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { classify, episodes, type NightOutcome } from "../classify.js";
+import { classify, episodes, lastEpisode, type NightOutcome } from "../classify.js";
 
 const END = "2026-09-28";
 
@@ -114,4 +114,13 @@ test("a test that only started running recently is judged from its first run", (
   const c = cls("n".repeat(16) + "e".repeat(14));
   assert.equal(c.cls, "always");
   assert.equal(c.windowRuns, 14);
+});
+
+test("the latest failure run ignores unknown and not-run nights, and stops at a pass", () => {
+  const d = (n: number) => Array.from({ length: n }, (_, i) => `2026-09-${String(i + 1).padStart(2, "0")}`);
+  assert.deepEqual(lastEpisode(d(9), [..."ppffpfnuf"] as NightOutcome[]), { lastEpisode: { from: "2026-09-06", to: "2026-09-09", nights: 2 }, lastGood: "2026-09-05" });
+  // No pass before it: the night before is the baseline, if there is one.
+  assert.deepEqual(lastEpisode(d(4), [..."nffp"] as NightOutcome[]), { lastEpisode: { from: "2026-09-02", to: "2026-09-03", nights: 2 }, previousNight: "2026-09-01" });
+  assert.deepEqual(lastEpisode(d(2), [..."fp"] as NightOutcome[]), { lastEpisode: { from: "2026-09-01", to: "2026-09-01", nights: 1 } });
+  assert.deepEqual(lastEpisode(d(4), [..."pppn"] as NightOutcome[]), {});
 });

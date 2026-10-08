@@ -10,7 +10,7 @@ import { test } from "node:test";
 import type { RunManifest } from "../../record/run-manifest.js";
 import type { HealthOptIn } from "../../registry/health-opt-ins.js";
 import { DRIVER_REPO, analyseChanges, categorise, commitAt, splitDriverCommits, splitSdkCommits, testFilesFor, type ChangeSource } from "../changes.js";
-import type { TriageFinding, TriageNight, TriageReport } from "../triage.js";
+import type { HealthReport, ReportNight, ReportTest } from "../build-report.js";
 
 const c = (sha: string, title = sha) => ({ sha, title });
 
@@ -108,10 +108,12 @@ test("the category follows the SDK / test-file grid, and says when it can't tell
   assert.equal(categorise(sdk(false), driver(null)).category, "unknown");
 });
 
-const night = (date: string, runId: number, sha: string): TriageNight => ({
+type Night = ReportNight & { date: string };
+const night = (date: string, runId: number, sha: string): Night => ({
   date,
-  outcome: "failed",
-  run: { url: "", repo: "couchbase/couchbase-net-client", runId, attempt: 1, job: "fit / op-onprem-func-lite" },
+  runId,
+  attempt: 1,
+  job: "fit / op-onprem-func-lite",
   sdkCommit: sha,
   source: "run-archive-junit",
 });
@@ -125,29 +127,27 @@ const manifest = (runId: number, clonedAt: string, gerritRef?: string): RunManif
   records: [],
   driver: { "fit / op-onprem-func-lite": { clonedAt, ...(gerritRef ? { gerritRef } : {}) } },
 });
-const report = (findings: TriageFinding[]): TriageReport => ({
-  schema: "fit-health-triage/1",
-  sdk: "dotnet",
-  generatedAt: "",
-  window: { start: "2026-09-01", end: "2026-09-30", nights: 30, classificationDays: 30, recentDays: 14 },
-  coverage: { records: 0, fromJunit: 0, fromLog: 0 },
-  blackout: [],
-  unreadableRuns: [],
-  series: [],
-  findings,
-  testsSeen: { functional: { tests: [], complete: true }, situational: { tests: [], complete: true } },
-});
-const finding = (test: string, before: TriageNight, after: TriageNight): TriageFinding => ({
-  test,
-  class: test.slice(0, test.indexOf(".")),
-  method: test.slice(test.indexOf(".") + 1),
-  series: "op-onprem-func-lite|functional",
-  classification: { class: "failing", label: "Failing since", streak: 7, episodes: 1, windowFails: 7, windowRuns: 29 },
-  history: [],
-  evidence: { lastGood: { ...before, outcome: "passed" }, firstFailing: after },
-  driverChanges: null,
-  crossSdk: null,
-});
+/** A failing test whose last good night is `before` and whose failure run began on `after`. */
+const finding = (test: string, before: Night, after: Night) => ({ test, before, after });
+/** A report with one active series holding these tests, and only the nights they name. */
+const report = (findings: ReturnType<typeof finding>[]): HealthReport =>
+  ({
+    sdk: "dotnet",
+    repo: "couchbase/couchbase-net-client",
+    start: "2026-08-01",
+    end: "2026-09-30",
+    series: [
+      {
+        id: "op-onprem-func-lite|functional",
+        kind: "functional",
+        active: true,
+        nights: Object.fromEntries(findings.flatMap(({ before, after }) => [before, after].map(({ date, ...n }) => [date, n]))),
+        tests: findings.map(({ test, before, after }): Partial<ReportTest> => ({ test, cls: "failing", lastGood: before.date, lastEpisode: { from: after.date, to: after.date, nights: 1 } })),
+      },
+    ],
+  }) as unknown as HealthReport;
+/** The one test of a report built by `report`. */
+const only = (r: HealthReport) => r.series[0].tests[0];
 
 test("the RangeScan night: same SDK commit, and the driver changed the test's own file - the test changed", async () => {
   const testFile = "test-driver/src/test/java/com/couchbase/client/kv/rangescan/RangeScanTest.java";
@@ -167,8 +167,8 @@ test("the RangeScan night: same SDK commit, and the driver changed the test's ow
     source,
   });
   assert.deepEqual(r, { analysed: 1, failed: 0 });
-  const f = t.findings[0];
-  assert.equal(f.evidence.sdkChange?.changed, false);
+  const f = only(t);
+  assert.equal(f.sdkChange?.changed, false);
   assert.deepEqual([f.driverChanges?.from.sha, f.driverChanges?.to.sha], ["035d19b1", "9f9ed00b"]);
   assert.deepEqual(f.driverChanges?.testFileCommits?.map((x) => x.sha), ["9f9ed00b"]);
   assert.deepEqual(f.driverChanges?.helperCommits?.map((x) => x.sha), ["e273ae55"]);
@@ -180,26 +180,26 @@ test("a pinned Gerrit patchset is the driver exactly: the same pin is no change,
   const optIn = { repo: "couchbase/couchbase-net-client", workflows: ["x.yml"] };
   const same = report([finding("S.x", night("2026-09-23", 1, "a"), night("2026-09-24", 2, "a"))]);
   await analyseChanges(same, { manifests: [manifest(1, "2026-09-23T00:20:00.000Z", "refs/changes/15/252815/3"), manifest(2, "2026-09-24T00:20:00.000Z", "refs/changes/15/252815/3")], optIn, source });
-  assert.deepEqual([same.findings[0].driverChanges?.changed, same.findings[0].changeAnalysis?.category], [false, "neither"]);
+  assert.deepEqual([only(same).driverChanges?.changed, only(same).changeAnalysis?.category], [false, "neither"]);
   const moved = report([finding("S.x", night("2026-09-23", 1, "a"), night("2026-09-24", 2, "a"))]);
   await analyseChanges(moved, { manifests: [manifest(1, "2026-09-23T00:20:00.000Z", "refs/changes/75/247275/2"), manifest(2, "2026-09-24T00:20:00.000Z", "refs/changes/15/252815/3")], optIn, source });
-  assert.deepEqual([moved.findings[0].driverChanges?.changed, moved.findings[0].changeAnalysis?.category], [true, "unknown"]);
+  assert.deepEqual([only(moved).driverChanges?.changed, only(moved).changeAnalysis?.category], [true, "unknown"]);
 });
 
 test("nights far apart say the comparison covers more than one night's changes", async () => {
   const source = src({ compare: () => [], files: () => [], history: () => [{ sha: "d0", landedAt: "2026-08-01T00:00:00.000Z" }], tree: () => [] });
   const t = report([finding("A.x", night("2026-08-20", 1, "a"), night("2026-08-28", 2, "a"))]);
   await analyseChanges(t, { manifests: [manifest(1, "2026-08-20T00:20:00.000Z"), manifest(2, "2026-08-28T00:20:00.000Z")], optIn: { repo: "o/r", workflows: ["x.yml"] }, source });
-  assert.equal(t.findings[0].changeAnalysis?.span?.days, 8);
-  assert.match(t.findings[0].changeAnalysis?.reason ?? "", /8 days apart/);
+  assert.equal(only(t).changeAnalysis?.span?.days, 8);
+  assert.match(only(t).changeAnalysis?.reason ?? "", /8 days apart/);
 });
 
 test("a driver cloned from a branch is unknown, not unchanged: a branch moves", async () => {
   const t = report([finding("A.x", night("2026-09-23", 1, "a"), night("2026-09-24", 2, "a"))]);
   const branchManifest = (runId: number, at: string): RunManifest => ({ ...manifest(runId, at), driver: { "fit / op-onprem-func-lite": { clonedAt: at, branch: "dk/x" } } });
   await analyseChanges(t, { manifests: [branchManifest(1, "2026-09-23T00:20:00.000Z"), branchManifest(2, "2026-09-24T00:20:00.000Z")], optIn: { repo: "o/r", workflows: ["x.yml"] }, source: src({}) });
-  assert.equal(t.findings[0].driverChanges?.changed, null);
-  assert.equal(t.findings[0].changeAnalysis?.category, "unknown");
+  assert.equal(only(t).driverChanges?.changed, null);
+  assert.equal(only(t).changeAnalysis?.category, "unknown");
 });
 
 test("a GitHub failure leaves the finding's category unknown, with the reason, and never throws", async () => {
@@ -212,8 +212,8 @@ test("a GitHub failure leaves the finding's category unknown, with the reason, a
   const t = report([finding("A.x", night("2026-09-23", 1, "a"), night("2026-09-24", 2, "b"))]);
   const r = await analyseChanges(t, { manifests: [manifest(1, "2026-09-23T00:20:00.000Z"), manifest(2, "2026-09-24T00:20:00.000Z")], optIn: { repo: "o/r", workflows: ["x.yml"] }, source });
   assert.deepEqual(r, { analysed: 1, failed: 1 });
-  assert.equal(t.findings[0].changeAnalysis?.category, "unknown");
-  assert.match(t.findings[0].changeAnalysis?.reason ?? "", /HTTP 502/);
+  assert.equal(only(t).changeAnalysis?.category, "unknown");
+  assert.match(only(t).changeAnalysis?.reason ?? "", /HTTP 502/);
 });
 
 test("no file found for the test's class: whether the test changed is unknown, not 'it didn't'", async () => {
@@ -225,7 +225,7 @@ test("no file found for the test's class: whether the test changed is unknown, n
   });
   const t = report([finding("Missing.x", night("2026-09-23", 1, "a"), night("2026-09-24", 2, "a"))]);
   await analyseChanges(t, { manifests: [manifest(1, "2026-09-23T00:20:00.000Z"), manifest(2, "2026-09-24T00:20:00.000Z")], optIn: { repo: "o/r", workflows: ["x.yml"] }, source });
-  const f = t.findings[0];
+  const f = only(t);
   assert.equal(f.driverChanges?.testFileCommits, null);
   assert.deepEqual(f.driverChanges?.helperCommits?.map((x) => x.sha), ["h1"]);
   assert.equal(f.changeAnalysis?.category, "unknown");

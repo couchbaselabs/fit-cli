@@ -209,7 +209,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       # Every SDK's report from this run, compared with every other's: the same test on the
-      # other SDKs, written back into each triage.json and page.
+      # other SDKs, written back into each health-report.json and page.
       - name: Compare the SDKs
         run: bun src/fit/main/main.ts health cross --dir reports
 

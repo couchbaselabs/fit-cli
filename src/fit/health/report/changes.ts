@@ -24,7 +24,7 @@
 import type { RunManifest } from "../record/run-manifest.js";
 import type { HealthOptIn } from "../registry/health-opt-ins.js";
 import type { DriverCheckout } from "../log-parse/parse-run-log.js";
-import type { TriageFinding, TriageNight, TriageReport } from "./triage.js";
+import { reportFindings, type HealthReport, type ReportNight, type ReportSeries, type ReportTest } from "./build-report.js";
 import { sdkByValue } from "../../../util/sdk/sdks.js";
 import { ANALYTICS_TEST_DRIVER_MODULE, DEFAULT_TEST_DRIVER_MODULE } from "../../shared/run-test-driver/run-test-driver.js";
 import { addDays, daysBetween, startOfDay } from "./dates.js";
@@ -177,69 +177,40 @@ export function categorise(sdk: SdkChanges | undefined, driver: DriverChanges | 
 }
 
 /** How a night got the driver: from its run's manifest, by the CI job that produced it. */
-export function driverCheckout(night: TriageNight, manifests: ReadonlyMap<string, RunManifest>): DriverCheckout | undefined {
-  const m = manifests.get(`${night.run.runId}-${night.run.attempt}`);
+export function driverCheckout(night: ReportNight, manifests: ReadonlyMap<string, RunManifest>): DriverCheckout | undefined {
+  const m = manifests.get(`${night.runId}-${night.attempt}`);
   if (!m?.driver) return undefined;
-  return (night.run.job ? m.driver[night.run.job] : undefined) ?? Object.values(m.driver)[0];
+  return (night.job ? m.driver[night.job] : undefined) ?? Object.values(m.driver)[0];
 }
 
-/** What the page shows for one finding's change: short, and only what was found. */
-export interface ChangeSummary {
-  category: ChangeCategory;
-  reason?: string;
-  /** Driver commits that touched the test's own file. */
-  testFileCommits: Commit[];
-  /** How many other driver commits touched shared test code. */
-  helperCommits: number;
-  /** SDK commits touching this SDK's own code, and its shared core. */
-  sdkCommits: number;
-  sharedCoreCommits: number;
-  sdkCompareUrl?: string;
-  driverCompareUrl?: string;
-  /** Set when the driver was a pinned Gerrit patchset on either night. */
-  driverPin?: { from?: string; to?: string };
-}
+type DatedNight = ReportNight & { date: string };
 
-/** Per series, per test: the summaries for the page, from an analysed triage report. */
-export function summariseChanges(triage: TriageReport): Record<string, Record<string, ChangeSummary>> {
-  const out: Record<string, Record<string, ChangeSummary>> = {};
-  for (const f of triage.findings) {
-    if (!f.changeAnalysis) continue;
-    const d = f.driverChanges;
-    const s = f.evidence.sdkChange;
-    (out[f.series] ??= {})[f.test] = {
-      ...f.changeAnalysis,
-      testFileCommits: d?.testFileCommits ?? [],
-      helperCommits: d?.helperCommits?.length ?? 0,
-      sdkCommits: s?.commits?.length ?? 0,
-      sharedCoreCommits: s?.sharedCoreCommits?.length ?? 0,
-      ...(s?.compareUrl ? { sdkCompareUrl: s.compareUrl } : {}),
-      ...(d?.compareUrl ? { driverCompareUrl: d.compareUrl } : {}),
-      ...(d && (d.from.gerritRef || d.to.gerritRef) ? { driverPin: { from: d.from.gerritRef, to: d.to.gerritRef } } : {}),
-    };
-  }
-  return out;
+/**
+ * The two nights a test's change is looked up between: its baseline (the last good night, or
+ * the night before it started failing) and the first night of its latest failure run.
+ */
+export function changePoint(series: ReportSeries, t: ReportTest): { before: DatedNight; after: DatedNight } | undefined {
+  const b = t.lastGood ?? t.previousNight;
+  const a = t.lastEpisode?.from;
+  if (!b || !a || !series.nights[b] || !series.nights[a]) return undefined;
+  return { before: { date: b, ...series.nights[b] }, after: { date: a, ...series.nights[a] } };
 }
 
 // ------------------------------------------------------------------------------- analysis
 
-/** The night a finding is compared against: its last good night, or the night before it started failing. */
-function baseline(f: TriageFinding): TriageNight | undefined {
-  return f.evidence.lastGood ?? f.evidence.previousNight;
-}
-
 const MEMO = <T>() => new Map<string, Promise<T>>();
 
 /**
- * Fill in each finding's `sdkChange` commits, `driverChanges` and `changeAnalysis`. Never
- * throws: a finding whose changes can't be worked out says why and carries on.
+ * Fill in `sdkChange`, `driverChanges` and `changeAnalysis` on every test the report follows
+ * up (see reportFindings) that has a change point. Never throws: a test whose changes can't
+ * be worked out says why and carries on.
  */
 export async function analyseChanges(
-  triage: TriageReport,
+  report: HealthReport,
   ctx: { manifests: RunManifest[]; optIn: HealthOptIn; source: ChangeSource },
 ): Promise<{ analysed: number; failed: number }> {
   const manifests = new Map(ctx.manifests.map((m) => [`${m.runId}-${m.runAttempt}`, m]));
-  const module = driverModuleFor(triage.sdk);
+  const module = driverModuleFor(report.sdk);
   const compares = MEMO<Commit[]>();
   const files = MEMO<string[]>();
   const compare = (repo: string, a: string, b: string) => {
@@ -259,14 +230,14 @@ export async function analyseChanges(
   let tree: string[] | undefined;
   let driverProblem: string | undefined;
   try {
-    const since = startOfDay(addDays(triage.window.start, -7));
-    const until = startOfDay(addDays(triage.window.end, 2));
+    const since = startOfDay(addDays(report.start, -7));
+    const until = startOfDay(addDays(report.end, 2));
     [history, tree] = await Promise.all([ctx.source.history(DRIVER_REPO, DRIVER_BRANCH, since, until), ctx.source.tree(DRIVER_REPO, DRIVER_BRANCH)]);
   } catch (err) {
     driverProblem = `couldn't read ${DRIVER_REPO}: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300);
   }
 
-  const side = (night: TriageNight): DriverSide => {
+  const side = (night: DatedNight): DriverSide => {
     const c = driverCheckout(night, manifests);
     if (!c) return { date: night.date, inferred: false };
     if (c.gerritRef) return { date: night.date, gerritRef: c.gerritRef, clonedAt: c.clonedAt, inferred: false };
@@ -277,16 +248,16 @@ export async function analyseChanges(
 
   let analysed = 0;
   let failed = 0;
-  for (const f of triage.findings) {
-    const before = baseline(f);
-    const after = f.evidence.firstFailing;
-    if (!before || !after) continue;
+  for (const { series, test: f } of reportFindings(report)) {
+    const point = changePoint(series, f);
+    if (!point) continue;
+    const { before, after } = point;
     analysed++;
     try {
       // The SDK side: the commits between the two nights' builds, split by path.
       let sdk: SdkChanges | undefined;
-      const repo = after.run.repo;
-      if (before.sdkCommit && after.sdkCommit) {
+      const repo = after.repo ?? report.repo;
+      if (repo && before.sdkCommit && after.sdkCommit) {
         const range = before.sdkCommit === after.sdkCommit ? [] : await withFiles(repo, await compare(repo, before.sdkCommit, after.sdkCommit));
         const split = splitSdkCommits(range, ctx.optIn);
         sdk = {
@@ -296,13 +267,14 @@ export async function analyseChanges(
           ...(before.sdkCommit !== after.sdkCommit ? { compareUrl: `https://github.com/${repo}/compare/${before.sdkCommit}...${after.sdkCommit}` } : {}),
           ...split,
         };
-        f.evidence.sdkChange = sdk;
+        f.sdkChange = sdk;
       }
 
       // The driver side.
       const from = side(before);
       const to = side(after);
-      const testFiles = tree ? testFilesFor(f.class, tree, module) : [];
+      const cls = f.test.includes(".") ? f.test.slice(0, f.test.indexOf(".")) : f.test;
+      const testFiles = tree ? testFilesFor(cls, tree, module) : [];
       let driver: DriverChanges;
       if (from.branch || to.branch) {
         // A branch moves: the same name on both nights doesn't mean the same commit.
@@ -324,7 +296,7 @@ export async function analyseChanges(
           testFiles,
           ...splitDriverCommits(range, testFiles, module),
           // Without the test's own file, whether it changed isn't known - not "it didn't".
-          ...(testFiles.length === 0 ? { testFileCommits: null, note: `no file for ${f.class} found under ${module}/; only other test code is listed` } : {}),
+          ...(testFiles.length === 0 ? { testFileCommits: null, note: `no file for ${cls} found under ${module}/; only other test code is listed` } : {}),
         };
       }
       f.driverChanges = driver;

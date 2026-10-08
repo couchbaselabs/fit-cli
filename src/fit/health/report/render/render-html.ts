@@ -20,9 +20,13 @@ async function loadTemplate(): Promise<string> {
   return (await import("./health-report.template.html", { with: { type: "text" } })).default;
 }
 
-/** Fill the template. The JSON is made safe to sit inside a <script> element. */
+/**
+ * Fill the template. The JSON is made safe to sit inside a <script> element. `testsSeen` is
+ * left out: only other SDKs' reports read it, and it is the largest part the page never uses.
+ */
 export function fillTemplate(template: string, report: HealthReport, sdkName: string): string {
-  const json = JSON.stringify(report).replace(/</g, "\\u003c");
+  const { testsSeen: _unused, ...page } = report;
+  const json = JSON.stringify(page).replace(/</g, "\\u003c");
   return template.replaceAll("__SDK_NAME__", sdkName).replace("/*__DATA__*/null", () => json);
 }
 

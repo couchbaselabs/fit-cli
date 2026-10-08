@@ -3,12 +3,12 @@
  * night-by-night history and class, what changed in the last two weeks, and comparisons
  * between presets that differ only by a run parameter.
  *
- * The report is the small JSON artifact to look at and diff (`fit health report --json`), and
- * the HTML page renders exactly this. It is derived and disposable: change a rule in
- * classify.ts and regenerate it.
+ * The report is the one output: the HTML page renders exactly this, and it is the JSON a
+ * triage agent reads (published as report.json, described in specs/health.md). It is derived
+ * and disposable: change a rule in classify.ts and regenerate it.
  */
-import type { ChangeSummary } from "./changes.js";
-import type { CrossSummary } from "./cross.js";
+import type { ChangeAnalysis, DriverChanges, SdkChanges } from "./changes.js";
+import type { CrossSdk } from "./cross.js";
 import { sdkCommitOf, type RunManifest } from "../record/run-manifest.js";
 import type { RunRecord } from "../record/run-record.js";
 import {
@@ -44,6 +44,7 @@ export interface ReportNotes {
 }
 
 export interface ReportTest extends Classification {
+  /** Exact test id: "Class.method", or "Class" for a whole class that errored. */
   test: string;
   /** One NightOutcome (p/f/e/u/n) per night the series ran, aligned with the series' `ran`. */
   seq: string;
@@ -55,6 +56,46 @@ export interface ReportTest extends Classification {
    * listed as having started failing.
    */
   sinceFirstNight?: boolean;
+  /** A known fix, from the SDK's notes (fit health notes). */
+  fix?: { ticket?: string; text: string };
+  /**
+   * What changed between the baseline night (`lastGood`, else `previousNight`) and the first
+   * night of `lastEpisode`, in the SDK and in the FIT driver, and the likely cause (see
+   * changes.ts). Absent until looked up, and for a test with no such pair of nights.
+   */
+  sdkChange?: SdkChanges;
+  driverChanges?: DriverChanges;
+  changeAnalysis?: ChangeAnalysis;
+  /** The same test on every other SDK with a report (see cross.ts). Absent until compared. */
+  crossSdk?: CrossSdk;
+}
+
+/**
+ * One night a series ran: the CI run, and the SDK commit it tested. The run's page is
+ * `https://github.com/<repo>/actions/runs/<runId>/attempts/<attempt>` (`runUrl`), with the
+ * report's `repo` unless the night names another.
+ */
+export interface ReportNight {
+  repo?: string;
+  runId: number;
+  attempt: number;
+  job?: string;
+  /**
+   * The SDK commit under test: the performer image's revision when the log shows it (then
+   * `sdkCommitFrom: "performer-image"`), else the commit the nightly workflow checked out.
+   */
+  sdkCommit?: string;
+  sdkCommitFrom?: "performer-image" | "workflow";
+  /** The commit the workflow checked out, when it differs from `sdkCommit`. */
+  workflowCommit?: string;
+  /** The S3 run archive and the surefire tarball in it, when the record came from JUnit. */
+  archive?: { uri: string; member: string };
+  /** "run-archive-junit": every outcome is known; "run-log-scrape": only failures are named. */
+  source: RunRecord["source"];
+}
+
+export function runUrl(repo: string, night: Pick<ReportNight, "runId" | "attempt">): string {
+  return `https://github.com/${repo}/actions/runs/${night.runId}/attempts/${night.attempt}`;
 }
 
 /**
@@ -100,6 +141,8 @@ export interface ReportSeries {
   ran: string[];
   aborted: Series["aborted"];
   degraded: string[];
+  /** Each night in `ran`: its CI run and SDK commit. */
+  nights: Record<string, ReportNight>;
   /** Distinct failing tests per night; null on a degraded night, where a count would mislead. */
   perNight: Record<string, number | null>;
   /** Per night: how many tests ran, and how they did (see NightTests). */
@@ -136,11 +179,12 @@ export interface ParamComparison {
 export interface HealthReport {
   schema: typeof HEALTH_REPORT_SCHEMA;
   sdk: string;
+  /** The SDK repo the nightly runs are in (the latest night's), for run and commit links. */
+  repo?: string;
   generatedAt: string;
   start: string;
   end: string;
   dates: string[];
-  commits: Record<string, string>;
   /** Nights with no functional results at all (every functional run aborted or missing). */
   blackout: string[];
   /**
@@ -152,10 +196,13 @@ export interface HealthReport {
   sdkNames: Record<string, string>;
   series: ReportSeries[];
   comparisons: ParamComparison[];
-  /** What changed around each finding's change point, when it was looked up (see changes.ts). */
-  changes?: Record<string, Record<string, ChangeSummary>>;
-  /** The same tests on the other SDKs, when the reports were compared (see cross.ts). */
-  cross?: Record<string, Record<string, CrossSummary>>;
+  /**
+   * Per test type: every test with a known result (passed, failed or errored) in the
+   * classification window - what another SDK's report needs to say "this SDK runs that test",
+   * not just "it fails it". A night read only from the CI log names failures, not passes, so
+   * `complete` says whether every night came from full JUnit.
+   */
+  testsSeen: Record<RunRecord["kind"], { tests: string[]; complete: boolean }>;
   source: { records: number; scraped: number; archive: number; unreadableRuns: { date: string; runId: number; status: string; reason?: string }[] };
 }
 
@@ -170,7 +217,23 @@ export function presetWhere(preset: string, params: Record<string, unknown>): st
   return `${preset} preset`;
 }
 
-function reportSeries(s: Series, end: string, notes: ReportNotes): ReportSeries {
+type Manifests = ReadonlyMap<string, RunManifest>;
+
+function reportNight(r: RunRecord, manifest: RunManifest | undefined, repo: string | undefined): ReportNight {
+  const sdk = sdkCommitOf(r, manifest);
+  return {
+    ...(r.ci.repo !== repo ? { repo: r.ci.repo } : {}),
+    runId: r.ci.runId,
+    attempt: r.ci.runAttempt,
+    ...(r.ci.job ? { job: r.ci.job } : {}),
+    ...(sdk.sha ? { sdkCommit: sdk.sha, sdkCommitFrom: sdk.fromImage ? ("performer-image" as const) : ("workflow" as const) } : {}),
+    ...(sdk.fromImage && r.ci.sha && r.ci.sha !== sdk.sha ? { workflowCommit: r.ci.sha } : {}),
+    ...(r.archive ? { archive: r.archive } : {}),
+    source: r.source,
+  };
+}
+
+function reportSeries(s: Series, end: string, notes: ReportNotes, manifests: Manifests, repo: string | undefined): ReportSeries {
   const histories = testHistories(s);
   const degraded = new Set(s.degraded);
   const tests: ReportTest[] = [];
@@ -186,6 +249,7 @@ function reportSeries(s: Series, end: string, notes: ReportNotes): ReportSeries 
       stoppedRunningEarlier++;
       continue;
     }
+    const fix = notes.fixes?.[test];
     tests.push({
       test,
       seq: seq.join(""),
@@ -193,6 +257,7 @@ function reportSeries(s: Series, end: string, notes: ReportNotes): ReportSeries 
       fails: seq.filter(isFailure).length,
       ...c,
       ...(c.since && c.since === s.ran[0] ? { sinceFirstNight: true } : {}),
+      ...(fix ? { fix } : {}),
     });
   }
   const order = (c: TestClass) => CLASS_ORDER.indexOf(c);
@@ -208,8 +273,10 @@ function reportSeries(s: Series, end: string, notes: ReportNotes): ReportSeries 
     });
   }
   const testCounts: Record<string, NightTests> = {};
+  const nights: Record<string, ReportNight> = {};
   for (const n of s.nights) {
     testCounts[n.date] = nightTests(n.record);
+    nights[n.date] = reportNight(n.record, manifests.get(`${n.record.ci.runId}-${n.record.ci.runAttempt}`), repo);
   }
   const lastNight = s.ran.at(-1);
 
@@ -237,6 +304,7 @@ function reportSeries(s: Series, end: string, notes: ReportNotes): ReportSeries 
     ran: s.ran,
     aborted: s.aborted,
     degraded: s.degraded,
+    nights,
     perNight,
     testCounts,
     ...(lastNight ? { latest: { date: lastNight, ...testCounts[lastNight], usable: lastNight === end && !s.degraded.includes(lastNight) } } : {}),
@@ -247,24 +315,13 @@ function reportSeries(s: Series, end: string, notes: ReportNotes): ReportSeries 
       .map((t) => ({ test: t.test, since: t.since!, nights: t.streak })),
     stopped: tests
       .filter((t) => t.cls === "recovered" && t.lastFail && daysBetween(t.lastFail, end) < RECENT_DAYS)
-      .map((t) => ({ test: t.test, last: t.lastFail!, run: runBeforeClean(t), clean: t.cleanTail, fix: notes.fixes?.[t.test] })),
+      .map((t) => ({ test: t.test, last: t.lastFail!, run: t.lastEpisode!.nights, clean: t.cleanTail, fix: t.fix })),
     stoppedRunning: tests
       .filter((t) => t.cls === "stopped")
       .map((t) => ({ test: t.test, lastRan: t.lastRan!, lastResult: t.lastResult!, since: t.notRunSince! })),
     stoppedRunningEarlier,
     active: !!lastRan && daysBetween(lastRan, end) < WINDOW_DAYS,
   };
-}
-
-function runBeforeClean(t: ReportTest): number {
-  const known = [...t.seq].filter(isKnown);
-  let i = known.length - 1 - t.cleanTail;
-  let n = 0;
-  while (i >= 0 && isFailure(known[i])) {
-    n++;
-    i--;
-  }
-  return n;
 }
 
 /**
@@ -342,17 +399,11 @@ export function buildHealthReport(
     const s = builtById.get(id);
     return s && testHistories(s, { include: [test] }).get(test)?.join("");
   };
+  const manifestOf: Manifests = new Map(manifests.map((m) => [`${m.runId}-${m.runAttempt}`, m]));
+  const repo = inRange.at(-1)?.ci.repo;
   const series = built
-    .map((s) => reportSeries(s, end, notes))
+    .map((s) => reportSeries(s, end, notes, manifestOf, repo))
     .sort((a, b) => rank(a) - rank(b) || a.id.localeCompare(b.id));
-
-  // The SDK commit each night tested: its performer image's revision where the log has it.
-  const manifestOf = new Map(manifests.map((m) => [`${m.runId}-${m.runAttempt}`, m]));
-  const commits: Record<string, string> = {};
-  for (const r of inRange) {
-    const sha = sdkCommitOf(r, manifestOf.get(`${r.ci.runId}-${r.ci.runAttempt}`)).sha;
-    if (sha) commits[r.date] = sha.slice(0, 9);
-  }
   const functional = series.filter((s) => s.kind === "functional");
   // No usable functional results from any preset: none ran, or every one that did was
   // degraded or truncated that night (perNight is null for those).
@@ -361,16 +412,17 @@ export function buildHealthReport(
   return {
     schema: HEALTH_REPORT_SCHEMA,
     sdk,
+    ...(repo ? { repo } : {}),
     generatedAt: (opts.now ?? new Date()).toISOString(),
     start: dates[0] ?? end,
     end,
     dates,
-    commits,
     blackout,
     classes: { order: CLASS_ORDER, labels: CLASS_LABELS, blurbs: CLASS_BLURBS, windowDays: WINDOW_DAYS, recentDays: RECENT_DAYS },
     sdkNames: Object.fromEntries(SDKS.map((s) => [s.value, s.name])),
     series,
     comparisons: paramComparisons(series, historyOf),
+    testsSeen: testsSeen(inRange, addDays(end, -(WINDOW_DAYS - 1)), end),
     source: {
       records: inRange.length,
       scraped: inRange.filter((r) => r.source === "run-log-scrape").length,
@@ -383,3 +435,23 @@ export function buildHealthReport(
   };
 }
 
+
+function testsSeen(records: RunRecord[], from: string, to: string): HealthReport["testsSeen"] {
+  const out: HealthReport["testsSeen"] = { functional: { tests: [], complete: true }, situational: { tests: [], complete: true } };
+  const seen = { functional: new Set<string>(), situational: new Set<string>() };
+  for (const r of records) {
+    if (r.date < from || r.date > to || !r.counts) continue;
+    if (!r.passesKnown) out[r.kind].complete = false;
+    for (const [cls, o] of Object.entries(r.tests)) {
+      for (const m of [...(o.p ?? []), ...(o.f ?? []), ...(o.e ?? [])]) seen[r.kind].add(`${cls}.${m}`);
+      if (o.classError) seen[r.kind].add(cls);
+    }
+  }
+  for (const k of ["functional", "situational"] as const) out[k].tests = [...seen[k]].sort();
+  return out;
+}
+
+/** The tests a report follows up: every one that isn't dormant, in a series that is still active. */
+export function reportFindings(report: Pick<HealthReport, "series">): { series: ReportSeries; test: ReportTest }[] {
+  return report.series.filter((s) => s.active).flatMap((series) => series.tests.filter((t) => t.cls !== "dormant").map((test) => ({ series, test })));
+}

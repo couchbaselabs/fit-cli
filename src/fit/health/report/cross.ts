@@ -16,7 +16,7 @@
  * are noted (`sameStart`) but not called a server issue: the server build isn't captured yet.
  */
 import type { TestClass } from "./classify.js";
-import type { TriageFinding, TriageReport } from "./triage.js";
+import { reportFindings, type HealthReport } from "./build-report.js";
 import { daysBetween } from "./dates.js";
 
 export type PeerStatus = "failing" | "intermittent" | "recovered" | "stopped" | "passing" | "not_run" | "unknown";
@@ -40,13 +40,6 @@ export interface CrossSdk {
   reason?: string;
 }
 
-/** What the page shows for one finding. */
-export interface CrossSummary {
-  category: CrossCategory;
-  failingOn: string[];
-  passingOn: string[];
-}
-
 const STATUS_OF: Record<TestClass, PeerStatus> = {
   always: "failing",
   failing: "failing",
@@ -61,24 +54,21 @@ const SEVERITY: PeerStatus[] = ["failing", "intermittent", "stopped", "recovered
 const FAILS = new Set<PeerStatus>(["failing", "intermittent"]);
 const RAN = new Set<PeerStatus>(["failing", "intermittent", "recovered", "stopped", "passing"]);
 
-const kindOf = (t: TriageReport, f: TriageFinding) => t.series.find((s) => s.id === f.series)?.kind ?? "functional";
-
 const daysApart = (a: string, b: string) => Math.abs(daysBetween(a, b));
 
 /** How `peer` fared on `test` (of `kind`), seen from a finding that started failing on `start`. */
-export function peerStatus(peer: TriageReport, test: string, kind: "functional" | "situational", start: string | undefined, family?: string): CrossPeer {
-  const theirs = peer.findings.filter((f) => f.test === test && kindOf(peer, f) === kind);
-  const worst = theirs.sort((a, b) => SEVERITY.indexOf(STATUS_OF[a.classification.class]) - SEVERITY.indexOf(STATUS_OF[b.classification.class]))[0];
+export function peerStatus(peer: HealthReport, test: string, kind: "functional" | "situational", start: string | undefined, family?: string): CrossPeer {
+  const theirs = reportFindings(peer).filter((f) => f.test.test === test && f.series.kind === kind).map((f) => f.test);
+  const worst = theirs.sort((a, b) => SEVERITY.indexOf(STATUS_OF[a.cls]) - SEVERITY.indexOf(STATUS_OF[b.cls]))[0];
   const base = { sdk: peer.sdk, ...(family ? { family } : {}) };
   if (worst) {
-    const c = worst.classification;
-    const theirStart = worst.evidence.firstFailing?.date;
+    const theirStart = worst.lastEpisode?.from;
     return {
       ...base,
-      status: STATUS_OF[c.class],
-      class: c.class,
-      ...(c.since ? { since: c.since } : {}),
-      ...(c.lastFail ? { lastFail: c.lastFail } : {}),
+      status: STATUS_OF[worst.cls],
+      class: worst.cls,
+      ...(worst.since ? { since: worst.since } : {}),
+      ...(worst.lastFail ? { lastFail: worst.lastFail } : {}),
       ...(start && theirStart ? { sameStart: daysApart(start, theirStart) <= 1 } : {}),
     };
   }
@@ -105,30 +95,15 @@ export function categoriseCross(peers: CrossPeer[], family: string | undefined):
 }
 
 /**
- * Fill in every finding's `crossSdk`, comparing each SDK's report with every other's.
- * `families` maps an SDK to its family, if it has one.
+ * Fill in `crossSdk` on every test each report follows up (see reportFindings), comparing each
+ * SDK's report with every other's. `families` maps an SDK to its family, if it has one.
  */
-export function crossCompare(reports: TriageReport[], families: Record<string, string | undefined>): void {
-  for (const t of reports) {
-    const peers = reports.filter((p) => p.sdk !== t.sdk);
-    for (const f of t.findings) {
-      const kind = kindOf(t, f);
-      const list = peers.map((p) => peerStatus(p, f.test, kind, f.evidence.firstFailing?.date, families[p.sdk])).sort((a, b) => a.sdk.localeCompare(b.sdk));
-      f.crossSdk = { peers: list, ...categoriseCross(list, families[t.sdk]) };
+export function crossCompare(reports: HealthReport[], families: Record<string, string | undefined>): void {
+  for (const r of reports) {
+    const peers = reports.filter((p) => p.sdk !== r.sdk);
+    for (const { series, test } of reportFindings(r)) {
+      const list = peers.map((p) => peerStatus(p, test.test, series.kind, test.lastEpisode?.from, families[p.sdk])).sort((a, b) => a.sdk.localeCompare(b.sdk));
+      test.crossSdk = { peers: list, ...categoriseCross(list, families[r.sdk]) };
     }
   }
-}
-
-/** Per series, per test: what the page shows, from a compared triage report. */
-export function summariseCross(t: TriageReport): Record<string, Record<string, CrossSummary>> {
-  const out: Record<string, Record<string, CrossSummary>> = {};
-  for (const f of t.findings) {
-    if (!f.crossSdk) continue;
-    (out[f.series] ??= {})[f.test] = {
-      category: f.crossSdk.category,
-      failingOn: f.crossSdk.peers.filter((p) => FAILS.has(p.status)).map((p) => p.sdk),
-      passingOn: f.crossSdk.peers.filter((p) => p.status === "passing" || p.status === "recovered").map((p) => p.sdk),
-    };
-  }
-  return out;
 }

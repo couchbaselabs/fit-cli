@@ -410,40 +410,52 @@ newItems.forEach((n) => {
   if (g) g.tests.push(n.test); else groups.push({ cls, since: n.since, suite: n.suite, series: n.series, nights: n.nights, tests: [n.test] });
 });
 groups.sort((a, b) => b.since.localeCompare(a.since));
-const sameCommit = (d) => {
-  const i = D.dates.indexOf(d); if (i < 1) return false;
-  return D.commits[d] && D.commits[d] === D.commits[D.dates[i - 1]];
-};
+// Each series' tests by name, for the details the lists above don't carry.
+const TESTS = new Map(D.series.map((s) => [s.id, new Map(s.tests.map((t) => [t.test, t]))]));
+const testOf = (seriesId, test) => (TESTS.get(seriesId) || new Map()).get(test);
+// The SDK commit a night tested, from the first series that ran then.
+const commitOn = (d) => { for (const s of D.series) { const n = s.nights[d]; if (n && n.sdkCommit) return n.sdkCommit.slice(0, 9); } return null; };
+// No change to this SDK's code between a test's last good night and the night it started
+// failing (path-aware: changes.ts), when that was looked up.
+const sdkUnchanged = (t) => !!(t && t.sdkChange && !t.sdkChange.changed);
 // What changed around the night it started: the SDK, and the FIT driver that holds the tests.
 const short = (sha) => esc(sha.slice(0, 9));
-function changeLine(c) {
-  if (!c) return '';
+function changeLine(t) {
+  const a = t && t.changeAnalysis;
+  if (!a) return '';
+  const sdk = t.sdkChange, drv = t.driverChanges;
+  const own = (drv && drv.testFileCommits) || [], helpers = ((drv && drv.helperCommits) || []).length;
+  const sdkCommits = sdk ? sdk.commits.length : 0, core = sdk ? sdk.sharedCoreCommits.length : 0;
   const parts = [];
-  if (c.testFileCommits.length) parts.push(`the test changed that night: ${c.testFileCommits.slice(0, 2).map((x) => `<code>${short(x.sha)}</code> ${esc(x.title)}`).join('; ')}${c.testFileCommits.length > 2 ? ` (+${c.testFileCommits.length - 2})` : ''}`);
-  if (c.sdkCommits || c.sharedCoreCommits) parts.push(`the SDK changed: ${c.sdkCommits} commit${c.sdkCommits === 1 ? '' : 's'}${c.sharedCoreCommits ? `, plus ${c.sharedCoreCommits} to shared core` : ''}`);
-  if (c.category === 'neither') parts.push(`neither the SDK nor this test changed${c.helperCommits ? ` (${c.helperCommits} driver commit${c.helperCommits === 1 ? '' : 's'} to shared test code)` : ''}`);
-  if (c.driverPin && c.category === 'unknown') parts.push(`the driver's pinned Gerrit patchset changed`);
+  if (own.length) parts.push(`the test changed that night: ${own.slice(0, 2).map((x) => `<code>${short(x.sha)}</code> ${esc(x.title)}`).join('; ')}${own.length > 2 ? ` (+${own.length - 2})` : ''}`);
+  if (sdkCommits || core) parts.push(`the SDK changed: ${sdkCommits} commit${sdkCommits === 1 ? '' : 's'}${core ? `, plus ${core} to shared core` : ''}`);
+  if (a.category === 'neither') parts.push(`neither the SDK nor this test changed${helpers ? ` (${helpers} driver commit${helpers === 1 ? '' : 's'} to shared test code)` : ''}`);
+  if (drv && (drv.from.gerritRef || drv.to.gerritRef) && a.category === 'unknown') parts.push(`the driver's pinned Gerrit patchset changed`);
   return parts.length ? `<div class="sub">${parts.join(' · ')}</div>` : '';
 }
 // The same test on the other SDKs (fit health cross), when the reports were compared.
 const sdkNames = (xs) => xs.map((x) => esc(D.sdkNames[x] || x)).join(', ');
-function crossLine(seriesId, test) {
-  const x = D.cross && D.cross[seriesId] && D.cross[seriesId][test];
+function crossLine(t) {
+  const x = t && t.crossSdk;
   if (!x || x.category === 'not-enough-data') return '';
-  const fails = x.failingOn.length ? `also failing on ${sdkNames(x.failingOn)}` : '';
-  const passes = x.passingOn.length ? `passes on ${sdkNames(x.passingOn)}` : '';
+  const on = (statuses) => x.peers.filter((p) => statuses.includes(p.status)).map((p) => p.sdk);
+  const failingOn = on(['failing', 'intermittent']), passingOn = on(['passing', 'recovered']);
+  const fails = failingOn.length ? `also failing on ${sdkNames(failingOn)}` : '';
+  const passes = passingOn.length ? `passes on ${sdkNames(passingOn)}` : '';
   const lead = { 'every-sdk': 'every SDK that runs it fails it', 'only-this-sdk': 'only this SDK fails it', family: 'its SDK family fails it' }[x.category];
   return [lead, fails, passes].filter(Boolean).join(' · ');
 }
 $('new').innerHTML = groups.map((g) => {
   const names = g.tests.map((t) => `<div class="tname">${nameHtml(t)}</div>`).join('');
-  const commit = sameCommit(g.since) ? `<span>no SDK change that night (<code>${D.commits[g.since]}</code> both nights)</span>` : '';
-  const change = changeLine(D.changes && D.changes[g.series] && D.changes[g.series][g.tests[0]]);
-  const cross = crossLine(g.series, g.tests[0]);
+  const t = testOf(g.series, g.tests[0]);
+  const sc = t && t.sdkChange;
+  const commit = sdkUnchanged(t) ? `<span>no SDK change since ${fmt(t.lastGood || t.previousNight)}${sc.from === sc.to ? ` (<code>${short(sc.from)}</code> both nights)` : ''}</span>` : '';
+  const change = changeLine(t);
+  const cross = crossLine(t);
   return `<li>${names}<div class="sub"><span class="num">since ${fmt(g.since)} · ${g.nights} nights</span><span>${esc(g.suite)}</span>${commit}</div>${change}${cross ? `<div class="sub">${cross}</div>` : ''}</li>`;
 }).join('') || `<li class="sub">Nothing started failing in the last ${RECENT} days.</li>`;
-const unchanged = groups.filter((g) => sameCommit(g.since)).length;
-$('new-callout').innerHTML = unchanged ? `${unchanged} of these groups began on a night with no SDK commit since the night before.` : '';
+const unchanged = groups.filter((g) => sdkUnchanged(testOf(g.series, g.tests[0]))).length;
+$('new-callout').innerHTML = unchanged ? `${unchanged} of these groups began with no change to the SDK since the test last passed.` : '';
 if (!$('new-callout').innerHTML) $('new-callout').hidden = true;
 
 const fixedItems = FUNC.flatMap((s) => s.stopped.map((f) => ({ ...f, suite: s.short })));
@@ -529,7 +541,7 @@ let markChartNight = () => {};
       const of = t && t.tests != null ? ` of ${num(t.passed + t.failing)} run · ${num(t.skipped)} skipped` : '';
       return `<span class="k">${esc(s.short)}:</span> <b>${vals[si][i]}</b> failing${of}`;
     }).join('<br>');
-    showTip(`<b>${fmt(d)}</b><br>${rows}${D.commits[d] ? `<br><span class="k">commit</span> ${D.commits[d]}` : ''}`, e.clientX, e.clientY);
+    showTip(`<b>${fmt(d)}</b><br>${rows}${commitOn(d) ? `<br><span class="k">commit</span> ${commitOn(d)}` : ''}`, e.clientX, e.clientY);
   });
   hit.addEventListener('mouseleave', () => { xh.setAttribute('opacity', '0'); hideTip(); });
   hit.addEventListener('click', (e) => {
@@ -565,7 +577,7 @@ function row(s, t) {
   if (t.cls === 'failing' && !t.streak && t.cleanTail) extra.push(`passed the last ${t.cleanTail} night${t.cleanTail > 1 ? 's' : ''}`);
   if (t.flakyBefore) extra.push(`failed ${t.flakyBefore}× before the ${WIN}-day window`);
   if (t.cls === 'stopped') extra.push(`last ran ${fmt(t.lastRan)} (${RESULT[t.lastResult]}) · not run since ${fmt(t.notRunSince)}`);
-  const cross = crossLine(s.id, t.test);
+  const cross = crossLine(t);
   if (cross) extra.push(cross);
   return `<div class="row"><div class="name"><div class="tname">${nameHtml(t.test)}</div>
     <div class="rate"><span class="pill p-${t.cls}" title="${esc(D.classes.blurbs[t.cls])}">${LABEL[t.cls]}${since}</span><span>${t.windowFails}/${t.windowRuns} in ${WIN} days · ${t.fails}/${t.runs} overall</span></div>
@@ -673,8 +685,9 @@ function showNight(d) {
   if (!d) { $('night').hidden = true; return; }
   const i = D.dates.indexOf(d);
   const prev = i > 0 ? D.dates[i - 1] : null;
-  const commit = D.commits[d]
-    ? `SDK commit <code>${esc(D.commits[d])}</code>${prev && D.commits[prev] ? (D.commits[prev] === D.commits[d] ? ', the same as the night before' : `, changed from <code>${esc(D.commits[prev])}</code> the night before`) : ''}`
+  const sha = commitOn(d), prevSha = prev && commitOn(prev);
+  const commit = sha
+    ? `SDK commit <code>${esc(sha)}</code>${prevSha ? (prevSha === sha ? ', the same as the night before' : `, changed from <code>${esc(prevSha)}</code> the night before`) : ''}`
     : 'SDK commit not known';
   const body = i < 0
     ? `<p class="sub">This report covers ${fmtY(D.start)} to ${fmtY(D.end)}, so it has nothing for this night.</p>`

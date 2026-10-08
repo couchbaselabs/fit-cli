@@ -20,8 +20,7 @@ import type { RunRecord } from "../record/run-record.js";
 import { defaultHealthStoreRoot } from "../store/health-store.js";
 import { openStore } from "../store/s3-store.js";
 import { HISTORY_DAYS, buildHealthReport, type ReportNotes } from "./build-report.js";
-import { buildTriageReport } from "./triage.js";
-import { analyseChanges, summariseChanges } from "./changes.js";
+import { analyseChanges } from "./changes.js";
 import { githubChanges } from "./github-changes.js";
 import { renderHtml } from "./render/render-html.js";
 import { renderTerminal } from "./render/render-terminal.js";
@@ -138,17 +137,13 @@ export async function runReportCommand(argv: string[], prefix: string): Promise<
   const jsonPath = join(runDir, "health-report.json");
   const htmlPath = join(runDir, "health-report.html");
   const digestPath = join(runDir, "slack-digest.txt");
-  const triagePath = join(runDir, "triage.json");
-  const triage = buildTriageReport(report, records, notes, manifests);
   // What changed around each change point, in the SDK and in the FIT driver: needs GitHub.
   const optIn = healthOptIn(sdk);
   if (optIn && !values["no-changes"]) {
-    const r = await analyseChanges(triage, { manifests, optIn, source: githubChanges });
-    fitCliInfo(`Changes: looked up the SDK and driver commits for ${r.analysed} findings${r.failed ? ` (${r.failed} couldn't be: see triage.json)` : ""}.`);
-    report.changes = summariseChanges(triage);
+    const r = await analyseChanges(report, { manifests, optIn, source: githubChanges });
+    fitCliInfo(`Changes: looked up the SDK and driver commits for ${r.analysed} tests${r.failed ? ` (${r.failed} couldn't be: see changeAnalysis in health-report.json)` : ""}.`);
   }
-  writeFileSync(jsonPath, JSON.stringify(report, null, 1) + "\n");
-  writeFileSync(triagePath, JSON.stringify(triage, null, 1) + "\n");
+  writeFileSync(jsonPath, JSON.stringify(report) + "\n");
   writeFileSync(htmlPath, await renderHtml(report, sdkName));
 
   // In GitHub Actions, the job summary shows the result on the workflow run page.
@@ -160,7 +155,7 @@ export async function runReportCommand(argv: string[], prefix: string): Promise<
   const out = values.out;
   if (out) {
     mkdirSync(out, { recursive: true });
-    for (const p of [jsonPath, htmlPath, digestPath, triagePath]) copyFileSync(p, join(out, basename(p)));
+    for (const p of [jsonPath, htmlPath, digestPath]) copyFileSync(p, join(out, basename(p)));
   }
   const details = [{ label: "Open", value: `open ${htmlPath}` }];
   const decision = slackDecision(values, slack?.channel, process.env);
@@ -186,10 +181,9 @@ export async function runReportCommand(argv: string[], prefix: string): Promise<
     // Kept as the workflow's health-report-<sdk> artifact and on Pages; s3://fit-cli/runs/ is for FIT runs.
     artifactsKeptElsewhere: true,
     artifacts: [
-      artifactFromPath(jsonPath, "The health report (derived from the run records; regenerate at will)", runDir),
+      artifactFromPath(jsonPath, "The health report: what the page draws and what tools read (fields in specs/health.md)", runDir),
       artifactFromPath(htmlPath, "The health report as a page", runDir),
       artifactFromPath(digestPath, "The Slack digest (headline, then the thread reply)", runDir),
-      artifactFromPath(triagePath, "The triage report: findings and evidence, for tools (schema in specs/health.md)", runDir),
     ],
     details,
   };
