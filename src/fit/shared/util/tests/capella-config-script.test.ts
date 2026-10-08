@@ -19,6 +19,6 @@ test("capellaConfigScript exports CAPELLA_PROJECT_ID when the project id is set"
   assert.match(script, /^export CAPELLA_OID=oid-dev$/m);
 });
 
-test("capellaConfigScript leaves CAPELLA_PROJECT_ID out when the project id is unset", () => {
-  assert.doesNotMatch(capellaConfigScript(capella), /CAPELLA_PROJECT_ID/);
+test("capellaConfigScript clears CAPELLA_PROJECT_ID when the project id is unset", () => {
+  assert.match(capellaConfigScript(capella), /^export CAPELLA_PROJECT_ID=''$/m);
 });

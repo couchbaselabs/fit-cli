@@ -241,6 +241,7 @@ export function capellaConfigScript(capella: ResolvedCapellaConfig): string {
     `export CAPELLA_V4_ENDPOINT=${posixQuote(capella.v4Endpoint)}`,
     `export CAPELLA_API_KEY=${posixQuote(capella.apiKey)}`,
     `export CAPELLA_API_SECRET=${posixQuote(capella.apiSecret)}`,
+    `export CAPELLA_PROJECT_ID=${posixQuote(capella.projectId ?? "")}`,
   ];
   // Optional: only present for environments the Capella team has issued them for
   // (currently just "dev"). Both have env-var fallbacks in cbdinocluster's `init`,
@@ -251,9 +252,6 @@ export function capellaConfigScript(capella: ResolvedCapellaConfig): string {
   }
   if (capella.overrideToken) {
     lines.push(`export CAPELLA_OVERRIDE_TOKEN=${posixQuote(capella.overrideToken)}`);
-  }
-  if (capella.projectId) {
-    lines.push(`export CAPELLA_PROJECT_ID=${posixQuote(capella.projectId)}`);
   }
   return lines.join("\n") + "\n";
 }
