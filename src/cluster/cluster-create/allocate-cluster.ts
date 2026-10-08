@@ -147,6 +147,7 @@ export async function allocateCluster(
   cng = false,
   /** Only used (to print debug links) when `deployer` is "cloud" — see {@link printCapellaDebugLinks}. */
   capellaEnvironment?: string,
+  purpose: string = allocatePurpose(),
 ): Promise<AllocatedCluster> {
   const runDir = ensureRunDir();
   const { path: localDefFile, artifact } = writeClusterDef(def, cycleDir, runDir);
@@ -174,7 +175,7 @@ export async function allocateCluster(
   args.push(sharedResourceDeployer ? "--expiry=3h" : "--expiry=31h");
   // Every cluster of the run carries the run stamp as its purpose, so teardown
   // can find it.
-  args.push(`--purpose=${allocatePurpose()}`);
+  args.push(`--purpose=${purpose}`);
   args.push(`--def-file=${defFile}`);
 
   mkdirSync(cycleDir, { recursive: true, mode: 0o700 });

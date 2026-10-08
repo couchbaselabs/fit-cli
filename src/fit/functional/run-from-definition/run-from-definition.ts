@@ -672,7 +672,12 @@ export async function setupCluster(
   execution: ClusterCommandExecutor = localClusterCommandExecutor(),
   setupDeclarativeClusterFn: typeof setupDeclarativeCluster = setupDeclarativeCluster,
   githubCredentials?: { user: string; token: string },
-): Promise<RunOutput & { group: ResolvedFunctionalExecutionGroup; clusterState?: ResumeClusterState }> {
+  purpose?: string,
+): Promise<RunOutput & {
+  group: ResolvedFunctionalExecutionGroup;
+  clusterState?: ResumeClusterState;
+  capellaKeyPool?: { cbdinoclusterCommand: string };
+}> {
   if (group.clusterMode === "connection") {
     fitCliWarn("\nsetup-cluster: using the existing cluster from cluster.connection; nothing to allocate.");
     return { group, artifacts: [], details: [] };
@@ -695,6 +700,7 @@ export async function setupCluster(
         // group.capellaEnvironment (the instance-level default) covers Capella Analytics
         // clusters, whose credentials are uploaded keyed off that field instead.
         capellaEnvironment: group.cbdinocluster.capella?.environment ?? group.capellaEnvironment,
+        purpose,
       },
       execution,
       clusterDir,
@@ -706,8 +712,6 @@ export async function setupCluster(
           ...(outcome.clusterId ? { clusterId: outcome.clusterId } : {}),
           ...(outcome.cbdinocluster ? { cbdinoclusterCommand: outcome.cbdinocluster } : {}),
           ...(outcome.deployer ? { deployer: outcome.deployer } : {}),
-          // The cluster carries this same stamp (same process, same run dir).
-          ...(outcome.allocated ? { purpose: allocatePurpose() } : {}),
           logsDir: join(clusterDir, "server-logs"),
           ...(outcome.couchbaseClusterUuid ? { couchbaseClusterUuid: outcome.couchbaseClusterUuid } : {}),
           ...(outcome.privateEndpointEnabled ? { privateEndpointEnabled: true } : {}),
@@ -718,6 +722,9 @@ export async function setupCluster(
     return {
       group: outcome.cluster ? applyGroupCluster(group, outcome.cluster) : group,
       ...(clusterState ? { clusterState } : {}),
+      ...(!clusterState && outcome.capellaKeyPool && outcome.cbdinocluster
+        ? { capellaKeyPool: { cbdinoclusterCommand: outcome.cbdinocluster } }
+        : {}),
       artifacts: outcome.artifacts,
       details: outcome.details,
     };
@@ -1626,10 +1633,11 @@ interface TeardownInputs {
   forceAws: boolean;
   clusterState?: ResumeClusterState;
   /**
-   * The Capella API key pool a situational init created. Functional runs carry the
-   * same fact on `clusterState` instead, which situational runs never have.
+   * The Capella API key pool an init created, when there is no `clusterState` to
+   * carry it (a situational run, or a functional run whose cluster setup failed).
    */
   capellaKeyPool?: { cbdinoclusterCommand: string };
+  purpose: string;
   performers: readonly RunningPerformer[];
   performerStates: readonly ResumePerformerState[];
   /** The box's active external services (e.g. otel), if any were started for this box. */
@@ -1676,8 +1684,8 @@ async function deleteClusterPrivateEndpoint(couchbaseClusterUuid: string): Promi
  * rotate the same pool, so removing it sooner would strip the keys they use.
  *
  * The pool reaches here two ways. A functional run carries the fact on its cluster
- * state, which teardown already has. A situational run has no cluster state at init
- * time, so its init result is passed in directly.
+ * state, which teardown already has. A situational run, or a functional run whose
+ * cluster setup failed, has no cluster state, so its init result is passed in directly.
  */
 async function removeCapellaKeyPool(
   clusterState: ResumeClusterState | undefined,
@@ -1696,7 +1704,7 @@ async function removeCapellaKeyPool(
  * box's cbdinocluster. Catches what the per-group `rm` cannot know about, an
  * allocate that failed part way, or a group whose `rm` failed. Only runs when the
  * box's cbdinocluster can talk to Capella (a cloud-deployer functional run, or a
- * situational run that created the key pool).
+ * run that created the key pool).
  *
  * Must run before {@link removeCapellaKeyPool} (it needs working keys) and before
  * the box is terminated (the config lives on the box). Best effort, a failure
@@ -1705,6 +1713,7 @@ async function removeCapellaKeyPool(
 async function removeRunCapellaLeftovers(
   clusterState: ResumeClusterState | undefined,
   keyPool: { cbdinoclusterCommand: string } | undefined,
+  purpose: string,
   execution: ClusterCommandExecutor,
 ): Promise<void> {
   const cbdinocluster =
@@ -1713,16 +1722,16 @@ async function removeRunCapellaLeftovers(
   if (!cbdinocluster) {
     return;
   }
-  await removeRunCapellaClusters(cbdinocluster, runStamp(clusterState), execution);
+  await removeRunCapellaClusters(cbdinocluster, purpose, execution);
 }
 
 /**
  * The stamp that names this run's clusters, for teardown and for FIT. A resumed
  * run gets a fresh run id, so its recomputed stamp would miss the original run's
- * clusters. The persisted stamp wins.
+ * clusters. The stamp saved in the run state wins.
  */
-export function runStamp(clusterState: ResumeClusterState | undefined): string {
-  return clusterState?.purpose ?? allocatePurpose();
+export function runStamp(savedState: RunState | undefined): string {
+  return savedState?.purpose ?? allocatePurpose();
 }
 
 /**
@@ -1768,6 +1777,7 @@ async function disposeCycleResources(
   clusterState: ResumeClusterState | undefined,
   performers: readonly RunningPerformer[],
   externalServices: readonly ExternalServiceHandle[],
+  purpose: string,
   cbcollect = false,
   capellaKeyPool?: { cbdinoclusterCommand: string },
 ): Promise<RunOutput> {
@@ -1776,7 +1786,7 @@ async function disposeCycleResources(
   // The box goes next, so the run's Capella leftovers and the pool have to go
   // first, in that order (the leftover sweep needs the pool's keys).
   if (execution) {
-    await removeRunCapellaLeftovers(clusterState, capellaKeyPool, execution);
+    await removeRunCapellaLeftovers(clusterState, capellaKeyPool, purpose, execution);
     await removeCapellaKeyPool(clusterState, capellaKeyPool, execution);
   }
   if (teardown.terminate) {
@@ -1873,7 +1883,7 @@ export async function teardownRun(
   inputs: TeardownInputs,
   overrides: { stopExternalServiceFn?: ExternalService["stop"] } = {},
 ): Promise<{ leftUp: boolean; output: RunOutput }> {
-  const { definitionPath, runDir, executionGroupIndex, runIndex, resumePath, execution, teardown, forceLocalhost, forceAws, clusterState, capellaKeyPool, performers, performerStates, externalServices, results, cbcollect = false, promptScope, situationalRunId } = inputs;
+  const { definitionPath, runDir, executionGroupIndex, runIndex, resumePath, execution, teardown, forceLocalhost, forceAws, clusterState, capellaKeyPool, purpose, performers, performerStates, externalServices, results, cbcollect = false, promptScope, situationalRunId } = inputs;
   const stopExternalServicesForThisRun = (): Promise<RunOutput> =>
     stopExternalServices(execution, EXTERNAL_SERVICES, externalServices, overrides.stopExternalServiceFn);
 
@@ -1927,6 +1937,7 @@ export async function teardownRun(
       ...(clusterState ? { cluster: clusterState } : {}),
       performers: [...performerStates],
       ...(situationalRunId ? { situationalRunId } : {}),
+      purpose,
     };
     const path = runDir ? writeRunState(runDir, state) : undefined;
     console.log(`\n✓ Leaving everything up.${path ? ` Saved run state to:\n  ${path}` : ""}`);
@@ -1998,7 +2009,7 @@ export async function teardownRun(
     // Outside the block above. Leftovers and a pool can exist when allocation
     // failed, or when the run reused a cluster it did not allocate. The leftover
     // sweep goes first because it needs the pool's keys.
-    await removeRunCapellaLeftovers(clusterState, capellaKeyPool, execution);
+    await removeRunCapellaLeftovers(clusterState, capellaKeyPool, purpose, execution);
     await removeCapellaKeyPool(clusterState, capellaKeyPool, execution);
   }
   if (teardown.terminate) {
@@ -2173,6 +2184,7 @@ export async function runFromDefinition(
     return finalizeRunFromDefinition([], [], undefined, tracker.worst, tracker.failureCount);
   }
   const situationalRunId = savedState?.situationalRunId ?? options.situationalRunId ?? randomUUID();
+  const purpose = runStamp(savedState);
   if (resumeAt) {
     if (!savedState) {
       fitCliError(
@@ -2509,7 +2521,7 @@ export async function runFromDefinition(
 
       let activeCycle = group;
       let clusterState: ResumeClusterState | undefined;
-      // Situational only. Functional runs carry the same fact on clusterState.
+      // Functional runs carry the same fact on clusterState once a cluster is up.
       let capellaKeyPool: { cbdinoclusterCommand: string } | undefined;
       const cyclePerformers: RunningPerformer[] = [];
       const cyclePerformerStates: ResumePerformerState[] = [];
@@ -2614,9 +2626,10 @@ export async function runFromDefinition(
                 };
               }
             }
-            const setup = await setupCluster(functionalCycle, execution, setupDeclarativeCluster, githubCredentials);
+            const setup = await setupCluster(functionalCycle, execution, setupDeclarativeCluster, githubCredentials, purpose);
             activeCycle = setup.group;
             clusterState = setup.clusterState;
+            capellaKeyPool = setup.capellaKeyPool;
             artifacts.push(...setup.artifacts);
             details.push(...setup.details);
             if (cbdinoclusterSetupFailed(activeCycle, true)) {
@@ -2772,7 +2785,7 @@ export async function runFromDefinition(
               definitionPath,
               recordResult,
               situationalRunId,
-              purpose: runStamp(clusterState),
+              purpose,
               functionalClusterVersion: clusterVersionLabel(activeCycle),
               existingPerformer: sessionPerformer,
               instanceKind: activeCycle.instance.kind,
@@ -2866,7 +2879,7 @@ export async function runFromDefinition(
             activePerformerStates = [];
           } else {
             // The next group stands up its own box: tear this whole box down.
-            const disposed = await disposeCycleResources(execution, cycleTeardown, clusterState, cyclePerformers, activeExternalServices, cbcollect, capellaKeyPool);
+            const disposed = await disposeCycleResources(execution, cycleTeardown, clusterState, cyclePerformers, activeExternalServices, purpose, cbcollect, capellaKeyPool);
             artifacts.push(...disposed.artifacts);
             details.push(...disposed.details);
             activeExecution = undefined;
@@ -2899,7 +2912,7 @@ export async function runFromDefinition(
         // Last group on this box, but more groups follow on a fresh box: tear the
         // whole box down — its cluster, performers, external services and the
         // instance itself.
-        const disposed = await disposeCycleResources(execution, cycleTeardown, clusterState, cyclePerformers, activeExternalServices, cbcollect, capellaKeyPool);
+        const disposed = await disposeCycleResources(execution, cycleTeardown, clusterState, cyclePerformers, activeExternalServices, purpose, cbcollect, capellaKeyPool);
         artifacts.push(...disposed.artifacts);
         details.push(...disposed.details);
         activeExecution = undefined;
@@ -2964,6 +2977,7 @@ export async function runFromDefinition(
       forceAws,
       ...(activeClusterState ? { clusterState: activeClusterState } : {}),
       ...(activeCapellaKeyPool ? { capellaKeyPool: activeCapellaKeyPool } : {}),
+      purpose,
       performers: activePerformers,
       performerStates: activePerformerStates,
       situationalRunId,

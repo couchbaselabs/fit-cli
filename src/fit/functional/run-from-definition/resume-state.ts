@@ -47,12 +47,6 @@ export interface ResumeClusterState {
    * Absent on run-state files written before this field existed.
    */
   deployer?: string;
-  /**
-   * The per-run purpose stamp the cluster was allocated with (see
-   * allocate-purpose.ts). Persisted so a resumed run, which gets a fresh run id,
-   * still sweeps the original run's leftovers at teardown.
-   */
-  purpose?: string;
   /** The cluster's artifacts dir, where cbcollect diagnostics are gathered before removal. */
   logsDir?: string;
   /**
@@ -109,6 +103,12 @@ export interface RunState {
   performers: ResumePerformerState[];
   /** Reused on resume; a fresh id would split one run across two groups. */
   situationalRunId?: string;
+  /**
+   * The per-run purpose stamp (see allocate-purpose.ts). Persisted so a resumed
+   * run, which gets a fresh run id, gives FIT the same stamp and still sweeps the
+   * original run's leftovers at teardown.
+   */
+  purpose?: string;
 }
 
 /** Where the run-state file lives inside the artifact directory `runDir`. */
