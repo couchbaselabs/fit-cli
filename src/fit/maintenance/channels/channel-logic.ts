@@ -38,6 +38,15 @@ export function channelNameForBranch(branch: string): string {
   return stripped.replace(/[^A-Za-z0-9._-]/g, "-");
 }
 
+/**
+ * The fully qualified ref for a branch, accepting either `feature/x` or
+ * `refs/heads/feature/x`. Fetching by bare name is ambiguous when a tag of the
+ * same name exists, as it does for a branch channel's own release tag.
+ */
+export function qualifiedBranchRef(branch: string): string {
+  return branch.startsWith("refs/heads/") ? branch : `refs/heads/${branch}`;
+}
+
 /** The source branch + built commit recorded in a branch-channel release body. */
 export interface BranchChannelMarker {
   branch: string;

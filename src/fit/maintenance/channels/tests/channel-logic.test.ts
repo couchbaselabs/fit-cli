@@ -8,6 +8,7 @@ import {
   parseMarker,
   planPrune,
   planSync,
+  qualifiedBranchRef,
   shasMatch,
   type BranchChannelRelease,
   type RemoteBranch,
@@ -29,6 +30,16 @@ describe("channelNameForBranch", () => {
 
   it("keeps dots, underscores and dashes", () => {
     assert.equal(channelNameForBranch("v1.2_rc-3"), "v1.2_rc-3");
+  });
+});
+
+describe("qualifiedBranchRef", () => {
+  it("adds refs/heads/ to a bare branch name", () => {
+    assert.equal(qualifiedBranchRef("feature/x"), "refs/heads/feature/x");
+  });
+
+  it("leaves an already-qualified ref unchanged", () => {
+    assert.equal(qualifiedBranchRef("refs/heads/feature/x"), "refs/heads/feature/x");
   });
 });
 
