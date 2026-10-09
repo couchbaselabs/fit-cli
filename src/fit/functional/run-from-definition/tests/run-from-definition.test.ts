@@ -23,7 +23,8 @@ import {
 } from "../run-from-definition.js";
 import { formatRunLabel } from "../../../shared/util/run-labels.js";
 import { loadEnvironments } from "../../../util/environments.js";
-import type { RunState } from "../resume-state.js";
+import type { ResumeClusterState, RunState } from "../resume-state.js";
+import { removeClusterArgs, removeRunCapellaClustersArgs } from "../../../../cluster/cluster-create/setup-declarative-cluster.js";
 
 const STAMP = "fitcli-20260101-000000-0123abcd";
 
@@ -211,7 +212,40 @@ test("setupCluster hands teardown the key pool when allocation fails after init 
   );
 
   assert.equal(result.clusterState, undefined);
-  assert.deepEqual(result.capellaKeyPool, { cbdinoclusterCommand: "cbdinocluster" });
+  assert.deepEqual(result.cleanup, { cbdinoclusterCommand: "cbdinocluster", capellaKeyPool: true });
+});
+
+test("setupCluster hands teardown the id of an allocated cluster it could not resolve", async () => {
+  const result = await setupCluster(functionalCycle(), STAMP, executor(), () =>
+    Promise.resolve({
+      allocated: true,
+      clusterId: "cluster-1",
+      cbdinocluster: "cbdinocluster",
+      capellaCredentials: true,
+      artifacts: [],
+      details: [],
+    }),
+  );
+
+  assert.equal(result.clusterState, undefined);
+  assert.deepEqual(result.cleanup, { cbdinoclusterCommand: "cbdinocluster", clusterId: "cluster-1", capellaCredentials: true });
+});
+
+test("setupCluster keeps the Capella credentials fact on the cluster state", async () => {
+  const result = await setupCluster(functionalCycle(), STAMP, executor(), () =>
+    Promise.resolve({
+      allocated: true,
+      clusterId: "cluster-1",
+      cbdinocluster: "cbdinocluster",
+      cluster: capellaCluster(),
+      capellaCredentials: true,
+      artifacts: [],
+      details: [],
+    }),
+  );
+
+  assert.equal(result.clusterState?.capellaCredentials, true);
+  assert.equal(result.cleanup, undefined);
 });
 
 test("cbdinoclusterSetupFailed flags a missing cycle cluster after the cluster phase ran", () => {
@@ -570,4 +604,99 @@ test("teardownRun has nothing to stop when the run never started an external ser
   assert.equal(stopped, 0);
   assert.equal(leftUp, false);
   assert.deepEqual(output, { artifacts: [], details: [] });
+});
+
+/** A local execution context that records, in order, each command teardown runs through it. */
+function recordingExecutionContext(): FitExecutionContext & { calls: string[] } {
+  const calls: string[] = [];
+  const record = (command: string, args: string[]): Promise<void> => {
+    calls.push([command, ...args].join(" "));
+    return Promise.resolve();
+  };
+  return { ...fitExecutionContext(), calls, run: record, runHiddenUntilFailure: record, streamToTerminalAndFile: record };
+}
+
+const RM = `cbdinocluster ${removeClusterArgs("cluster-1").join(" ")}`;
+const SWEEP = `cbdinocluster ${removeRunCapellaClustersArgs(STAMP).join(" ")}`;
+const POOL_REMOVAL = "cbdinocluster cloud apikeys remove";
+const LEAVE_NOTHING_UP = { confirmLeaveUpFn: () => Promise.resolve(false) };
+
+function allocatedClusterState(capellaCredentials: boolean): ResumeClusterState {
+  return {
+    cluster: capellaCredentials ? capellaCluster() : cluster(),
+    allocated: true,
+    clusterId: "cluster-1",
+    cbdinoclusterCommand: "cbdinocluster",
+    ...(capellaCredentials ? { capellaCredentials: true } : {}),
+  };
+}
+
+test("teardownRun removes a cloud cluster it allocated, then sweeps the run's Capella clusters", async () => {
+  const execution = recordingExecutionContext();
+  await teardownRun(teardownInputs({ execution, clusterState: allocatedClusterState(true) }), LEAVE_NOTHING_UP);
+  assert.deepEqual(execution.calls, [RM, SWEEP]);
+});
+
+test("teardownRun sweeps before it removes a handed-over key pool, also when there is nothing to leave up", async () => {
+  const execution = recordingExecutionContext();
+  const { leftUp } = await teardownRun(
+    teardownInputs({
+      execution,
+      cleanup: { cbdinoclusterCommand: "cbdinocluster", capellaKeyPool: true, capellaCredentials: true },
+    }),
+  );
+  assert.equal(leftUp, false);
+  assert.deepEqual(execution.calls, [SWEEP, POOL_REMOVAL]);
+});
+
+test("teardownRun removes an unresolved cluster and sweeps when there is nothing to leave up", async () => {
+  const execution = recordingExecutionContext();
+  await teardownRun(
+    teardownInputs({
+      execution,
+      cleanup: { cbdinoclusterCommand: "cbdinocluster", clusterId: "cluster-1", capellaCredentials: true },
+    }),
+  );
+  assert.deepEqual(execution.calls, [RM, SWEEP]);
+});
+
+test("teardownRun sweeps after a failed allocate on a box with Capella credentials, before terminating the box", async () => {
+  const execution = recordingExecutionContext();
+  await teardownRun(
+    teardownInputs({
+      execution,
+      teardown: {
+        kind: "remote",
+        instanceId: "i-0123456789abcdef0",
+        owned: true,
+        terminate: () => {
+          execution.calls.push("terminate");
+          return Promise.resolve();
+        },
+      },
+      cleanup: { cbdinoclusterCommand: "cbdinocluster", capellaCredentials: true },
+    }),
+    LEAVE_NOTHING_UP,
+  );
+  assert.deepEqual(execution.calls, [SWEEP, "terminate"]);
+});
+
+test("teardownRun does not sweep a box without Capella credentials", async () => {
+  const withCluster = recordingExecutionContext();
+  await teardownRun(teardownInputs({ execution: withCluster, clusterState: allocatedClusterState(false) }), LEAVE_NOTHING_UP);
+  assert.deepEqual(withCluster.calls, [RM]);
+
+  const withoutCluster = recordingExecutionContext();
+  await teardownRun(teardownInputs({ execution: withoutCluster, cleanup: { cbdinoclusterCommand: "cbdinocluster" } }));
+  assert.deepEqual(withoutCluster.calls, []);
+});
+
+test("teardownRun leaves the run's Capella clusters alone when everything is left up", async () => {
+  const execution = recordingExecutionContext();
+  const { leftUp } = await teardownRun(
+    teardownInputs({ execution, clusterState: allocatedClusterState(true) }),
+    { confirmLeaveUpFn: () => Promise.resolve(true) },
+  );
+  assert.equal(leftUp, true);
+  assert.deepEqual(execution.calls, []);
 });

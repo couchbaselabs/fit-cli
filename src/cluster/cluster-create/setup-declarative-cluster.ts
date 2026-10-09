@@ -484,11 +484,11 @@ export interface SetupDeclarativeClusterResult extends RunOutput {
   /** The resolved cbdinocluster command, present when one was found — for teardown. */
   cbdinocluster?: string;
   /**
-   * The cbdinocluster deployer this cluster lives on ("cloud", "docker", "cao"),
-   * resolved from the plan's default. Teardown reads it to know whether the box's
-   * cbdinocluster can talk to Capella, so it can sweep this run's leftovers there.
+   * True when the box's cbdinocluster has Capella credentials, because the plan
+   * uses the cloud deployer or init created the run's key pool. Teardown then
+   * sweeps the run's leftover Capella clusters, whatever became of the cluster.
    */
-  deployer?: string;
+  capellaCredentials?: boolean;
   /**
    * The Couchbase cluster's own UUID (distinct from cbdinocluster's own tracking
    * id, `clusterId`) — a generic concept that applies beyond Capella/PE. Populated
@@ -1174,7 +1174,6 @@ async function allocate(
     allocated: true,
     clusterId: allocated.clusterId,
     cbdinocluster,
-    ...(deployer ? { deployer } : {}),
     ...(couchbaseClusterUuid ? { couchbaseClusterUuid } : {}),
     ...(deployer === "cloud" && capellaEnvironment ? { capellaEnvironment } : {}),
     // Only true when PE was actually set up this run — gates whether teardown should
@@ -1248,8 +1247,11 @@ export async function setupDeclarativeCluster(plan: {
     ({ capellaKeyPool } = await runCbdinoclusterInit(execution, cbdinocluster, args, plan.purpose, plan.githubCredentials, plan.init.configPatch, cycleDir));
   }
   // Carried onto whichever result this call ends up returning, so teardown removes
-  // the pool even when the cluster itself never came up.
-  const poolResult = capellaKeyPool ? { capellaKeyPool: true } : {};
+  // the pool and sweeps Capella even when the cluster itself never came up.
+  const capellaResult = {
+    ...(capellaKeyPool ? { capellaKeyPool: true } : {}),
+    ...(capellaKeyPool || plan.deployer === "cloud" ? { capellaCredentials: true } : {}),
+  };
 
   // CNG on a clean k3d box: install the Couchbase CRDs + admission controller the cao
   // deployer needs — the steps cbdinocluster's interactive `init` would prompt for
@@ -1264,14 +1266,14 @@ export async function setupDeclarativeCluster(plan: {
   // `cbdinocluster ps` doubles as a sanity check and the list of what's running.
   const existing = await listExistingClusters(cbdinocluster, execution);
   if (!existing) {
-    return FAILED({ cbdinocluster, ...poolResult });
+    return FAILED({ cbdinocluster, ...capellaResult });
   }
 
   const decision = decideClusterExists(existing, plan.onClusterExists);
 
   if (decision.action === "abort") {
     console.error(`\n✗ setup-cluster: ${decision.reason}`);
-    return FAILED({ cbdinocluster, ...poolResult });
+    return FAILED({ cbdinocluster, ...capellaResult });
   }
 
   if (decision.action === "useExisting") {
@@ -1317,8 +1319,7 @@ export async function setupDeclarativeCluster(plan: {
       ...(cluster ? { cluster } : {}),
       allocated: false,
       cbdinocluster,
-      ...(plan.deployer ? { deployer: plan.deployer } : {}),
-      ...poolResult,
+      ...capellaResult,
       artifacts: [],
       details: [],
     };
@@ -1368,7 +1369,7 @@ export async function setupDeclarativeCluster(plan: {
     plan.capella?.privateEndpoint !== undefined,
     effectiveDeployer === "cloud" ? (plan.capellaEnvironment ?? DEFAULT_CAPELLA_ENV) : undefined,
   );
-  return { ...allocated, ...poolResult };
+  return { ...allocated, ...capellaResult };
 }
 
 if (isMain(import.meta.url)) {

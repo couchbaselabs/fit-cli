@@ -42,11 +42,10 @@ export interface ResumeClusterState {
   /** The cbdinocluster command (path) on the target, for teardown removal. */
   cbdinoclusterCommand?: string;
   /**
-   * The cbdinocluster deployer the cluster lives on ("cloud", "docker", "cao").
-   * Teardown reads it to know whether the box's cbdinocluster can talk to Capella.
-   * Absent on run-state files written before this field existed.
+   * True when the box's cbdinocluster has Capella credentials. Teardown then
+   * sweeps the run's leftover Capella clusters through it.
    */
-  deployer?: string;
+  capellaCredentials?: boolean;
   /** The cluster's artifacts dir, where cbcollect diagnostics are gathered before removal. */
   logsDir?: string;
   /**
