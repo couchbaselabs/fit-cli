@@ -682,8 +682,8 @@ async function selectedClusterFor(
   };
 }
 
-// The bound exists because a foreign cluster stuck in destroying held a deletion wait
-// for 100 minutes. The next sweep takes what a timed out removal leaves behind.
+// The bounds keep one cluster stuck in deletion from holding up teardown. The hourly
+// capella-clusters sweep removes what a timed out removal leaves, once it expires.
 export const CBDINOCLUSTER_RM_TIMEOUT = "30m";
 export const CBDINOCLUSTER_REMOVE_ALL_TIMEOUT = "45m";
 

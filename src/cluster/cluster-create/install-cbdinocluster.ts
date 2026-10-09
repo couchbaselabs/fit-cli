@@ -201,7 +201,7 @@ export async function installCbdinoclusterRemote(
 }
 
 /**
- * Install the latest cbdinocluster release on this machine. Used by
+ * Install the pinned cbdinocluster release on this machine. Used by
  * `capella-clusters`, which runs on a laptop or on a bare GitHub runner. The
  * install script only needs uname, curl and chmod, so the remote one works here.
  */
