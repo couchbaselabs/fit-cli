@@ -250,15 +250,19 @@ test("firstHostname extracts the first host from a comma-separated list", () => 
   assert.equal(firstHostname("  host1 , host2 "), "host1");
 });
 
-test("resourceCreationPiece enables cluster-creating tests with both mandatory keys", () => {
+test("resourceCreationPiece enables cluster-creating tests with both mandatory keys and the run stamp", () => {
   const piece = resourceCreationPiece({
     cbdinoclusterPath: "/home/ubuntu/.local/bin/cbdinocluster",
     version: "8.0.1-4654",
+    purpose: "fitcli-20260821-154758-ded4",
   });
 
   const resourceCreation = piece.resourceCreation as Record<string, unknown>;
   const cluster = resourceCreation.cluster as Record<string, unknown>;
-  assert.deepEqual(cluster.cbdinocluster, { path: "/home/ubuntu/.local/bin/cbdinocluster" });
+  assert.deepEqual(cluster.cbdinocluster, {
+    path: "/home/ubuntu/.local/bin/cbdinocluster",
+    purpose: "fitcli-20260821-154758-ded4",
+  });
   assert.deepEqual(cluster.preferredCluster, { version: "8.0.1-4654" });
 });
 
