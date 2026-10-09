@@ -104,9 +104,9 @@ export interface RunState {
   /** Reused on resume; a fresh id would split one run across two groups. */
   situationalRunId?: string;
   /**
-   * The per-run purpose stamp (see allocate-purpose.ts). Persisted so a resumed
-   * run, which gets a fresh run id, gives FIT the same stamp and still sweeps the
-   * original run's leftovers at teardown.
+   * The run stamp (see allocate-purpose.ts). A resumed run reuses it for its
+   * allocates, its key pool, FIT and teardown, so it still finds what the original
+   * run made.
    */
   purpose?: string;
 }
