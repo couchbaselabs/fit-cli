@@ -65,7 +65,7 @@ export interface CbdinoSettings {
   };
   /**
    * The run stamp. FIT puts it in front of the purpose of each cluster it
-   * allocates, so the run's teardown removes those clusters too.
+   * allocates, so the run's teardown sweep also takes the Capella ones.
    */
   purpose?: string;
 }

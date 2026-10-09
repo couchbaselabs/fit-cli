@@ -32,7 +32,7 @@ export interface ClusterCreatingConfig {
   version: string;
   /**
    * The run stamp. FIT puts it in front of the purpose of each cluster it
-   * allocates, so the run's teardown removes those clusters too.
+   * allocates, which ties those clusters to the run.
    */
   purpose: string;
 }

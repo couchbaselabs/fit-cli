@@ -54,8 +54,7 @@ export interface CbdinoclusterListItem {
   state?: string;
   /**
    * The `--purpose` the cluster was allocated with, which cbdinocluster carries in
-   * the Capella project name. Absent on clusters that predate it, which is how we
-   * tell those apart from ours.
+   * the Capella project name. Absent when the cluster was allocated without one.
    */
   purpose?: string;
   /** RFC3339. Absent when the cluster has no expiry at all, and so is never swept. */
@@ -261,9 +260,9 @@ function reportDestroyFailed(clusters: readonly CbdinoclusterListItem[], envName
 }
 
 /**
- * The bound on the cleanup. It walks every expired project in the organization
- * one at a time, so a big backlog is slow. The job cap is 120m, so this has to
- * give up first for the summary to still be written.
+ * The bound on the cleanup. A big backlog of expired projects is slow to delete.
+ * The job cap is 120m, so this has to give up first for the summary to still be
+ * written.
  */
 export const CLEANUP_TIMEOUT = "90m";
 
