@@ -747,11 +747,12 @@ export function removeRunCapellaClustersArgs(purpose: string): string[] {
 }
 
 /**
- * Remove every Capella cluster and project still carrying this run's purpose
- * stamp. The per-group `rm` removes the cluster fit-cli knows the id of, but an
- * allocate that failed part way, or a group whose `rm` failed, leaves projects
- * fit-cli holds no id for. A cluster matches when its purpose equals the stamp or
- * starts with the stamp plus a dash, so FIT's `<stamp>-FIT-SIT` matches too.
+ * Remove every Capella cluster still carrying this run's purpose stamp, in the
+ * fit-cli project and in legacy projects. The per-group `rm` removes the
+ * cluster fit-cli knows the id of, but an allocate that failed part way, or a
+ * group whose `rm` failed, leaves clusters fit-cli holds no id for. A cluster
+ * matches when its purpose equals the stamp or starts with the stamp plus a dash,
+ * so FIT's `<stamp>-FIT-SIT` matches too.
  * Another run matches only if it drew the same second and the same 32 random bits.
  * It removes expired and live clusters, because the run is over.
  *

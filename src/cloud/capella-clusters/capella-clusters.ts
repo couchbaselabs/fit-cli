@@ -50,13 +50,15 @@ export interface CbdinoclusterListItem {
   id: string;
   type?: string;
   /**
-   * `provisioning` is also what an empty project (a failed allocate that never
-   * reached cluster creation) shows as, and `corrupted` a half-deleted one.
+   * For a legacy project, `provisioning` is also what an empty project (a failed
+   * allocate that never reached cluster creation) shows as, and `corrupted` a
+   * half-deleted one.
    */
   state?: string;
   /**
-   * The `--purpose` the cluster was allocated with, which cbdinocluster carries in
-   * the Capella project name. Absent when the cluster was allocated without one.
+   * The `--purpose` the cluster was allocated with. cbdinocluster carries it in the
+   * cluster name in the fit-cli project, and in the project name in a legacy
+   * project. Absent when the cluster was allocated without one.
    */
   purpose?: string;
   /** RFC3339. Absent when the cluster has no expiry at all, and so is never swept. */
