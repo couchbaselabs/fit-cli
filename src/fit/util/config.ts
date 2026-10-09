@@ -878,7 +878,10 @@ export interface ResolvedCapellaConfig {
   /** Only set for environments the Capella team has issued one for (currently just "dev"). */
   internalSupportToken?: string;
   overrideToken?: string;
-  /** The project cbdinocluster puts every cluster in. Unset until the env has one. */
+  /**
+   * The project cbdinocluster puts every cluster in. A box run needs it to
+   * allocate. Unset when the env has none.
+   */
   projectId?: string;
 }
 

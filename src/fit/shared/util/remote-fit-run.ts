@@ -17,6 +17,7 @@ import type { Sdk } from "../../../util/sdk/sdks.js";
 import { DEFAULT_PERFORMER_PORT } from "../../performers/util/performer-port.js";
 import { createRemoteFitExecutionContext } from "./remote-fit-execution-context.js";
 import { resolveFitPerformerDir, resolveGerritSshKey, type ResolvedCapellaConfig } from "../../util/config.js";
+import { throwFatalToCluster } from "../failure-classification.js";
 
 const REMOTE_FIT_WORKSPACE_DIR = "fit-workspace";
 const REMOTE_DOCKER_WRAPPER_FILE = "docker";
@@ -256,6 +257,15 @@ export function capellaConfigScript(capella: ResolvedCapellaConfig): string {
   return lines.join("\n") + "\n";
 }
 
+/** cbdinocluster on the box allocates in the env's project, so it fails without a project id. */
+export function requireCapellaProjectId(capellaEnvironment: string, capella: ResolvedCapellaConfig): void {
+  if (!capella.projectId) {
+    throwFatalToCluster(
+      `Capella env ${capellaEnvironment} has no projectId. Add capella.${capellaEnvironment}.projectId to environments.json5.`,
+    );
+  }
+}
+
 /**
  * Write the Capella control-plane settings to the remote instance as a sourced
  * env file, so `cbdinocluster init --auto` (run later via a login shell) inherits
@@ -264,12 +274,15 @@ export function capellaConfigScript(capella: ResolvedCapellaConfig): string {
  * the file is uploaded via SCP, never on a command line. Unlike it, these credentials are
  * still sourced from `~/.profile`: Capella creds come from AWS Secrets Manager and don't
  * expire mid-run, so they don't need a refreshing source on the box.
+ * Throws when the env has no projectId.
  */
 export async function uploadRemoteCapellaConfig(
   target: ExecutionTarget,
   rootDir: string,
   capella: ResolvedCapellaConfig,
+  capellaEnvironment: string,
 ): Promise<void> {
+  requireCapellaProjectId(capellaEnvironment, capella);
   const remotePath = remoteCapellaConfigPath(rootDir);
   const localFile = createRunFilePath(REMOTE_CAPELLA_CONFIG_FILENAME);
   writeFileSync(localFile, capellaConfigScript(capella), { mode: 0o600 });
