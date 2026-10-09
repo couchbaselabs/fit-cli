@@ -50,12 +50,6 @@ export interface RecordedFailure {
 export interface RunOutput extends ArtifactCollection, DetailCollection {
   worstFailure?: RecordedFailure;
   failureCount?: number;
-  /**
-   * Set by a command whose outputs are kept somewhere else (the FIT health workflow keeps
-   * its report as a GitHub artifact and on Pages): when it succeeds, its run directory is
-   * not uploaded to s3://fit-cli/runs/, which is for FIT runs. A failure still uploads.
-   */
-  artifactsKeptElsewhere?: boolean;
 }
 
 const FAILURE_SEVERITY: Record<string, number> = {
@@ -206,16 +200,6 @@ export function producedOnlyBoilerplate(artifacts: readonly Artifact[]): boolean
   return artifacts.every((artifact) => BOILERPLATE_ARTIFACTS.has(artifact.filename));
 }
 
-/**
- * Whether a command's run directory is worth uploading to S3: always when it failed (the
- * logs are then the only record of why), otherwise only when it produced something beyond
- * the boilerplate that isn't kept elsewhere.
- */
-export function runArtifactsWorthUploading(failed: boolean, artifacts: readonly Artifact[], runOutput: Pick<RunOutput, "artifactsKeptElsewhere">): boolean {
-  if (failed) return true;
-  return !producedOnlyBoilerplate(artifacts) && !runOutput.artifactsKeptElsewhere;
-}
-
 /** Merge detail lists while preserving first-seen order. */
 export function combineDetails(...groups: ReadonlyArray<readonly Detail[] | undefined>): Detail[] {
   const combined: Detail[] = [];
@@ -256,7 +240,6 @@ export function combineRunOutputs(...groups: ReadonlyArray<Partial<RunOutput> | 
     artifacts: combineArtifacts(...groups.map((group) => group?.artifacts)),
     details: combineDetails(...groups.map((group) => group?.details)),
     ...(worstFailure !== undefined ? { worstFailure, failureCount } : {}),
-    ...(groups.some((group) => group?.artifactsKeptElsewhere) ? { artifactsKeptElsewhere: true } : {}),
   };
 }
 

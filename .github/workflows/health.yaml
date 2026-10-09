@@ -4,7 +4,8 @@
 #   1. `fit health backfill` - picks up the nights since the last run: each nightly's CI log,
 #      then the full JUnit results from its S3 run archive.
 #   2. `fit health report` - classifies every test, writes the job summary, uploads the HTML
-#      and JSON report as artifacts, and posts a Slack digest if the SDK's opt-in names a channel.
+#      and JSON report as artifacts, and posts a Slack digest if the SDK's settings in the store
+#      name a channel (`fit health settings <sdk> --slack-channel <id>`).
 #
 # Records are kept in the shared S3 store between runs. This only reads other repos' CI logs
 # and run archives; it changes nothing about how any SDK's nightly runs.
@@ -27,10 +28,10 @@ on:
         type: string
         default: s3://fit-cli/health-dev/
       slack:
-        description: Post Slack digests for SDKs that configure a channel.
+        description: Post Slack digests for SDKs that configure a channel (the scheduled run always does).
         required: false
         type: boolean
-        default: true
+        default: false
 
 # Least privilege by default; the health job adds id-token: write for OIDC.
 permissions:
@@ -137,8 +138,8 @@ jobs:
           SDK: ${{ matrix.sdk }}
           # Reads the SDK's and the FIT driver's commits around each change (best-effort).
           GH_TOKEN: ${{ steps.gh-secret.outputs.token }}
-          # An expression's '' is falsy, so choose between two non-empty flags. In CI a
-          # configured channel posts anyway; --slack just says so explicitly.
+          # An expression's '' is falsy, so choose between two non-empty flags. Only --slack
+          # posts, and only for an SDK with a channel configured.
           SLACK_FLAG: ${{ (github.event_name == 'schedule' || inputs.slack) && '--slack' || '--no-slack' }}
         run: bun src/fit/main/main.ts health report "$SDK" --out health-report $SLACK_FLAG
 

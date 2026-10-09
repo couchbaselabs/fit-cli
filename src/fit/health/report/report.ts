@@ -8,8 +8,8 @@
  * artifact directory. Notes (hand-written cross-SDK observations and known fixes) are read from
  * <store>/<sdk>/notes.json when present.
  */
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { artifactFromPath, type RunOutput } from "../../../util/non-fit/artifacts.js";
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { fitCliInfo, fitCliWarn, printWithoutTimestamps } from "../../../util/non-fit/fit-cli-log.js";
@@ -46,16 +46,17 @@ Usage:
   --no-changes     Don't look up the SDK and FIT driver commits around each change (needs GitHub).
   --store          Store: a directory, or s3://bucket/prefix/ (default: ${defaultHealthStoreRoot()}, or $FIT_HEALTH_STORE).
   --notes          Read hand-written notes ({fixes}) from this file instead of the store (see fit health notes).
-  --out            Also write health-report.json, .html and slack-digest.txt into this directory.
-  --slack          Post the digest to the SDK's configured Slack channel (in CI this is the default).
-  --no-slack       Don't post, even in CI.
+  --out            Write health-report.json, .html and slack-digest.txt into this directory instead.
+  --slack          Post the digest to the SDK's Slack channel (set with fit health settings).
+  --no-slack       Don't post (the default); overrides --slack.
   --slack-dry-run  Print the Slack digest instead of posting it.
   --slack-channel  Post to this channel or user ID instead of the configured one (implies --slack).
 
 Writes health-report.json, health-report.html and slack-digest.txt to the run's artifact
-directory. Posts the digest to Slack only when a channel is configured (the SDK's opt-in in
-health-opt-ins.ts has a \`slack\` block, or --slack-channel is given) AND either this is CI or
---slack was passed - so a local run never posts by accident.
+directory, or to --out. Written to --out, they aren't run artifacts: the health workflow keeps
+them as a GitHub artifact and on Pages, so the run directory isn't uploaded to S3. Posts the digest to Slack only when asked, with --slack (and the SDK has a channel
+set with \`fit health settings <sdk> --slack-channel <id>\`) or --slack-channel - so a run
+never posts by accident.
 Fill the store first with \`fit health backfill <sdk>\`.`;
 }
 
@@ -64,9 +65,8 @@ export type SlackDecision =
   | { post: false; dryRun: boolean; why: string; channel?: string };
 
 /**
- * Whether to post the digest. Configuring a channel enables Slack for an SDK; it then posts
- * automatically in CI (GITHUB_ACTIONS), but a local run must ask with --slack, so someone
- * trying the report on a laptop never posts to the team's channel by accident.
+ * Whether to post the digest: only when asked, with --slack (to the SDK's configured channel)
+ * or --slack-channel. The scheduled workflow passes --slack; nothing else posts by default.
  */
 export interface SlackFlags {
   slack?: boolean;
@@ -75,16 +75,13 @@ export interface SlackFlags {
   "slack-channel"?: string;
 }
 
-export function slackDecision(flags: SlackFlags, configuredChannel: string | undefined, env: NodeJS.ProcessEnv): SlackDecision {
+export function slackDecision(flags: SlackFlags, configuredChannel: string | undefined): SlackDecision {
   const override = flags["slack-channel"];
   const channel = override ?? configuredChannel;
   if (flags["slack-dry-run"]) return { post: false, dryRun: true, why: "dry run", channel };
   if (flags["no-slack"]) return { post: false, dryRun: false, why: "--no-slack given" };
   if (!channel) return { post: false, dryRun: false, why: "no Slack channel configured for this SDK (set one with `fit health settings <sdk> --slack-channel <id>`)" };
-  const ci = env.GITHUB_ACTIONS === "true";
-  if (!ci && !flags.slack && !override) {
-    return { post: false, dryRun: false, why: `a channel is configured, but this is a local run - pass --slack to post to ${channel}` };
-  }
+  if (!flags.slack && !override) return { post: false, dryRun: false, why: `--slack not given (it would post to ${channel})` };
   return { post: true, channel };
 }
 
@@ -131,9 +128,11 @@ export async function runReportCommand(argv: string[], prefix: string): Promise<
 
   const sdkName = sdkByValue(sdk)?.name ?? sdk;
   const runDir = ensureRunDir();
-  const jsonPath = join(runDir, "health-report.json");
-  const htmlPath = join(runDir, "health-report.html");
-  const digestPath = join(runDir, "slack-digest.txt");
+  const outDir = values.out ?? runDir;
+  mkdirSync(outDir, { recursive: true });
+  const jsonPath = join(outDir, "health-report.json");
+  const htmlPath = join(outDir, "health-report.html");
+  const digestPath = join(outDir, "slack-digest.txt");
   // What changed around each change point, in the SDK and in the FIT driver: needs GitHub.
   const optIn = healthOptIn(sdk);
   if (optIn && !values["no-changes"]) {
@@ -149,13 +148,8 @@ export async function runReportCommand(argv: string[], prefix: string): Promise<
   const slack = settings.slack;
   const digest = renderSlackDigest(report, sdkName, reportUrlFor(sdk, settings));
   writeFileSync(digestPath, `${digest.headline}\n\n--- thread ---\n${digest.thread}\n`);
-  const out = values.out;
-  if (out) {
-    mkdirSync(out, { recursive: true });
-    for (const p of [jsonPath, htmlPath, digestPath]) copyFileSync(p, join(out, basename(p)));
-  }
   const details = [{ label: "Open", value: `open ${htmlPath}` }];
-  const decision = slackDecision(values, slack?.channel, process.env);
+  const decision = slackDecision(values, slack?.channel);
   if (decision.post) {
     // Posting is a side effect of the report, never a reason for it to fail.
     try {
@@ -175,13 +169,13 @@ export async function runReportCommand(argv: string[], prefix: string): Promise<
     fitCliInfo(`Slack: not posting - ${decision.why}.`);
   }
   return {
-    // Kept as the workflow's health-report-<sdk> artifact and on Pages; s3://fit-cli/runs/ is for FIT runs.
-    artifactsKeptElsewhere: true,
-    artifacts: [
-      artifactFromPath(jsonPath, "The health report: what the page draws and what tools read (fields in specs/health.md)", runDir),
-      artifactFromPath(htmlPath, "The health report as a page", runDir),
-      artifactFromPath(digestPath, "The Slack digest (headline, then the thread reply)", runDir),
-    ],
+    artifacts: values.out
+      ? []
+      : [
+          artifactFromPath(jsonPath, "The health report: what the page draws and what tools read (fields in specs/health.md)", runDir),
+          artifactFromPath(htmlPath, "The health report as a page", runDir),
+          artifactFromPath(digestPath, "The Slack digest (headline, then the thread reply)", runDir),
+        ],
     details,
   };
 }

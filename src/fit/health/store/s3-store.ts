@@ -121,7 +121,6 @@ export async function openStore(spec: string | undefined, sdk: string, opts: Ope
   // The store's prefix, "" for a whole bucket, and otherwise always ending in "/".
   const prefix = key && !key.endsWith("/") ? `${key}/` : key;
   const mirror = mkdtempSync(join(tmpdir(), "fit-health-store-"));
-  const store = new TrackingHealthStore(mirror);
   const sdkPrefix = `${prefix}${sdk}/`;
   // Until the store is handed back, nothing else can close it: a failed pull removes its own mirror.
   try {
@@ -134,16 +133,19 @@ export async function openStore(spec: string | undefined, sdk: string, opts: Ope
     const pull = keysToPull(listed, prefix, sdk, opts);
     if (!listed.length) fitCliInfo(`fit health: no data for ${sdk} at s3://${bucket}/${sdkPrefix} yet; starting a new store`);
     fitCliInfo(`fit health: pulling ${pull.length} objects for ${sdk} from s3://${bucket}/${sdkPrefix}`);
+    // Pulled into a plain store: pulled keys aren't changes.
+    const cache = new LocalHealthStore(mirror);
     await mapWithConcurrency(pull, 16, async (k) => {
       const res = await s3Client.send(new GetObjectCommand({ Bucket: bucket, Key: `${prefix}${k}` }));
-      // Written straight to the cache, bypassing the tracking: pulled keys aren't changes.
-      LocalHealthStore.prototype.write.call(store, k, Buffer.from(await res.Body!.transformToByteArray()));
+      cache.write(k, Buffer.from(await res.Body!.transformToByteArray()));
     });
   } catch (err) {
     rmSync(mirror, { recursive: true, force: true });
     throw err;
   }
 
+  // From here on, what the command writes or removes is tracked, to be pushed.
+  const store = new TrackingHealthStore(mirror);
   return {
     store,
     location: `s3://${bucket}/${prefix}`,

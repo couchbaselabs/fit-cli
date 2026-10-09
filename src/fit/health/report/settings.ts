@@ -75,7 +75,8 @@ Usage:
   --no-slack       Stop posting the digest.
   --report-url     Link the digest to this page instead of ${PAGES_URL}<sdk>/.
 
-With no option, prints the current settings. A digest posts automatically only in CI.`;
+With no option, prints the current settings. A digest posts only from a report run with
+--slack, as the scheduled health workflow runs it.`;
 }
 
 export async function runSettingsCommand(argv: string[], prefix: string): Promise<Partial<RunOutput>> {

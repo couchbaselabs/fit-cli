@@ -26,15 +26,3 @@ test("producedOnlyBoilerplate: a real run, which also captured a definition and 
 test("producedOnlyBoilerplate: an empty artifact list counts as nothing worth keeping", () => {
   assert.equal(producedOnlyBoilerplate([]), true);
 });
-
-test("runArtifactsWorthUploading: a failure always uploads; success only when it made something not kept elsewhere", async () => {
-  const { runArtifactsWorthUploading, combineRunOutputs } = await import("../artifacts.js");
-  const report = [...boilerplate, { filename: "health-report.html", explanation: "The health report as a page" }];
-  assert.equal(runArtifactsWorthUploading(false, boilerplate, {}), false);
-  assert.equal(runArtifactsWorthUploading(false, report, {}), true);
-  assert.equal(runArtifactsWorthUploading(false, report, { artifactsKeptElsewhere: true }), false);
-  assert.equal(runArtifactsWorthUploading(true, report, { artifactsKeptElsewhere: true }), true);
-  // The flag survives runCli merging the command's output with the session logs.
-  assert.equal(combineRunOutputs({ artifactsKeptElsewhere: true, artifacts: [] }, { artifacts: boilerplate }).artifactsKeptElsewhere, true);
-  assert.equal(combineRunOutputs({ artifacts: [] }).artifactsKeptElsewhere, undefined);
-});

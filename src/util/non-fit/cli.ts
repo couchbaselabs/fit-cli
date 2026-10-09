@@ -11,7 +11,7 @@ import {
   shouldHoistFailureSnippet,
   worstFailureShouldExitNonZero,
   formatFailureSummaryLine,
-  runArtifactsWorthUploading,
+  producedOnlyBoilerplate,
   SESSION_LOG_NAME,
   type RunOutput,
 } from "./artifacts.js";
@@ -64,13 +64,12 @@ async function renderRunSummary(
 
   const heading = failureHeading(runOutput, context.uncaughtError);
 
-  // A bookkeeping command that succeeded has nothing worth uploading, nor does one whose
-  // outputs are kept elsewhere, and a second "Run artifacts" block in the job summary is
-  // just noise. It still uploads when it fails, because then the logs are the only record
-  // of why.
+  // A bookkeeping command that succeeded has nothing worth uploading, and a second
+  // "Run artifacts" block in the job summary is just noise. It still uploads when it
+  // fails, because then the logs are the only record of why.
   // A command can also fail by setting process.exitCode and returning normally (fit health check).
   const failed = !!heading || Number(process.exitCode ?? 0) !== 0;
-  if (!runArtifactsWorthUploading(failed, artifacts, runOutput)) {
+  if (!failed && producedOnlyBoilerplate(artifacts)) {
     return;
   }
 
