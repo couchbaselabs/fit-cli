@@ -123,6 +123,7 @@ const manifest = (runId: number, clonedAt: string, gerritRef?: string): RunManif
   runId,
   runAttempt: 1,
   date: clonedAt.slice(0, 10),
+  ci: { repo: "couchbase/couchbase-net-client", runId, runAttempt: 1 },
   status: "ok",
   records: [],
   driver: { "fit / op-onprem-func-lite": { clonedAt, ...(gerritRef ? { gerritRef } : {}) } },

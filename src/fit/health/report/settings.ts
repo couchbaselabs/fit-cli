@@ -9,10 +9,9 @@
  */
 import type { RunOutput } from "../../../util/non-fit/artifacts.js";
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
-import { fitCliInfo, printWithoutTimestamps } from "../../../util/non-fit/fit-cli-log.js";
 import type { LocalHealthStore } from "../store/health-store.js";
-import { openStore } from "../store/s3-store.js";
-import { STORE_OPTION, parseHealthArgs } from "../cli-args.js";
+import { openStore, showOrSetJson } from "../store/s3-store.js";
+import { STORE_OPTION, parseSdkCommandArgs } from "../cli-args.js";
 
 export interface HealthSettings {
   /** Post a digest - a headline in the channel, the detail in its thread - after each CI report. */
@@ -30,8 +29,7 @@ export const settingsKey = (sdk: string) => `${sdk}/settings.json`;
 export const PAGES_URL = "https://couchbaselabs.github.io/fit-cli/health/";
 
 export function readSettings(store: LocalHealthStore, sdk: string): HealthSettings {
-  const raw = store.read(settingsKey(sdk));
-  return raw ? (JSON.parse(raw.toString("utf8")) as HealthSettings) : {};
+  return store.readJson<HealthSettings>(settingsKey(sdk)) ?? {};
 }
 
 /** The digest's report link: the setting, else the SDK's Pages page. */
@@ -81,34 +79,23 @@ With no option, prints the current settings. A digest posts automatically only i
 }
 
 export async function runSettingsCommand(argv: string[], prefix: string): Promise<Partial<RunOutput>> {
-  const { values, sdk, help } = parseHealthArgs(
+  const parsed = parseSdkCommandArgs(
     argv,
     { ...STORE_OPTION, "slack-channel": { type: "string" }, "no-slack": { type: "boolean" }, "report-url": { type: "string" } },
     settingsHelp(prefix),
   );
-  if (help || argv.length === 0) {
-    console.log(settingsHelp(prefix));
-    return {};
-  }
-  if (!sdk) throw new Error(settingsHelp(prefix));
+  if (!parsed) return {};
+  const { values, sdk } = parsed;
   const args = { slackChannel: values["slack-channel"], noSlack: values["no-slack"] === true, reportUrl: values["report-url"] };
   if (args.noSlack && (args.slackChannel || args.reportUrl)) throw new Error("--no-slack can't be combined with --slack-channel or --report-url");
   const changing = args.noSlack || !!args.slackChannel || !!args.reportUrl;
-  const opened = await openStore(values.store ?? process.env.FIT_HEALTH_STORE, sdk, { skipRawLogs: true });
-  try {
-    const current = readSettings(opened.store, sdk);
-    if (changing) {
-      const next = applySettingsArgs(current, args);
-      const problems = validateSettings(next);
-      if (problems.length) throw new Error(`Invalid settings: ${problems.join("; ")}`);
-      opened.store.write(settingsKey(sdk), JSON.stringify(next, null, 1) + "\n");
-      await opened.flush();
-      fitCliInfo(`Set ${sdk}'s settings in ${opened.location}`);
-    }
-    printWithoutTimestamps(JSON.stringify(readSettings(opened.store, sdk), null, 1));
-  } finally {
-    opened.close();
-  }
+  const opened = await openStore(values.store, sdk, { skipRawLogs: true });
+  await showOrSetJson<HealthSettings>(opened, settingsKey(sdk), `${sdk}'s settings`, changing ? (current) => {
+    const next = applySettingsArgs(current, args);
+    const problems = validateSettings(next);
+    if (problems.length) throw new Error(`Invalid settings: ${problems.join("; ")}`);
+    return next;
+  } : undefined);
   return {};
 }
 

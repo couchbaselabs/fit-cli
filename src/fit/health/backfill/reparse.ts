@@ -11,14 +11,11 @@
 import type { RunOutput } from "../../../util/non-fit/artifacts.js";
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { fitCliInfo } from "../../../util/non-fit/fit-cli-log.js";
-import { gunzipSync } from "node:zlib";
 import { LOG_PARSER_VERSION } from "../log-parse/parse-run-log.js";
-import { rawLogKey } from "../record/run-manifest.js";
-import type { RunRecord } from "../record/run-record.js";
 import { defaultHealthStoreRoot } from "../store/health-store.js";
 import { openStore } from "../store/s3-store.js";
 import { ingestLog } from "./ingest-log.js";
-import { STORE_OPTION, parseHealthArgs } from "../cli-args.js";
+import { STORE_OPTION, parseSdkCommandArgs } from "../cli-args.js";
 
 export function reparseHelp(prefix: string): string {
   return `Rebuild run records from the raw logs in the store (no GitHub access needed).
@@ -31,13 +28,10 @@ Usage:
 }
 
 export async function runReparseCommand(argv: string[], prefix: string): Promise<Partial<RunOutput>> {
-  const { values, sdk, help } = parseHealthArgs(argv, { ...STORE_OPTION, all: { type: "boolean" } }, reparseHelp(prefix));
-  if (help || argv.length === 0) {
-    console.log(reparseHelp(prefix));
-    return {};
-  }
-  if (!sdk) throw new Error(reparseHelp(prefix));
-  const opened = await openStore(values.store ?? process.env.FIT_HEALTH_STORE, sdk);
+  const args = parseSdkCommandArgs(argv, { ...STORE_OPTION, all: { type: "boolean" } }, reparseHelp(prefix));
+  if (!args) return {};
+  const { values, sdk } = args;
+  const opened = await openStore(values.store, sdk);
   const store = opened.store;
   const all = values.all === true;
 
@@ -48,17 +42,9 @@ export async function runReparseCommand(argv: string[], prefix: string): Promise
     for (const m of store.listManifests(sdk)) {
       if (m.status !== "ok" && m.status !== "parse_error") continue;
       if (!all && m.parserVersion === LOG_PARSER_VERSION) continue;
-      const raw = store.read(rawLogKey(sdk, m.runId, m.runAttempt));
-      if (!raw) continue; // no stored log to reparse
-      // Older manifests don't carry the CI context; take it from one of their records.
-      const fromRecord = m.records.map((k) => store.read(k)).find((b): b is Buffer => !!b);
-      const ci = m.ci ?? (fromRecord ? (JSON.parse(fromRecord.toString("utf8")) as RunRecord).ci : undefined);
-      const next = ingestLog(
-        store,
-        { sdk, date: m.date, ci: { repo: "unknown", ...ci, runId: m.runId, runAttempt: m.runAttempt } },
-        gunzipSync(raw).toString("utf8"),
-        { keepRaw: false },
-      );
+      const text = store.readRawLog(sdk, m.runId, m.runAttempt);
+      if (text === undefined) continue; // no stored log to reparse
+      const next = ingestLog(store, { sdk, date: m.date, ci: m.ci }, text, { keepRaw: false });
       done++;
       records += next.records.length;
       // A run kept as it was because the new parse lost part of it counts too: its status stays "ok".

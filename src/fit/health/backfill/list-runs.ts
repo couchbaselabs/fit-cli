@@ -14,6 +14,7 @@
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { capture } from "../../../util/non-fit/proc.js";
 import { healthOptIn, type HealthOptIn } from "../registry/health-opt-ins.js";
+import { parseSdkCommandArgs } from "../cli-args.js";
 
 export interface CiRun {
   runId: number;
@@ -127,17 +128,15 @@ export async function listNightlyRuns(optIn: HealthOptIn): Promise<NightlyListin
 }
 
 if (isMain(import.meta.url)) {
-  const sdk = process.argv[2];
-  if (!sdk || sdk === "--help" || sdk === "-h") {
-    console.log(`List an opted-in SDK's nightly runs that GitHub still holds (newest first).
+  runCli(async () => {
+    const usage = `List an opted-in SDK's nightly runs that GitHub still holds (newest first).
 
 Usage:
-  bun src/fit/health/backfill/list-runs.ts <sdk>`);
-    process.exit(sdk ? 0 : 1);
-  }
-  runCli(async () => {
-    const optIn = healthOptIn(sdk);
-    if (!optIn) throw new Error(`${sdk} has not opted in to fit health (src/fit/health/registry/health-opt-ins.ts)`);
+  bun src/fit/health/backfill/list-runs.ts <sdk>`;
+    const args = parseSdkCommandArgs(process.argv.slice(2), {}, usage);
+    if (!args) return;
+    const optIn = healthOptIn(args.sdk);
+    if (!optIn) throw new Error(`${args.sdk} has not opted in to fit health (src/fit/health/registry/health-opt-ins.ts)`);
     const { runs, warnings } = await listNightlyRuns(optIn);
     for (const w of warnings) console.warn(w);
     for (const r of runs) console.log(`${r.date}  ${r.runId}#${r.runAttempt}  ${r.conclusion ?? r.status}  ${r.workflow}  ${r.sha.slice(0, 9)}`);

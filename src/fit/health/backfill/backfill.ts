@@ -21,14 +21,14 @@ import { LOG_PARSER_VERSION } from "../log-parse/parse-run-log.js";
 import { needsArchiveUpgrade, needsWork } from "../record/run-manifest.js";
 import { healthOptIn } from "../registry/health-opt-ins.js";
 import { type LocalHealthStore, defaultHealthStoreRoot } from "../store/health-store.js";
-import { openStore, type OpenedStore } from "../store/s3-store.js";
+import { openStore } from "../store/s3-store.js";
 import { fetchRunLog } from "./fetch-run-log.js";
 import { ingestLog, recordFetchFailure } from "./ingest-log.js";
 import { listNightlyRuns, type CiRun } from "./list-runs.js";
 import { upgradeFromArchive } from "./upgrade-from-archive.js";
 import { checkStore, renderChecks } from "./checks.js";
 import { printWithoutTimestamps } from "../../../util/non-fit/fit-cli-log.js";
-import { STORE_OPTION, parseHealthArgs } from "../cli-args.js";
+import { STORE_OPTION, parseSdkCommandArgs } from "../cli-args.js";
 
 /** A fetch error that means GitHub no longer has the log, so retrying is pointless. */
 export function isExpiredLogError(message: string): boolean {
@@ -44,7 +44,6 @@ export interface BackfillOptions {
 }
 
 export interface BackfillSummary {
-  listed: number;
   alreadyDone: number;
   ingested: number;
   parseErrors: number;
@@ -54,7 +53,6 @@ export interface BackfillSummary {
   archiveUpgraded: number;
   archiveRuns: number;
   pending: CiRun[];
-  warnings: string[];
 }
 
 export async function backfill(sdk: string, opts: BackfillOptions): Promise<BackfillSummary> {
@@ -66,7 +64,6 @@ export async function backfill(sdk: string, opts: BackfillOptions): Promise<Back
   const todo = runs.filter((r) => needsWork(opts.store.readManifest(sdk, r.runId, r.runAttempt), LOG_PARSER_VERSION));
   const batch = opts.limit ? todo.slice(0, opts.limit) : todo;
   const summary: BackfillSummary = {
-    listed: runs.length,
     alreadyDone: runs.length - todo.length,
     ingested: 0,
     parseErrors: 0,
@@ -75,7 +72,6 @@ export async function backfill(sdk: string, opts: BackfillOptions): Promise<Back
     archiveUpgraded: 0,
     archiveRuns: 0,
     pending: batch,
-    warnings,
   };
   fitCliInfo(`${runs.length} nightly runs on GitHub; ${summary.alreadyDone} already stored; ${todo.length} to fetch${batch.length < todo.length ? ` (this pass: ${batch.length})` : ""}.`);
   if (opts.dryRun) return summary;
@@ -154,63 +150,43 @@ Two passes, both safe to rerun (anything already done is skipped):
 Needs \`gh\` with read access to the SDK's repo, and AWS credentials for s3://fit-cli/runs/.`;
 }
 
-/** Parse `<sdk> [--limit N] [--store dir] [--dry-run]`. */
-export interface BackfillArgs {
-  sdk?: string;
-  limit?: number;
-  store?: string;
-  dryRun: boolean;
-  skipArchives: boolean;
-}
-
-export function parseBackfillArgs(argv: string[], usage = ""): BackfillArgs & { help: boolean } {
-  const { values, sdk, help } = parseHealthArgs(argv, { ...STORE_OPTION, limit: { type: "string" }, "dry-run": { type: "boolean" }, "no-archives": { type: "boolean" } }, usage);
+export async function runBackfillCommand(argv: string[], prefix: string): Promise<Partial<RunOutput>> {
+  const args = parseSdkCommandArgs(argv, { ...STORE_OPTION, limit: { type: "string" }, "dry-run": { type: "boolean" }, "no-archives": { type: "boolean" } }, backfillHelp(prefix));
+  if (!args) return {};
+  const { values, sdk } = args;
   const limit = values.limit === undefined ? undefined : Number(values.limit);
   if (limit !== undefined && !(Number.isInteger(limit) && limit > 0)) throw new Error("--limit must be a positive integer");
-  return { sdk, limit, store: values.store, dryRun: values["dry-run"] === true, skipArchives: values["no-archives"] === true, help };
-}
-
-export async function runBackfillCommand(argv: string[], prefix: string): Promise<Partial<RunOutput>> {
-  const args = parseBackfillArgs(argv, backfillHelp(prefix));
-  if (args.help) {
-    console.log(backfillHelp(prefix));
-    return {};
-  }
-  if (!args.sdk) throw new Error(`Name an SDK.\n\n${backfillHelp(prefix)}`);
-  const opened = await openStore(args.store ?? process.env.FIT_HEALTH_STORE, args.sdk);
+  const dryRun = values["dry-run"] === true;
+  const opened = await openStore(values.store, sdk);
   try {
-    return await backfillAndCheck({ ...args, sdk: args.sdk }, opened);
+    const store = opened.store;
+    let s: BackfillSummary;
+    try {
+      s = await backfill(sdk, { store, limit, dryRun, skipArchives: values["no-archives"] === true });
+    } finally {
+      // Push whatever was done, even if a later run failed: every step is safe to redo.
+      if (!dryRun) await opened.flush();
+    }
+    if (dryRun) {
+      for (const r of s.pending) console.log(`  would fetch ${r.date} run ${r.runId}#${r.runAttempt}`);
+      return {};
+    }
+    fitCliInfo(`\nFetched ${s.ingested} run logs → ${s.records} records; ${s.parseErrors} parse errors; ${s.fetchFailures} fetch failures.`);
+    if (s.archiveRuns) fitCliInfo(`Upgraded ${s.archiveUpgraded} records from ${s.archiveRuns} runs' S3 archives.`);
+    fitCliInfo(`Store: ${opened.location}`);
+    const checks = checkStore(store, sdk);
+    printWithoutTimestamps(`\n${renderChecks(checks)}`);
+    if (!checks.pass) process.exitCode = 1;
+    return {
+      details: [
+        { label: "Store", value: opened.location },
+        { label: "Report", value: `fit health report ${sdk}` },
+      ],
+      artifacts: [],
+    };
   } finally {
     opened.close();
   }
-}
-
-async function backfillAndCheck(args: BackfillArgs & { sdk: string }, opened: OpenedStore): Promise<Partial<RunOutput>> {
-  const store = opened.store;
-  let s: BackfillSummary;
-  try {
-    s = await backfill(args.sdk, { store, limit: args.limit, dryRun: args.dryRun, skipArchives: args.skipArchives });
-  } finally {
-    // Push whatever was done, even if a later run failed: every step is safe to redo.
-    if (!args.dryRun) await opened.flush();
-  }
-  if (args.dryRun) {
-    for (const r of s.pending) console.log(`  would fetch ${r.date} run ${r.runId}#${r.runAttempt}`);
-    return {};
-  }
-  fitCliInfo(`\nFetched ${s.ingested} run logs → ${s.records} records; ${s.parseErrors} parse errors; ${s.fetchFailures} fetch failures.`);
-  if (s.archiveRuns) fitCliInfo(`Upgraded ${s.archiveUpgraded} records from ${s.archiveRuns} runs' S3 archives.`);
-  fitCliInfo(`Store: ${opened.location}`);
-  const checks = checkStore(store, args.sdk);
-  printWithoutTimestamps(`\n${renderChecks(checks)}`);
-  if (!checks.pass) process.exitCode = 1;
-  return {
-    details: [
-      { label: "Store", value: opened.location },
-      { label: "Report", value: `fit health report ${args.sdk}` },
-    ],
-    artifacts: [],
-  };
 }
 
 if (isMain(import.meta.url)) {

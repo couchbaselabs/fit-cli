@@ -26,7 +26,7 @@ export interface RunManifest {
   runAttempt: number;
   date: string;
   /** The run's CI context, so a reparse can rebuild records without GitHub. */
-  ci?: CiContext;
+  ci: CiContext;
   status: ManifestStatus;
   parserVersion?: string;
   reason?: string;
@@ -87,6 +87,11 @@ export function manifestKey(sdk: string, runId: number, runAttempt: number): str
   return `${sdk}/manifests/${runId}-${runAttempt}.json`;
 }
 
+/** The record keys a manifest vouches for: the run's records, and those upgraded from its archive. */
+export function vouchedKeys(manifest: Pick<RunManifest, "records" | "archive">): string[] {
+  return [...new Set([...manifest.records, ...(manifest.archive?.upgraded ?? [])])];
+}
+
 export function rawLogKey(sdk: string, runId: number, runAttempt: number): string {
   return `${sdk}/raw/${runId}-${runAttempt}.log.gz`;
 }
@@ -97,7 +102,7 @@ export function needsArchiveUpgrade(manifest: RunManifest): boolean {
   if (!manifest.archive) return true;
   if (manifest.archive.status === "error") return manifest.archive.attempts < MAX_FETCH_ATTEMPTS;
   // Records an older JUnit reader built: read their archives again, while S3 still has them.
-  return manifest.archive.upgraded.length > 0 && (manifest.archive.reader ?? "junit-1") !== JUNIT_READER_VERSION;
+  return manifest.archive.upgraded.length > 0 && manifest.archive.reader !== JUNIT_READER_VERSION;
 }
 
 /**

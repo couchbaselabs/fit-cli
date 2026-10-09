@@ -17,7 +17,7 @@
  */
 import { RUN_RECORD_SCHEMA, type RunRecord } from "../record/run-record.js";
 import { junitOutcomes, junitXmlFromTarGz, type JunitOutcomes } from "./junit-outcomes.js";
-import { stripAnsi } from "../log-parse/parse-run-log.js";
+import { stripAnsi } from "../../../util/non-fit/proc.js";
 
 const UPLOADED = /✓ Uploaded run artifacts to (s3:\/\/\S+\.zip)/;
 

@@ -7,7 +7,7 @@
  * `fit health check` runs this on each SDK's most recent nights to confirm the log parser
  * reads that SDK's output correctly.
  */
-import { failingTests, type RunRecord } from "../record/run-record.js";
+import { failingTests, runLabel, type RunRecord } from "../record/run-record.js";
 
 export interface RecordComparison {
   label: string;
@@ -83,7 +83,7 @@ export function compareRecords(junit: RunRecord, scraped: RunRecord): RecordComp
   const cl = scraped.counts;
   const countsAgree = !!ce && !!cl && ce.passed === cl.passed && ce.failed === cl.failed && ce.errored === cl.errored && ce.skipped === cl.skipped;
   return {
-    label: `${scraped.date} ${scraped.preset} ${scraped.kind}${scraped.cluster ? ` @${scraped.cluster}` : ""}`,
+    label: `${scraped.date} ${runLabel(scraped)}`,
     agree: onlyJunit.length === 0 && onlyLog.length === 0 && countsAgree && classErrorsOnlyJunit.length === 0 && classErrorsOnlyLog.length === 0,
     onlyJunit,
     hiddenByCap,

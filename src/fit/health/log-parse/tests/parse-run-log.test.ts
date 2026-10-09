@@ -16,7 +16,8 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
 import { failingTests, recordKey, type RunRecord } from "../../record/run-record.js";
-import { assignVariants, buildRecords, parseRunLog, presetKind, readLogFile, stripAnsi } from "../parse-run-log.js";
+import { assignVariants, buildRecords, parseRunLog, presetKind, readLogFile } from "../parse-run-log.js";
+import { stripAnsi } from "../../../../util/non-fit/proc.js";
 
 const FIXTURES = join(import.meta.dirname, "fixtures");
 

@@ -129,6 +129,11 @@ export function recordKey(record: RunRecord): string {
   return `${record.sdk}/records/${year}/${record.date}-${record.ci.runId}-${record.ci.runAttempt}-${recordSlug(record)}.json`;
 }
 
+/** A record's run, for messages: "<preset> <kind>", plus " @<cluster>" when it has one. */
+export function runLabel(r: Pick<RunRecord, "preset" | "kind" | "cluster">): string {
+  return `${r.preset} ${r.kind}${r.cluster ? ` @${r.cluster}` : ""}`;
+}
+
 /** Every test the record names as not passing (failed or errored), as `Class.method`. */
 export function failingTests(record: RunRecord): string[] {
   const out: string[] = [];

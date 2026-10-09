@@ -53,7 +53,7 @@ test("the headline states the counts, and the thread lists what changed", () => 
 test("nights with no usable results are always stated, never passed over", () => {
   const rs = days(28).filter((d) => d !== "2026-09-20").map((d) => rec(d, ["A.b"]));
   const aborted = rec("2026-09-20", [], { outcome: "aborted", counts: undefined, abortedAt: "FatalToCluster" });
-  const expired: RunManifest = { schema: 1, sdk: "dotnet", runId: 99, runAttempt: 1, date: "2026-09-21", status: "expired", records: [] };
+  const expired: RunManifest = { schema: 1, sdk: "dotnet", runId: 99, runAttempt: 1, date: "2026-09-21", ci: { repo: "couchbase/couchbase-net-client", runId: 99, runAttempt: 1 }, status: "expired", records: [] };
   const d = renderSlackDigest(buildHealthReport("dotnet", [...rs, aborted], [expired], { end: "2026-09-28" }), ".NET");
   assert.match(d.headline, /_Data: 1 night with no usable results \(20 Sep\); 1 run with no readable log\._/);
 });

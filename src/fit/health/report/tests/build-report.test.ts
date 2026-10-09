@@ -398,7 +398,7 @@ test("the SDK commit under test is the performer image's revision, not the workf
   // The workflow checked out a newer commit than the image, which was built the evening before.
   const rs = days(1, 4).map((d, i) => junit(d, [["A.x", i < 2 ? "p" : "f"]], i < 3 ? "old" : "merged-after-image"));
   const manifests = rs.map((r) => ({
-    schema: 1 as const, sdk: "dotnet", runId: r.ci.runId, runAttempt: 1, date: r.date, status: "ok" as const, records: [],
+    schema: 1 as const, sdk: "dotnet", runId: r.ci.runId, runAttempt: 1, date: r.date, ci: r.ci, status: "ok" as const, records: [],
     performerRevision: { "fit / op-onprem-func-lite": "image" },
   }));
   const [s] = buildHealthReport("dotnet", rs, manifests, { end: "2026-09-04" }).series;

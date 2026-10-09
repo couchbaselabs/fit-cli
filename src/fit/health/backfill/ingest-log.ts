@@ -7,8 +7,8 @@
  * parser bug found later can then be fixed by reparsing, instead of being permanent.
  */
 import { gzipSync } from "node:zlib";
-import { MANIFEST_SCHEMA, MAX_FETCH_ATTEMPTS, rawLogKey, type ArchiveUpgrade, type RunManifest } from "../record/run-manifest.js";
-import { recordKey, type CiContext, type RunRecord } from "../record/run-record.js";
+import { MANIFEST_SCHEMA, MAX_FETCH_ATTEMPTS, rawLogKey, vouchedKeys, type ArchiveUpgrade, type RunManifest } from "../record/run-manifest.js";
+import { recordKey, runLabel, type CiContext, type RunRecord } from "../record/run-record.js";
 import { LOG_PARSER_VERSION, buildRecords, parseRunLog } from "../log-parse/parse-run-log.js";
 import type { LocalHealthStore } from "../store/health-store.js";
 
@@ -42,13 +42,12 @@ export function reconcileUpgraded(
  * nothing was lost.
  */
 export function lostRuns(store: LocalHealthStore, previous: RunManifest, records: readonly RunRecord[]): string | undefined {
-  const series = (r: Pick<RunRecord, "preset" | "kind" | "cluster">) => `${r.preset} ${r.kind}${r.cluster ? ` @${r.cluster}` : ""}`;
-  const found = new Set(records.map(series));
+  const found = new Set(records.map(runLabel));
   const lost = new Set<string>();
-  for (const key of new Set([...previous.records, ...(previous.archive?.upgraded ?? [])])) {
-    const raw = store.read(key);
-    if (!raw) continue;
-    const s = series(JSON.parse(raw.toString("utf8")) as RunRecord);
+  for (const key of vouchedKeys(previous)) {
+    const record = store.readRecord(key);
+    if (!record) continue;
+    const s = runLabel(record);
     if (!found.has(s)) lost.add(s);
   }
   return lost.size ? `the new parse no longer finds ${[...lost].join(", ")}` : undefined;
@@ -78,7 +77,7 @@ export function ingestLog(store: LocalHealthStore, meta: RunMeta, text: string, 
   const { keep, archive } = reconcileUpgraded(previous?.archive, result.records.map(recordKey));
   const keys = result.records.map((r) => (keep.has(recordKey(r)) ? recordKey(r) : store.writeRecord(r)));
   // A reparse must not leave behind a record the new parse no longer produces, JUnit or not.
-  for (const stale of new Set([...(previous?.records ?? []), ...(previous?.archive?.upgraded ?? [])])) {
+  for (const stale of previous ? vouchedKeys(previous) : []) {
     if (!keys.includes(stale)) store.remove(stale);
   }
 

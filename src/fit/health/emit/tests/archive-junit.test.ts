@@ -77,7 +77,7 @@ test("each job's archive is found in the whole-run log", () => {
 
 test("an archive upgrade is tried once; only a read error is retried, and only a few times", () => {
   const m = (archive?: RunManifest["archive"]): RunManifest => ({
-    schema: MANIFEST_SCHEMA, sdk: "dotnet", runId: 1, runAttempt: 1, date: "2026-08-05", status: "ok", records: [], archive,
+    schema: MANIFEST_SCHEMA, sdk: "dotnet", runId: 1, runAttempt: 1, date: "2026-08-05", ci: { repo: "couchbase/couchbase-net-client", runId: 1, runAttempt: 1 }, status: "ok", records: [], archive,
   });
   assert.equal(needsArchiveUpgrade(m()), true);
   assert.equal(needsArchiveUpgrade(m({ status: "partial", upgraded: [], skipped: [], attempts: 1 })), false);
@@ -110,7 +110,7 @@ test("records built by an older JUnit reader are read again; a re-read keeps wha
   const { JUNIT_READER_VERSION } = await import("../../record/run-manifest.js");
   const { keepEarlierUpgrades } = await import("../../backfill/upgrade-from-archive.js");
   const m = (archive?: RunManifest["archive"]): RunManifest => ({
-    schema: MANIFEST_SCHEMA, sdk: "dotnet", runId: 1, runAttempt: 1, date: "2026-08-05", status: "ok", records: [], archive,
+    schema: MANIFEST_SCHEMA, sdk: "dotnet", runId: 1, runAttempt: 1, date: "2026-08-05", ci: { repo: "couchbase/couchbase-net-client", runId: 1, runAttempt: 1 }, status: "ok", records: [], archive,
   });
   assert.equal(needsArchiveUpgrade(m({ status: "ok", upgraded: ["k/a"], skipped: [], attempts: 1 })), true, "junit-1");
   assert.equal(needsArchiveUpgrade(m({ status: "ok", upgraded: ["k/a"], skipped: [], attempts: 1, reader: JUNIT_READER_VERSION })), false);

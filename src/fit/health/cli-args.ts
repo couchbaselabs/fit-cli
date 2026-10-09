@@ -26,3 +26,17 @@ export function parseHealthArgs<const O extends ParseArgsOptionsConfig>(argv: st
   if (positionals.length > maxPositionals) throw new Error(`Unexpected argument: ${positionals[maxPositionals]}\n\n${usage}`);
   return { values, sdk: positionals[0] as string | undefined, positionals, help: (values as { help?: boolean }).help === true };
 }
+
+/**
+ * For a command that works on one SDK: parse as parseHealthArgs, then print the usage and
+ * return undefined for --help or no arguments at all, and refuse a missing SDK.
+ */
+export function parseSdkCommandArgs<const O extends ParseArgsOptionsConfig>(argv: string[], options: O, usage: string) {
+  const { values, sdk, help } = parseHealthArgs(argv, options, usage);
+  if (help || argv.length === 0) {
+    console.log(usage);
+    return undefined;
+  }
+  if (!sdk) throw new Error(`Name an SDK.\n\n${usage}`);
+  return { values, sdk };
+}

@@ -4,10 +4,9 @@
  * The outcome is recorded on the manifest, so each run is tried once - a read error is
  * retried a few times; an expired or ambiguous archive is final.
  */
-import { gunzipSync } from "node:zlib";
 import { matchTarball, upgradeRecord, uploadedArchivesByJob } from "../emit/archive-junit.js";
 import { S3Zip } from "../emit/s3-zip.js";
-import { rawLogKey, type ArchiveUpgrade, type RunManifest, JUNIT_READER_VERSION } from "../record/run-manifest.js";
+import { type ArchiveUpgrade, type RunManifest, JUNIT_READER_VERSION } from "../record/run-manifest.js";
 import type { RunRecord } from "../record/run-record.js";
 import type { LocalHealthStore } from "../store/health-store.js";
 
@@ -45,18 +44,18 @@ export function keepEarlierUpgrades<T extends Omit<ArchiveUpgrade, "attempts">>(
 
 export async function upgradeFromArchive(store: LocalHealthStore, manifest: RunManifest): Promise<ArchiveUpgrade> {
   const attempts = (manifest.archive?.attempts ?? 0) + 1;
-  const raw = store.read(rawLogKey(manifest.sdk, manifest.runId, manifest.runAttempt));
+  const log = store.readRawLog(manifest.sdk, manifest.runId, manifest.runAttempt);
   const done = (a: Omit<ArchiveUpgrade, "attempts">): ArchiveUpgrade => {
     const archive = { ...keepEarlierUpgrades(manifest.archive, a, (k) => !!store.read(k)), attempts, reader: JUNIT_READER_VERSION };
     store.writeManifest({ ...manifest, archive });
     return archive;
   };
-  if (!raw) return done({ status: "none", upgraded: [], skipped: [], reason: "no stored log to find the archive from" });
+  if (log === undefined) return done({ status: "none", upgraded: [], skipped: [], reason: "no stored log to find the archive from" });
 
-  const archives = uploadedArchivesByJob(gunzipSync(raw).toString("utf8"));
+  const archives = uploadedArchivesByJob(log);
   const records = manifest.records
-    .map((k) => ({ key: k, rec: JSON.parse(store.read(k)?.toString("utf8") ?? "null") as RunRecord | null }))
-    .filter((x): x is { key: string; rec: RunRecord } => !!x.rec && !!x.rec.counts);
+    .map((k) => ({ key: k, rec: store.readRecord(k) }))
+    .filter((x): x is { key: string; rec: RunRecord } => !!x.rec?.counts);
   if (!Object.keys(archives).length) return done({ status: "none", upgraded: [], skipped: [], reason: "the log names no uploaded run archive" });
 
   const upgraded: string[] = [];

@@ -25,20 +25,19 @@ import type { RunManifest } from "../record/run-manifest.js";
 import type { HealthOptIn } from "../registry/health-opt-ins.js";
 import type { DriverCheckout } from "../log-parse/parse-run-log.js";
 import { reportFindings, type HealthReport, type ReportNight, type ReportSeries, type ReportTest } from "./build-report.js";
-import { sdkByValue } from "../../../util/sdk/sdks.js";
+import { isAnalyticsSdk, sdkByValue } from "../../../util/sdk/sdks.js";
 import { ANALYTICS_TEST_DRIVER_MODULE, DEFAULT_TEST_DRIVER_MODULE } from "../../shared/run-test-driver/run-test-driver.js";
 import { addDays, daysBetween, startOfDay } from "./dates.js";
 
 export const DRIVER_REPO = "couchbaselabs/transactions-fit-performer";
 
 /**
- * The driver module holding an SDK's tests: the Columnar and Enterprise Analytics SDKs run
- * columnar-test-driver,
- * the rest test-driver - the choice fit-cli itself makes per run (run-test-driver.ts).
+ * The driver module holding an SDK's tests: an Analytics SDK runs columnar-test-driver, the
+ * rest test-driver - the choice fit-cli itself makes per run (run-test-driver.ts).
  */
 export function driverModuleFor(sdk: string): string {
-  const family = sdkByValue(sdk)?.family;
-  return family === "columnar" || family === "enterprise-analytics" ? ANALYTICS_TEST_DRIVER_MODULE : DEFAULT_TEST_DRIVER_MODULE;
+  const s = sdkByValue(sdk);
+  return s && isAnalyticsSdk(s) ? ANALYTICS_TEST_DRIVER_MODULE : DEFAULT_TEST_DRIVER_MODULE;
 }
 export const DRIVER_BRANCH = "master";
 

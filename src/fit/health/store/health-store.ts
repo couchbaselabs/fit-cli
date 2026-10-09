@@ -5,11 +5,12 @@
  *
  * Default root: ~/.fit-cli/health. Override with --store <dir> or FIT_HEALTH_STORE.
  */
+import { gunzipSync } from "node:zlib";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { FIT_CLI_CONFIG_DIRNAME } from "../../util/config.js";
-import { MANIFEST_SCHEMA, manifestKey, type RunManifest } from "../record/run-manifest.js";
+import { MANIFEST_SCHEMA, manifestKey, rawLogKey, vouchedKeys, type RunManifest } from "../record/run-manifest.js";
 import { recordKey, type RunRecord } from "../record/run-record.js";
 
 export const HEALTH_STORE_ENV_VAR = "FIT_HEALTH_STORE";
@@ -74,8 +75,25 @@ export class LocalHealthStore {
   /** Every manifest of the SDK's runs, in key order. One written under another schema is left out, as readManifest leaves it out. */
   listManifests(sdk: string): RunManifest[] {
     return this.list(`${sdk}/manifests`)
-      .map((k) => JSON.parse(this.read(k)!.toString("utf8")) as RunManifest)
+      .map((k) => this.readJson<RunManifest>(k)!)
       .filter((m) => m.schema === MANIFEST_SCHEMA);
+  }
+
+  /** The JSON document at `key` (an SDK's notes or settings); undefined if there is none. */
+  readJson<T>(key: string): T | undefined {
+    const raw = this.read(key);
+    return raw && (JSON.parse(raw.toString("utf8")) as T);
+  }
+
+  /** A run's stored CI log, as text; undefined if the store has none. */
+  readRawLog(sdk: string, runId: number, runAttempt: number): string | undefined {
+    const raw = this.read(rawLogKey(sdk, runId, runAttempt));
+    return raw && gunzipSync(raw).toString("utf8");
+  }
+
+  /** The record at `key`; undefined if there is none. */
+  readRecord(key: string): RunRecord | undefined {
+    return this.readJson<RunRecord>(key);
   }
 
   writeManifest(manifest: RunManifest): void {
@@ -94,12 +112,9 @@ export class LocalHealthStore {
    * manifests went up), or one whose manifest hasn't landed yet. Either way it isn't data.
    */
   readRecords(sdk: string): RunRecord[] {
-    const vouched = new Set<string>();
-    for (const m of this.listManifests(sdk)) {
-      for (const r of [...m.records, ...(m.archive?.upgraded ?? [])]) vouched.add(r);
-    }
+    const vouched = new Set(this.listManifests(sdk).flatMap(vouchedKeys));
     return this.list(`${sdk}/records`)
       .filter((k) => k.endsWith(".json") && vouched.has(k))
-      .map((k) => JSON.parse(this.read(k)!.toString("utf8")) as RunRecord);
+      .map((k) => this.readRecord(k)!);
   }
 }

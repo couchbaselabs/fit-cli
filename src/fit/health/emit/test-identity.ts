@@ -10,26 +10,13 @@
  * (fit-tests-cache.json5), not from which classes a night happened to run, so every SDK and
  * every night name a test the same way.
  */
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import JSON5 from "json5";
-
-const CACHE_PATH = join(dirname(fileURLToPath(import.meta.url)), "../../shared/select-fit-tests/fit-tests-cache.json5");
-const bundledCachePath = import.meta.url.includes("/$bunfs/")
-  ? ((await import("../../shared/select-fit-tests/fit-tests-cache.json5", { with: { type: "file" } })) as { default: string }).default
-  : undefined;
-
-/** "java/com/couchbase/client/kv/GetTest.java" -> "com.couchbase.client.kv.GetTest". */
-export function classOfPath(path: string): string {
-  return path.replace(/^(java|scala|kotlin)\//, "").replace(/\.(java|scala|kt)$/, "").replace(/\//g, ".");
-}
+import { readFitTestPaths, toClassName } from "../../shared/select-fit-tests/fit-tests-cache.js";
 
 /** For each simple class name defined in more than one package: each class's qualified key. */
 export function qualifiers(paths: readonly string[]): Map<string, Map<string, string>> {
   const bySimple = new Map<string, string[]>();
   for (const p of paths) {
-    const fq = classOfPath(p);
+    const fq = toClassName(p);
     const simple = fq.slice(fq.lastIndexOf(".") + 1);
     (bySimple.get(simple) ?? bySimple.set(simple, []).get(simple)!).push(fq);
   }
@@ -48,10 +35,7 @@ export function qualifiers(paths: readonly string[]): Map<string, Map<string, st
 
 let cached: Map<string, Map<string, string>> | undefined;
 function driverQualifiers(): Map<string, Map<string, string>> {
-  if (!cached) {
-    const path = bundledCachePath ?? CACHE_PATH;
-    cached = qualifiers(JSON5.parse<string[]>(readFileSync(path, "utf8")));
-  }
+  cached ??= qualifiers(readFitTestPaths());
   return cached;
 }
 

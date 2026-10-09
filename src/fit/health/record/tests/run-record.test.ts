@@ -59,6 +59,7 @@ const manifest = (over: Partial<RunManifest>): RunManifest => ({
   runId: 1,
   runAttempt: 1,
   date: "2026-09-27",
+  ci: { repo: "couchbase/couchbase-net-client", runId: 1, runAttempt: 1 },
   status: "ok",
   records: [],
   ...over,

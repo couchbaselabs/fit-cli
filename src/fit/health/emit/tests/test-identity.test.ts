@@ -6,7 +6,8 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { classKey, classOfPath, qualifiers } from "../test-identity.js";
+import { classKey, qualifiers } from "../test-identity.js";
+import { toClassName } from "../../../shared/select-fit-tests/fit-tests-cache.js";
 import { canonicalTestName } from "../junit-outcomes.js";
 import { asLogged } from "../compare-records.js";
 
@@ -21,7 +22,7 @@ const PATHS = [
 ];
 
 test("a class name the driver uses in several packages gets the shortest package suffix that tells them apart", () => {
-  assert.equal(classOfPath(PATHS[0]), "com.couchbase.client.kv.GetTest");
+  assert.equal(toClassName(PATHS[0]), "com.couchbase.client.kv.GetTest");
   const q = qualifiers(PATHS);
   assert.equal(classKey("com.couchbase.client.kv.GetTest", q), "kv/GetTest");
   assert.equal(classKey("com.couchbase.transactions.states.GetTest", q), "states/GetTest");

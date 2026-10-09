@@ -24,7 +24,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { s3Client } from "../../../cloud/util/aws/aws-clients.js";
-import { fitCliInfo } from "../../../util/non-fit/fit-cli-log.js";
+import { fitCliInfo, printWithoutTimestamps } from "../../../util/non-fit/fit-cli-log.js";
 import { parseS3Uri } from "../../../cloud/util/aws/s3-uri.js";
 import { LocalHealthStore, defaultHealthStoreRoot } from "./health-store.js";
 import { mapWithConcurrency } from "../../../util/non-fit/concurrency.js";
@@ -55,6 +55,24 @@ export interface OpenedStore {
   flush: () => Promise<void>;
   /** Delete the local mirror (a no-op for a local store). Call it once the command is done. */
   close: () => void;
+}
+
+/**
+ * Show a JSON document kept in the store (an SDK's notes or settings), first replacing it with
+ * `update(current)` when an update is given, then close the store. `update` throws to refuse.
+ */
+export async function showOrSetJson<T extends object>(opened: OpenedStore, key: string, what: string, update?: (current: T) => T): Promise<void> {
+  try {
+    if (update) {
+      const next = update(opened.store.readJson<T>(key) ?? ({} as T));
+      opened.store.write(key, JSON.stringify(next, null, 1) + "\n");
+      await opened.flush();
+      fitCliInfo(`Set ${what} in ${opened.location}`);
+    }
+    printWithoutTimestamps(JSON.stringify(opened.store.readJson<T>(key) ?? {}, null, 1));
+  } finally {
+    opened.close();
+  }
 }
 
 export interface OpenStoreOptions {

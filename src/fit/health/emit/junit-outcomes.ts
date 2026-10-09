@@ -11,7 +11,7 @@
 import { classKey } from "./test-identity.js";
 import { Readable } from "node:stream";
 import { createGunzip } from "node:zlib";
-import type { ClassOutcomes, ResultCounts } from "../record/run-record.js";
+import { addOutcome, type ClassOutcomes, type ResultCounts } from "../record/run-record.js";
 import { getXmlAttr } from "../../../util/non-fit/xml.js";
 export { decodeXmlEntities } from "../../../util/non-fit/xml.js";
 
@@ -66,17 +66,7 @@ export function junitOutcomes(xmls: Iterable<string>): JunitOutcomes {
     }
   }
   const tests: Record<string, ClassOutcomes> = {};
-  for (const [id, outcome] of [...worst.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-    const dot = id.indexOf(".");
-    const cls = id.slice(0, dot);
-    const method = id.slice(dot + 1);
-    const entry = (tests[cls] ??= {});
-    if (!method) {
-      entry.classError = true;
-      continue;
-    }
-    (entry[outcome] ??= []).push(method);
-  }
+  for (const [id, outcome] of [...worst.entries()].sort(([a], [b]) => a.localeCompare(b))) addOutcome(tests, id, outcome);
   return { tests, packages, counts, files };
 }
 

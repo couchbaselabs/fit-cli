@@ -27,6 +27,7 @@ import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { isMain } from "../../../util/non-fit/cli.js";
+import { stripAnsi } from "../../../util/non-fit/proc.js";
 import { parseHealthArgs } from "../cli-args.js";
 import {
   RUN_RECORD_SCHEMA,
@@ -47,8 +48,6 @@ export const LOG_PARSER_VERSION = "log-8";
  */
 export const SITUATIONAL_TRUSTED_FROM = "2026-07-11";
 
-// eslint-disable-next-line no-control-regex
-const ANSI = /(?:\x1b|\^\[)\[[0-9;]*m/g;
 const TAG = /^\S+Z \[([^\]]*)\]\s*/;
 /** fit-cli's remote clone: "Cloning transactions-fit-performer (branch x) onto i-0abc...". */
 const DRIVER_CLONE = /^(\S+Z) .*Cloning transactions-fit-performer(?: \(branch ([^)]+)\))? onto /;
@@ -135,11 +134,6 @@ export interface ParsedLog {
   aborts: Record<string, PresetAbort>;
   /** Presets named by banners or job names, whether or not they produced any tagged line. */
   presetsSeen: string[];
-}
-
-/** Strip the literal-or-real ANSI colour codes gh leaves in the log. */
-export function stripAnsi(s: string): string {
-  return s.replace(ANSI, "");
 }
 
 /** Parse the whole-run log text into one accumulator per fit-cli run. */

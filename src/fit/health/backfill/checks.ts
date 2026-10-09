@@ -16,17 +16,16 @@
  * Identity and agreement must pass; coverage is reported, since it depends on whether the
  * SDK's nightlies upload their run archives at all.
  */
-import { gunzipSync } from "node:zlib";
 import type { RunOutput } from "../../../util/non-fit/artifacts.js";
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { printWithoutTimestamps } from "../../../util/non-fit/fit-cli-log.js";
 import { compareRecords, type RecordComparison } from "../emit/compare-records.js";
-import { buildRecords, parseRunLog } from "../log-parse/parse-run-log.js";
-import { rawLogKey } from "../record/run-manifest.js";
-import { recordKey, type RunRecord } from "../record/run-record.js";
+import { buildRecords, parseRunLog, type ParsedLog } from "../log-parse/parse-run-log.js";
+import type { RunManifest } from "../record/run-manifest.js";
+import { recordKey, runLabel } from "../record/run-record.js";
 import { type LocalHealthStore } from "../store/health-store.js";
 import { openStore } from "../store/s3-store.js";
-import { STORE_OPTION, parseHealthArgs } from "../cli-args.js";
+import { STORE_OPTION, parseSdkCommandArgs } from "../cli-args.js";
 
 export interface CheckReport {
   sdk: string;
@@ -53,12 +52,14 @@ export function checkStore(store: LocalHealthStore, sdk: string, nights = 3): Ch
 
   const performers: Record<string, number> = {};
   const mismatches: { run: string; performer: string }[] = [];
-  let runsChecked = 0;
+  // Each stored log is parsed once, for both the identity and the agreement checks.
+  const parsedLogs = new Map<RunManifest, ParsedLog>();
   for (const m of manifests) {
-    const raw = store.read(rawLogKey(sdk, m.runId, m.runAttempt));
-    if (!raw) continue;
-    runsChecked++;
-    const seen = new Set(parseRunLog(gunzipSync(raw).toString("utf8")).runs.map((r) => r.performer).filter((p): p is string => !!p));
+    const text = store.readRawLog(sdk, m.runId, m.runAttempt);
+    if (text === undefined) continue;
+    const parsed = parseRunLog(text);
+    parsedLogs.set(m, parsed);
+    const seen = new Set(parsed.runs.map((r) => r.performer).filter((p): p is string => !!p));
     for (const p of seen) {
       performers[p] = (performers[p] ?? 0) + 1;
       if (performerSdk(p) !== sdk) mismatches.push({ run: `${m.date} run ${m.runId}`, performer: p });
@@ -78,20 +79,18 @@ export function checkStore(store: LocalHealthStore, sdk: string, nights = 3): Ch
   const agreement: RecordComparison[] = [];
   const unmatched: string[] = [];
   for (const m of manifests.filter((x) => x.archive?.upgraded.length).slice(0, nights)) {
-    const raw = store.read(rawLogKey(sdk, m.runId, m.runAttempt));
-    if (!raw) continue;
-    const scraped = new Map(
-      buildRecords(parseRunLog(gunzipSync(raw).toString("utf8")), { sdk, date: m.date, ci: m.ci ?? { repo: "unknown", runId: m.runId, runAttempt: m.runAttempt } }).records.map((r) => [recordKey(r), r]),
-    );
+    const parsed = parsedLogs.get(m);
+    if (!parsed) continue;
+    const scraped = new Map(buildRecords(parsed, { sdk, date: m.date, ci: m.ci }).records.map((r) => [recordKey(r), r]));
     for (const key of m.archive!.upgraded) {
-      const junit = JSON.parse(store.read(key)!.toString("utf8")) as RunRecord;
+      const junit = store.readRecord(key)!;
       const log = scraped.get(key);
       if (log) agreement.push(compareRecords(junit, log));
-      else unmatched.push(`${m.date} ${junit.preset} ${junit.kind}${junit.cluster ? ` @${junit.cluster}` : ""}`);
+      else unmatched.push(`${m.date} ${runLabel(junit)}`);
     }
   }
 
-  const identity = { runs: runsChecked, performers, mismatches };
+  const identity = { runs: parsedLogs.size, performers, mismatches };
   return { sdk, pass: mismatches.length === 0 && unmatched.length === 0 && agreement.every((a) => a.agree), identity, coverage, agreement, unmatched };
 }
 
@@ -123,15 +122,12 @@ Usage:
   ${prefix} <sdk> [--store <dir>] [--nights N]
 
   --nights  How many recent nights to cross-check JUnit against the log (default 3).`;
-  const { values, sdk, help } = parseHealthArgs(argv, { ...STORE_OPTION, nights: { type: "string" } }, usage);
-  if (help || argv.length === 0) {
-    console.log(usage);
-    return {};
-  }
-  if (!sdk) throw new Error(`Name an SDK.\n\n${usage}`);
+  const args = parseSdkCommandArgs(argv, { ...STORE_OPTION, nights: { type: "string" } }, usage);
+  if (!args) return {};
+  const { values, sdk } = args;
   const nights = Number(values.nights ?? 3);
   if (!Number.isInteger(nights) || nights < 1) throw new Error(`--nights must be a whole number, at least 1; got ${values.nights}`);
-  const { store, close } = await openStore(values.store ?? process.env.FIT_HEALTH_STORE, sdk);
+  const { store, close } = await openStore(values.store, sdk);
   let c: CheckReport;
   try {
     c = checkStore(store, sdk, nights);

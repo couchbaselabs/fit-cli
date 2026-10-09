@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { STORE_OPTION, parseHealthArgs } from "../cli-args.js";
+import { STORE_OPTION, parseHealthArgs, parseSdkCommandArgs } from "../cli-args.js";
 
 const OPTIONS = { ...STORE_OPTION, days: { type: "string" }, "no-slack": { type: "boolean" } } as const;
 
@@ -31,4 +31,20 @@ test("an unknown flag, a missing value or a second SDK is an error that shows th
   assert.throws(() => parseHealthArgs(["dotnet", "--days"], OPTIONS, "the usage"), /--days[\s\S]*the usage/);
   assert.throws(() => parseHealthArgs(["dotnet", "java"], OPTIONS, "the usage"), /Unexpected argument: java[\s\S]*the usage/);
   assert.equal(parseHealthArgs([], OPTIONS, "usage").sdk, undefined);
+});
+
+test("a command on one SDK prints its usage for --help or no arguments, and refuses a missing SDK", () => {
+  const log = console.log;
+  const printed: unknown[] = [];
+  console.log = (m: unknown) => printed.push(m);
+  try {
+    assert.equal(parseSdkCommandArgs([], OPTIONS, "the usage"), undefined);
+    assert.equal(parseSdkCommandArgs(["dotnet", "--help"], OPTIONS, "the usage"), undefined);
+  } finally {
+    console.log = log;
+  }
+  assert.deepEqual(printed, ["the usage", "the usage"]);
+  assert.throws(() => parseSdkCommandArgs(["--no-slack"], OPTIONS, "the usage"), /Name an SDK\.[\s\S]*the usage/);
+  const a = parseSdkCommandArgs(["--days", "5", "go"], OPTIONS, "the usage");
+  assert.deepEqual([a?.sdk, a?.values.days], ["go", "5"]);
 });

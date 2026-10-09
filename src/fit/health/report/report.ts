@@ -31,7 +31,7 @@ import { renderMarkdown } from "./render/render-markdown.js";
 import { appendFileSync } from "node:fs";
 import { postDigest } from "./post-digest.js";
 import { healthOptIn } from "../registry/health-opt-ins.js";
-import { STORE_OPTION, parseHealthArgs } from "../cli-args.js";
+import { STORE_OPTION, parseSdkCommandArgs } from "../cli-args.js";
 
 export function reportHelp(prefix: string): string {
   return `Report which FIT tests fail consistently or intermittently for an SDK, from its stored run records.
@@ -89,7 +89,7 @@ export function slackDecision(flags: SlackFlags, configuredChannel: string | und
 }
 
 export async function runReportCommand(argv: string[], prefix: string): Promise<Partial<RunOutput>> {
-  const { values, sdk, help } = parseHealthArgs(
+  const args = parseSdkCommandArgs(
     argv,
     {
       ...STORE_OPTION,
@@ -105,13 +105,10 @@ export async function runReportCommand(argv: string[], prefix: string): Promise<
     },
     reportHelp(prefix),
   );
-  if (help || argv.length === 0) {
-    console.log(reportHelp(prefix));
-    return {};
-  }
-  if (!sdk) throw new Error(reportHelp(prefix));
+  if (!args) return {};
+  const { values, sdk } = args;
   // Everything the report needs is read up front, so the store is closed straight after.
-  const { store, location, close } = await openStore(values.store ?? process.env.FIT_HEALTH_STORE, sdk, { skipRawLogs: true });
+  const { store, location, close } = await openStore(values.store, sdk, { skipRawLogs: true });
   let records: RunRecord[], manifests: RunManifest[], notes: ReportNotes, settings: HealthSettings;
   try {
     records = store.readRecords(sdk);

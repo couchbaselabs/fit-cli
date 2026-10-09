@@ -9,17 +9,15 @@ import { readFileSync } from "node:fs";
 import JSON5 from "json5";
 import type { RunOutput } from "../../../util/non-fit/artifacts.js";
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
-import { fitCliInfo, printWithoutTimestamps } from "../../../util/non-fit/fit-cli-log.js";
 import type { LocalHealthStore } from "../store/health-store.js";
-import { openStore } from "../store/s3-store.js";
+import { openStore, showOrSetJson } from "../store/s3-store.js";
 import type { ReportNotes } from "./build-report.js";
-import { STORE_OPTION, parseHealthArgs } from "../cli-args.js";
+import { STORE_OPTION, parseSdkCommandArgs } from "../cli-args.js";
 
 export const notesKey = (sdk: string) => `${sdk}/notes.json`;
 
 export function readNotes(store: LocalHealthStore, sdk: string): ReportNotes {
-  const raw = store.read(notesKey(sdk));
-  return raw ? (JSON.parse(raw.toString("utf8")) as ReportNotes) : {};
+  return store.readJson<ReportNotes>(notesKey(sdk)) ?? {};
 }
 
 /** Problems with a notes file, as sentences. */
@@ -43,27 +41,17 @@ Usage:
 
 A notes file looks like:
   { fixes: { "SetAuthenticatorTest.canSetAuthenticator": { ticket: "NCBC-4304", text: "..." } } }`;
-  const { values, sdk, help } = parseHealthArgs(argv, { ...STORE_OPTION, set: { type: "string" } }, usage);
-  if (help || argv.length === 0) {
-    console.log(usage);
-    return {};
-  }
-  if (!sdk) throw new Error(`Name an SDK.\n\n${usage}`);
+  const args = parseSdkCommandArgs(argv, { ...STORE_OPTION, set: { type: "string" } }, usage);
+  if (!args) return {};
+  const { values, sdk } = args;
   const file = values.set;
-  const opened = await openStore(values.store ?? process.env.FIT_HEALTH_STORE, sdk, { skipRawLogs: true });
-  try {
-    if (file) {
-      const notes = JSON5.parse<unknown>(readFileSync(file, "utf8"));
-      const problems = validateNotes(notes);
-      if (problems.length) throw new Error(`Invalid notes in ${file}: ${problems.join("; ")}`);
-      opened.store.write(notesKey(sdk), JSON.stringify(notes, null, 1) + "\n");
-      await opened.flush();
-      fitCliInfo(`Set ${sdk}'s notes in ${opened.location}`);
-    }
-    printWithoutTimestamps(JSON.stringify(readNotes(opened.store, sdk), null, 1));
-  } finally {
-    opened.close();
-  }
+  const opened = await openStore(values.store, sdk, { skipRawLogs: true });
+  await showOrSetJson<ReportNotes>(opened, notesKey(sdk), `${sdk}'s notes`, file ? () => {
+    const notes = JSON5.parse<unknown>(readFileSync(file, "utf8"));
+    const problems = validateNotes(notes);
+    if (problems.length) throw new Error(`Invalid notes in ${file}: ${problems.join("; ")}`);
+    return notes as ReportNotes;
+  } : undefined);
   return {};
 }
 
