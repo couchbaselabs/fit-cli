@@ -380,6 +380,19 @@ export function printWithoutTimestamps(text: string): void {
 }
 
 /**
+ * {@link printWithoutTimestamps} for stderr — e.g. GitHub Actions workflow commands
+ * (`::notice::...`), which the runner only recognises at the very start of a line.
+ */
+export function printToStderrWithoutTimestamps(text: string): void {
+  rawTerminalWriteDepth++;
+  try {
+    process.stderr.write(text.endsWith("\n") ? text : `${text}\n`);
+  } finally {
+    rawTerminalWriteDepth--;
+  }
+}
+
+/**
  * Print file content to stdout in soft grey with the timestamp prefix replaced by
  * spaces, so the output is aligned with normal log lines and copy-pasteable
  * without timestamp noise. On non-TTY output (log files) the session log still

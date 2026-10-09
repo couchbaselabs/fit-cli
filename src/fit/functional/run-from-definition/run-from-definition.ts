@@ -98,6 +98,7 @@ import {
 import type { PieceData } from "../../../util/non-fit/config-pieces.js";
 import { generateFitConfiguration } from "../../shared/fit-configuration/generate-fit-configuration.js";
 import { resourceCreationPiece, type ClusterCreatingConfig } from "../util/build-fit-configuration.js";
+import { shouldSkipCngGroup, shouldSkipCngRun } from "../util/cng-skip.js";
 import { EXTERNAL_SERVICES } from "../../external-services/registered-external-services.js";
 import { externalServicesConfigPiece, findExternalService, stopExternalServices, type ExternalService, type ExternalServiceHandle } from "../../external-services/external-service.js";
 import { generateSituationalConfiguration } from "../../situational/configuration/generate-situational-configuration.js";
@@ -183,7 +184,7 @@ import {
   type ResumeTargetState,
   type RunState,
 } from "./resume-state.js";
-import { appendRunSummaryToGhaSummary, RUN_FINISHED_MARKER } from "../../util/gha.js";
+import { appendRunSummaryToGhaSummary, emitGhaNotice, RUN_FINISHED_MARKER } from "../../util/gha.js";
 import { junitToPlainTextFromDir } from "../../shared/run-test-driver/junit-to-markdown.js";
 import { readSituationalResultsCsv, renderSituationalResultsPlainText } from "../../shared/run-test-driver/situational-results.js";
 
@@ -2357,6 +2358,21 @@ export async function runFromDefinition(
       .slice(0, startCycleIndex)
       .reduce((total, group) => total + countGroupIterations(group), 0);
 
+    const reportCngSkip = (group: ResolvedExecutionGroup, run?: ResolvedExecutionRun): void => {
+      const what = run ? `${run.sdk.name} SDK doesn't` : "SDKs in this execution group don't";
+      const message = `skipped, as the ${what} support CNG`;
+      fitCliWarn(`\n→ ${failureLabel(group, run)}: ${message}.`);
+      details.push({ label: `Skipped ${failureLabel(group, run)}`, value: message });
+      // A run of nothing but skips exits 0, so the job goes green: say why on its summary page.
+      emitGhaNotice("CNG run skipped", `${failureLabel(group, run)}: ${message}.`);
+    };
+
+    // The next group that will actually run. Skipped groups never touch the box, so
+    // box-lifecycle decisions (keep it for the next group, or tear it down) must
+    // look past them: otherwise a box kept for a skipped group is never torn down.
+    const nextRunnableGroup = (cycleIndex: number): ResolvedExecutionGroup | undefined =>
+      executionGroups.slice(cycleIndex + 1).find((g) => !shouldSkipCngGroup(g));
+
     try {
     for (let cycleIndex = startCycleIndex; cycleIndex < executionGroups.length; cycleIndex++) {
       activeCycleIndex = cycleIndex;
@@ -2372,6 +2388,12 @@ export async function runFromDefinition(
       console.log(`\nExecution group ${cycleIndex + 1}/${executionGroups.length}: ${group.type}`);
       console.log(`  Execution: ${describeExecutionOverride(executionOverride, group.instance.kind)}`);
       console.log(`  Cluster: ${clusterLabel(group)}`);
+
+      if (shouldSkipCngGroup(group)) {
+        reportCngSkip(group);
+        globalIterationIndex += countGroupIterations(group);
+        continue;
+      }
 
       // Acquire this cycle's execution target. Execution groups from the same
       // definition instance share one box: reuse the box (and its prepared
@@ -2665,6 +2687,18 @@ export async function runFromDefinition(
             activeSessionIndex = currentSessionIndex;
           }
 
+          if (shouldSkipCngRun(activeCycle, iteration)) {
+            reportCngSkip(activeCycle, iteration);
+            // A performer left running by an earlier run would otherwise only be
+            // tracked for teardown by the group's last run.
+            if (isLastIteration && sessionPerformer) {
+              await stopManagedPerformer(execution, sessionPerformer);
+              sessionPerformer = undefined;
+            }
+            globalIterationIndex++;
+            continue;
+          }
+
           announce(activeCycle, iteration, resolved.fitPerformerGerritRef, globalIterationIndex, totalGlobalIterations);
           const isStartIteration = cycleIndex === startCycleIndex && cycleIterationIndex === startIterationIndex;
           const setupPerformerPhase = isStartIteration ? phases.setupPerformer : true;
@@ -2746,15 +2780,15 @@ export async function runFromDefinition(
           activePerformers = cyclePerformers;
           activePerformerStates = cyclePerformerStates;
 
-          const isLastCycle = cycleIndex === executionGroups.length - 1;
-          if (isLastCycle) {
-            break;
+          const nextGroup = nextRunnableGroup(cycleIndex);
+          if (nextGroup === undefined) {
+            // Not `break`, so any skipped groups that follow are still reported.
+            continue;
           }
 
           // Does the next group share this box (same definition instance)? If so we
           // keep the box up and clean only this group's cluster/performers.
-          const nextGroupSharesBox =
-            executionGroups[cycleIndex + 1]?.path.instanceIndex === group.path.instanceIndex;
+          const nextGroupSharesBox = nextGroup.path.instanceIndex === group.path.instanceIndex;
           // Don't prompt here even in --interactive mode: prompts mid-run interrupt
           // an otherwise hands-off run every time a cluster fails (e.g. broken shared
           // infra), and the only prompt a user wants mid-run is the final leave-up
@@ -2791,11 +2825,10 @@ export async function runFromDefinition(
         throw err;
       }
 
-      const isLastCycle = cycleIndex === executionGroups.length - 1;
+      const nextGroup = nextRunnableGroup(cycleIndex);
+      const isLastCycle = nextGroup === undefined;
       // The last group sharing this box (the next group, if any, runs on a fresh box).
-      const isLastGroupOnBox =
-        isLastCycle ||
-        executionGroups[cycleIndex + 1]?.path.instanceIndex !== group.path.instanceIndex;
+      const isLastGroupOnBox = isLastCycle || nextGroup.path.instanceIndex !== group.path.instanceIndex;
       if (isLastCycle) {
         // Leave the box and this last group's cluster/performers as the active set so
         // the outer teardown can offer to leave everything up for debugging.

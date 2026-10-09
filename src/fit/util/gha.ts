@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { formatArtifactsTable, SESSION_LOG_NAME } from "../../util/non-fit/artifacts.js";
 import { isMain } from "../../util/non-fit/cli.js";
-import { fitCliInfo } from "../../util/non-fit/fit-cli-log.js";
+import { printToStderrWithoutTimestamps } from "../../util/non-fit/fit-cli-log.js";
 import { stripAnsi } from "../../util/non-fit/proc.js";
 import { parseJunitDataFromDir, renderJunitMarkdown } from "../shared/run-test-driver/junit-to-markdown.js";
 import { readSituationalResultsCsv, renderSituationalResultsMarkdown } from "../shared/run-test-driver/situational-results.js";
@@ -446,11 +446,34 @@ export function emitGhaArtifactNotice(s3Uri?: string): void {
   const url = s3Uri ?? `https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}`;
   const name = `fit-cli-run-${GITHUB_RUN_ID}`;
   // GHA workflow command: the runner parses "::cmd::" lines from stderr just as well
-  // as stdout, so route it through fitCliInfo rather than console.log. Every command
+  // as stdout, so write it to stderr rather than console.log. Every command
   // is wrapped in runCli()'s end-of-run summary, including ones whose stdout must
   // stay machine-parseable (e.g. `a mini CLI's JSON output piped into jq`) — stdout must carry only
-  // that command's own payload.
-  fitCliInfo(`::notice title=Run artifacts (${name})::${url}`);
+  // that command's own payload. And without fit-cli's timestamp prefix, as the runner
+  // only recognises a command at the very start of a line.
+  printToStderrWithoutTimestamps(ghaNoticeCommand(`Run artifacts (${name})`, url));
+}
+
+/** Escape a workflow command's message, per GitHub's toolkit (`escapeData`). */
+export function escapeGhaCommandData(value: string): string {
+  return value.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+}
+
+/** Escape a workflow command's property value, e.g. `title=` (`escapeProperty`). */
+export function escapeGhaCommandProperty(value: string): string {
+  return escapeGhaCommandData(value).replace(/:/g, "%3A").replace(/,/g, "%2C");
+}
+
+/** The `::notice` workflow command line for a title and message. Pure. */
+export function ghaNoticeCommand(title: string, message: string): string {
+  return `::notice title=${escapeGhaCommandProperty(title)}::${escapeGhaCommandData(message)}`;
+}
+
+/** Show a notice annotation on the GHA job's summary page. No-ops outside GHA. */
+export function emitGhaNotice(title: string, message: string): void {
+  if (process.env.GITHUB_ACTIONS !== "true") return;
+  // Raw stderr, for the same reasons as emitGhaArtifactNotice.
+  printToStderrWithoutTimestamps(ghaNoticeCommand(title, message));
 }
 
 const USAGE = `Usage: bun src/fit/util/gha.ts <subcommand> [options]
