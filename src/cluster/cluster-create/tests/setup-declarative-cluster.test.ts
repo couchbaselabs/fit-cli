@@ -5,6 +5,8 @@ import YAML from "yaml";
 import type { ClusterCommandExecutor } from "../allocate-cluster.js";
 import { CBDINOCLUSTER_REMOVE_ALL_TIMEOUT, CBDINOCLUSTER_RM_TIMEOUT, cbdinoclusterNeedsInit, dockerNetworkFromInitArgs, remoteCbdinoclusterCloudEnabled, removeClusterArgs, removeRunCapellaClustersArgs, rmOutputShowsClusterGone, setupDeclarativeCluster } from "../setup-declarative-cluster.js";
 
+const STAMP = "fitcli-20260101-000000-0123abcd";
+
 const CLUSTER_PS_OUTPUT = `2026-06-03T13:02:18.157+0100    INFO    logger initialized
 Clusters:
   df45d6d0-cfbe-4905-bc8c-989a09c03817 [Type: server, State: ready, Timeout: none, Deployer: docker]
@@ -158,6 +160,7 @@ test("setupDeclarativeCluster runs `cbdinocluster init` for the docker args path
       init: { args: "--auto --disable-k8s --docker-network fit" },
       config: { nodes: [{ count: 1, version: "8.1.0", services: ["kv"] }] },
       onClusterExists: "useExisting",
+      purpose: STAMP,
       githubCredentials: { user: "alice", token: "ghtoken" },
     },
     execution,
@@ -169,11 +172,14 @@ test("setupDeclarativeCluster runs `cbdinocluster init` for the docker args path
   assert.ok(initCall, "expected a `cbdinocluster init` call");
   // init runs in a login shell so it picks up forwarded CAPELLA_*/AWS_* env; the
   // editable args are passed through and the GitHub credentials are appended.
-  // The run's Capella key pool flags follow, with a name unique to the run. Nothing
-  // else is added. The run stamp goes on each allocate instead.
+  // The run's Capella key pool flags follow, named after the run stamp. Nothing
+  // else is added.
   assert.match(
     initCall.args[1] ?? "",
-    /^cbdinocluster init --auto --disable-k8s --docker-network fit --github-user alice --github-token ghtoken --capella-create-pool --capella-pool-name fitcli-\S+ --capella-pool-size \d+ --capella-pool-expiry \S+$/,
+    new RegExp(
+      `^cbdinocluster init --auto --disable-k8s --docker-network fit --github-user alice --github-token ghtoken ` +
+        `--capella-create-pool --capella-pool-name ${STAMP} --capella-pool-size \\d+ --capella-pool-expiry \\S+$`,
+    ),
   );
   assert.equal(result.capellaKeyPool, true);
   // The stale `~/.cbdinocluster` is removed before init so `init --auto` keys off
@@ -200,6 +206,7 @@ test("setupDeclarativeCluster falls back to --disable-github when no credentials
       init: { args: "--auto --docker-network fit" },
       config: { nodes: [{ count: 1, version: "8.1.0", services: ["kv"] }] },
       onClusterExists: "useExisting",
+      purpose: STAMP,
     },
     execution,
   );
@@ -216,6 +223,7 @@ test("setupDeclarativeCluster adds no key pool flags when the init args disable 
       init: { args: "--auto --disable-capella --docker-network fit" },
       config: { nodes: [{ count: 1, version: "8.1.0", services: ["kv"] }] },
       onClusterExists: "useExisting",
+      purpose: STAMP,
     },
     execution,
   );
@@ -242,6 +250,7 @@ test("setupDeclarativeCluster initializes cbdinocluster before retrying ps", asy
       },
       config: { nodes: [{ count: 1, version: "8.1.0", services: ["kv"] }] },
       onClusterExists: "useExisting",
+      purpose: STAMP,
     },
     execution,
   );
@@ -271,6 +280,7 @@ test("setupDeclarativeCluster runs a bare `init --auto` on a remote box", async 
     {
       config: { nodes: [{ count: 1, version: "8.1.0", services: ["kv"] }] },
       onClusterExists: "useExisting",
+      purpose: STAMP,
     },
     execution,
   );
@@ -286,6 +296,7 @@ test("setupDeclarativeCluster runs a bare `init --auto` on this machine", async 
     {
       config: { nodes: [{ count: 1, version: "8.1.0", services: ["kv"] }] },
       onClusterExists: "useExisting",
+      purpose: STAMP,
     },
     execution,
   );

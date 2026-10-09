@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { allocateCluster, type ClusterCommandExecutor, writeClusterDef } from "../allocate-cluster.js";
-import { allocatePurpose } from "../allocate-purpose.js";
 import { ensureRunDir } from "../../../util/non-fit/replay.js";
+
+const STAMP = "fitcli-20260101-000000-0123abcd";
 
 test("writeClusterDef writes into the provided cluster directory", () => {
   const runDir = mkdtempSync(join(tmpdir(), "fit-cli-run-dir-"));
@@ -48,32 +49,32 @@ test("allocateCluster sets a short expiry for shared resources (Capella, CNG) an
   const cycleDir = join(ensureRunDir(), "instances", "0", "clusters", "0");
 
   const cloudExecutor = fakeExecutor();
-  await allocateCluster("cbdinocluster", "def", "cloud", cloudExecutor, cycleDir);
+  await allocateCluster("cbdinocluster", "def", STAMP, "cloud", cloudExecutor, cycleDir);
   assert.ok(cloudExecutor.capturedArgs.includes("--expiry=3h"));
 
   const cngExecutor = fakeExecutor();
-  await allocateCluster("cbdinocluster", "def", "cao", cngExecutor, cycleDir, true);
+  await allocateCluster("cbdinocluster", "def", STAMP, "cao", cngExecutor, cycleDir, true);
   assert.ok(cngExecutor.capturedArgs.includes("--expiry=3h"));
 
   const dockerExecutor = fakeExecutor();
-  await allocateCluster("cbdinocluster", "def", "docker", dockerExecutor, cycleDir);
+  await allocateCluster("cbdinocluster", "def", STAMP, "docker", dockerExecutor, cycleDir);
   assert.ok(dockerExecutor.capturedArgs.includes("--expiry=31h"));
 });
 
-test("allocateCluster tags a local allocate with --purpose", async () => {
+test("allocateCluster tags a local allocate with the purpose it is given", async () => {
   const cycleDir = join(ensureRunDir(), "instances", "0", "clusters", "0");
   const executor = fakeExecutor();
-  await allocateCluster("cbdinocluster", "def", "docker", executor, cycleDir);
-  assert.ok(executor.capturedArgs.includes(`--purpose=${allocatePurpose()}`));
+  await allocateCluster("cbdinocluster", "def", STAMP, "docker", executor, cycleDir);
+  assert.ok(executor.capturedArgs.includes(`--purpose=${STAMP}`));
 });
 
 test("allocateCluster tags a remote allocate with the purpose it is given", async () => {
   const cycleDir = join(ensureRunDir(), "instances", "0", "clusters", "0");
   const executor = fakeExecutor("remote");
-  await allocateCluster("cbdinocluster", "def", "cloud", executor, cycleDir, false, undefined, "fitcli-20260101-000000-abcd");
+  await allocateCluster("cbdinocluster", "def", STAMP, "cloud", executor, cycleDir);
   assert.ok(executor.capturedArgs.includes("allocate"));
   assert.deepEqual(
     executor.capturedArgs.filter((arg) => arg.startsWith("--purpose")),
-    ["--purpose=fitcli-20260101-000000-abcd"],
+    [`--purpose=${STAMP}`],
   );
 });

@@ -668,10 +668,10 @@ async function prepareSituationalCngCycle(
  */
 export async function setupCluster(
   group: ResolvedFunctionalExecutionGroup,
+  purpose: string,
   execution: ClusterCommandExecutor = localClusterCommandExecutor(),
   setupDeclarativeClusterFn: typeof setupDeclarativeCluster = setupDeclarativeCluster,
   githubCredentials?: { user: string; token: string },
-  purpose?: string,
 ): Promise<RunOutput & {
   group: ResolvedFunctionalExecutionGroup;
   clusterState?: ResumeClusterState;
@@ -792,8 +792,8 @@ interface RunTestsDependencies {
   runPerformerClusterSanityCheckFn?: typeof runPerformerClusterSanityCheck;
   runTestDriverFn?: typeof runTestDriver;
   recordResult?: RecordRunResult;
-  /** The run stamp for the clusters FIT allocates. Defaults to this run's stamp. */
-  purpose?: string;
+  /** The run stamp for the clusters FIT allocates. */
+  purpose: string;
 }
 
 export async function runTests(
@@ -801,7 +801,7 @@ export async function runTests(
   clusterMode: ResolvedFunctionalExecutionGroup["clusterMode"],
   run: ResolvedFunctionalExecutionRun,
   performer: RunningPerformer | undefined,
-  dependencies: RunTestsDependencies = {},
+  dependencies: RunTestsDependencies,
   clusterVersion?: string,
   instanceKind: "aws" | "gcp" | "localhost" = execution.kind === "remote" ? "aws" : "localhost",
   externalServices: readonly ExternalServiceHandle[] = [],
@@ -857,7 +857,7 @@ export async function runTests(
     effectiveFitConfig = withClusterCreating(run.fitConfig, {
       cbdinoclusterPath,
       version,
-      purpose: dependencies.purpose ?? allocatePurpose(),
+      purpose: dependencies.purpose,
     });
   }
   if (externalServices.length > 0) {
@@ -1725,9 +1725,9 @@ async function removeRunCapellaLeftovers(
 }
 
 /**
- * The stamp that names this run's clusters, for teardown and for FIT. A resumed
- * run gets a fresh run id, so its recomputed stamp would miss the original run's
- * clusters. The stamp saved in the run state wins.
+ * The stamp that names this run's clusters and key pool, for teardown and for FIT.
+ * A resumed run reuses the stamp saved in its run state, so it still finds what
+ * the original run made. Otherwise each call gets a fresh one.
  */
 export function runStamp(savedState: RunState | undefined): string {
   return savedState?.purpose ?? allocatePurpose();
@@ -2184,6 +2184,7 @@ export async function runFromDefinition(
   }
   const situationalRunId = savedState?.situationalRunId ?? options.situationalRunId ?? randomUUID();
   const purpose = runStamp(savedState);
+  console.log(`  Run stamp ${purpose} (the cbdinocluster purpose of this run's clusters)`);
   if (resumeAt) {
     if (!savedState) {
       fitCliError(
@@ -2601,7 +2602,7 @@ export async function runFromDefinition(
                 };
               }
             }
-            const setup = await setupCluster(functionalCycle, execution, setupDeclarativeCluster, githubCredentials, purpose);
+            const setup = await setupCluster(functionalCycle, purpose, execution, setupDeclarativeCluster, githubCredentials);
             activeCycle = setup.group;
             clusterState = setup.clusterState;
             capellaKeyPool = setup.capellaKeyPool;
@@ -2636,6 +2637,7 @@ export async function runFromDefinition(
           await prepareCbdinoclusterInit(
             execution,
             cngGroup.cbdinoclusterInit,
+            purpose,
             githubCredentials,
             instanceRunDir(group.path),
             group.cbdinoclusterSource,
@@ -2683,6 +2685,7 @@ export async function runFromDefinition(
           const initResult = await prepareCbdinoclusterInit(
             execution,
             cbdinoclusterInit,
+            purpose,
             githubCredentials,
             instanceRunDir(group.path),
             group.cbdinoclusterSource,

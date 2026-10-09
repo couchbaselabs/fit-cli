@@ -14,6 +14,7 @@ import { type RunOutput } from "../../util/non-fit/artifacts.js";
 import { capture } from "../../util/non-fit/proc.js";
 import { parseConnstr } from "../cluster-select/parse-connstr.js";
 import { allocateCluster, askDeployer } from "./allocate-cluster.js";
+import { allocatePurpose } from "./allocate-purpose.js";
 import { askClusterDef } from "./ask-cluster-def.js";
 import { buildClusterDef } from "./build-cluster-def.js";
 import { ensureCbdinocluster } from "./ensure-cbdinocluster.js";
@@ -41,7 +42,7 @@ export async function createCluster(): Promise<CreateResult> {
 
   let allocated;
   try {
-    allocated = await allocateCluster(cbdinocluster, def, deployer);
+    allocated = await allocateCluster(cbdinocluster, def, allocatePurpose(), deployer);
     console.log("\n✓ cbdinocluster allocated your cluster");
   } catch (err) {
     console.error(`\n✗ cbdinocluster failed to allocate the cluster: ${(err as Error).message}`);

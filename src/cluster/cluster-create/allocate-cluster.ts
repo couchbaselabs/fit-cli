@@ -141,13 +141,13 @@ export async function askDeployer(): Promise<string | undefined> {
 export async function allocateCluster(
   cbdinocluster: string,
   def: string,
+  purpose: string,
   deployer?: string,
   execution: ClusterCommandExecutor = localClusterCommandExecutor(),
   cycleDir: string = ensureRunDir(),
   cng = false,
   /** Only used (to print debug links) when `deployer` is "cloud" — see {@link printCapellaDebugLinks}. */
   capellaEnvironment?: string,
-  purpose: string = allocatePurpose(),
 ): Promise<AllocatedCluster> {
   const runDir = ensureRunDir();
   const { path: localDefFile, artifact } = writeClusterDef(def, cycleDir, runDir);
@@ -285,6 +285,6 @@ if (isMain(import.meta.url)) {
       services: ["kv", "n1ql", "index", "fts"],
       cng: false,
     });
-    return allocateCluster(cbdinocluster, def, await askDeployer());
+    return allocateCluster(cbdinocluster, def, allocatePurpose(), await askDeployer());
   });
 }
