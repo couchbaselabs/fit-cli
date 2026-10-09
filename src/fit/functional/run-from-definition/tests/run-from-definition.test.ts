@@ -23,8 +23,9 @@ import {
 } from "../run-from-definition.js";
 import { formatRunLabel } from "../../../shared/util/run-labels.js";
 import { loadEnvironments } from "../../../util/environments.js";
-import { allocatePurpose } from "../../../../cluster/cluster-create/allocate-purpose.js";
 import type { RunState } from "../resume-state.js";
+
+const STAMP = "fitcli-20260101-000000-0123abcd";
 
 function functionalCycle(): ResolvedFunctionalExecutionGroup {
   const sdk = sdkByValue("java");
@@ -170,7 +171,7 @@ test("setupCluster applies the allocated cbdinocluster to every functional itera
   const execution = executor();
   let receivedExecution: ClusterCommandExecutor | undefined;
 
-  const result = await setupCluster(cycle, execution, (_plan, passedExecution) => {
+  const result = await setupCluster(cycle, STAMP, execution, (_plan, passedExecution) => {
     receivedExecution = passedExecution;
     return Promise.resolve({
       allocated: true,
@@ -187,7 +188,7 @@ test("setupCluster applies the allocated cbdinocluster to every functional itera
 });
 
 test("setupCluster leaves the iterations unchanged when allocation fails", async () => {
-  const result = await setupCluster(functionalCycle(), executor(), () =>
+  const result = await setupCluster(functionalCycle(), STAMP, executor(), () =>
     Promise.resolve({
       allocated: false,
       artifacts: [],
@@ -199,7 +200,7 @@ test("setupCluster leaves the iterations unchanged when allocation fails", async
 });
 
 test("setupCluster hands teardown the key pool when allocation fails after init created it", async () => {
-  const result = await setupCluster(functionalCycle(), executor(), () =>
+  const result = await setupCluster(functionalCycle(), STAMP, executor(), () =>
     Promise.resolve({
       allocated: false,
       cbdinocluster: "cbdinocluster",
@@ -263,6 +264,7 @@ test("runTests stops before later steps when the cluster REST sanity check fails
           ranDriver = true;
           return Promise.resolve({ ok: true, logFile: "/tmp/driver.log", artifacts: [], details: [] });
         },
+        purpose: STAMP,
       }),
     { message: "Cluster sanity test failed; this execution group cannot continue." },
   );
@@ -281,6 +283,7 @@ test("runTests throws FatalToSession when the test driver reports failure", asyn
         generateFitConfigurationFn: () => ({ path: "/tmp/fit.json", artifacts: [], details: [] }),
         runPerformerClusterSanityCheckFn: () => Promise.resolve({ ok: true, artifacts: [], details: [] }),
         runTestDriverFn: () => Promise.resolve({ ok: false, logFile: "/tmp/driver.log", artifacts: [], details: [] }),
+        purpose: STAMP,
       }),
     { message: "FIT tests failed — check the test-driver log for details." },
   );
@@ -294,6 +297,7 @@ test("runTests throws FatalToSession when performer sanity fails", async () => {
         generateFitConfigurationFn: () => ({ path: "/tmp/fit.json", artifacts: [], details: [] }),
         runPerformerClusterSanityCheckFn: () => Promise.resolve({ ok: false, artifacts: [], details: [] }),
         runTestDriverFn: () => Promise.resolve({ ok: true, logFile: "/tmp/driver.log", artifacts: [], details: [] }),
+        purpose: STAMP,
       }),
     { message: "Performer cluster sanity check failed; stopping this iteration." },
   );
@@ -309,6 +313,7 @@ test("runTests enables resourceCreation for a self-managed cbdinocluster run", a
     },
     runPerformerClusterSanityCheckFn: () => Promise.resolve({ ok: true, artifacts: [], details: [] }),
     runTestDriverFn: () => Promise.resolve({ ok: true, logFile: "/tmp/driver.log", artifacts: [], details: [] }),
+    purpose: STAMP,
   }, "7.6.0");
 
   assert.ok(receivedFitConfig?.config?.resourceCreation, "expected resourceCreation for a self-managed run");
@@ -324,20 +329,21 @@ test("runTests gives FIT the run stamp in resourceCreation.cluster.cbdinocluster
     },
     runPerformerClusterSanityCheckFn: () => Promise.resolve({ ok: true, artifacts: [], details: [] }),
     runTestDriverFn: () => Promise.resolve({ ok: true, logFile: "/tmp/driver.log", artifacts: [], details: [] }),
-    purpose: "fitcli-20260821-154758-ded4",
+    purpose: STAMP,
   }, "7.6.0");
 
   const resourceCreation = receivedFitConfig?.config?.resourceCreation as { cluster: { cbdinocluster: Record<string, unknown> } };
-  assert.equal(resourceCreation.cluster.cbdinocluster.purpose, "fitcli-20260821-154758-ded4");
+  assert.equal(resourceCreation.cluster.cbdinocluster.purpose, STAMP);
 });
 
 test("runStamp prefers the stamp saved by the original run", () => {
-  assert.equal(runStamp({ ...savedRunState(), purpose: "fitcli-20260101-000000-abcd" }), "fitcli-20260101-000000-abcd");
+  assert.equal(runStamp({ ...savedRunState(), purpose: STAMP }), STAMP);
 });
 
-test("runStamp falls back to this run's stamp", () => {
-  assert.equal(runStamp(undefined), allocatePurpose());
-  assert.equal(runStamp(savedRunState()), allocatePurpose());
+test("runStamp makes a fresh stamp when there is none to reuse", () => {
+  assert.match(runStamp(undefined), /^fitcli-\d{8}-\d{6}-[0-9a-f]{8}$/);
+  assert.match(runStamp(savedRunState()), /^fitcli-\d{8}-\d{6}-[0-9a-f]{8}$/);
+  assert.notEqual(runStamp(undefined), runStamp(undefined));
 });
 
 function savedRunState(): RunState {
@@ -354,6 +360,7 @@ test("runTests leaves resourceCreation off for a Capella cbdinocluster run (no D
     },
     runPerformerClusterSanityCheckFn: () => Promise.resolve({ ok: true, artifacts: [], details: [] }),
     runTestDriverFn: () => Promise.resolve({ ok: true, logFile: "/tmp/driver.log", artifacts: [], details: [] }),
+    purpose: STAMP,
   }, "7.6.0");
 
   assert.equal(receivedFitConfig?.config?.resourceCreation, undefined);
@@ -369,6 +376,7 @@ test("runTests leaves resourceCreation off for a CNG cbdinocluster run (no Docke
     },
     runPerformerClusterSanityCheckFn: () => Promise.resolve({ ok: true, artifacts: [], details: [] }),
     runTestDriverFn: () => Promise.resolve({ ok: true, logFile: "/tmp/driver.log", artifacts: [], details: [] }),
+    purpose: STAMP,
   }, "7.6.0");
 
   assert.equal(receivedFitConfig?.config?.resourceCreation, undefined);
@@ -490,7 +498,7 @@ function teardownInputs(overrides: Partial<Parameters<typeof teardownRun>[0]> = 
     teardown: { kind: "local" },
     forceLocalhost: false,
     forceAws: false,
-    purpose: "fitcli-20260101-000000-abcd",
+    purpose: STAMP,
     performers: [],
     performerStates: [],
     externalServices: [],
