@@ -182,6 +182,7 @@ test("setupDeclarativeCluster runs `cbdinocluster init` for the docker args path
     ),
   );
   assert.equal(result.capellaKeyPool, true);
+  assert.equal(result.capellaCredentials, true);
   // The stale `~/.cbdinocluster` is removed before init so `init --auto` keys off
   // the forwarded env/flags, not a previous execution group's config (which may
   // have left Capella disabled — see runCbdinoclusterInit).
@@ -235,6 +236,22 @@ test("setupDeclarativeCluster adds no key pool flags when the init args disable 
     /^cbdinocluster init --auto --disable-capella --docker-network fit --disable-github$/,
   );
   assert.equal(result.capellaKeyPool, undefined);
+  assert.equal(result.capellaCredentials, undefined);
+});
+
+test("setupDeclarativeCluster records Capella credentials for a cloud plan, also on a failed result", async () => {
+  const result = await setupDeclarativeCluster(
+    {
+      config: { nodes: [{ count: 1, version: "8.1.0", services: ["kv"] }] },
+      onClusterExists: "fail",
+      deployer: "cloud",
+      purpose: STAMP,
+    },
+    executor(),
+  );
+  assert.equal(result.cluster, undefined);
+  assert.equal(result.cbdinocluster, "cbdinocluster");
+  assert.equal(result.capellaCredentials, true);
 });
 
 test("setupDeclarativeCluster initializes cbdinocluster before retrying ps", async () => {
