@@ -14,6 +14,7 @@ import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { prepareAwsCli } from "./aws-cli.js";
 import { s3Client } from "./aws-clients.js";
 import { AWS_REGION } from "./aws-target.js";
+import { parseS3Uri } from "./s3-uri.js";
 
 function* walkDir(dir: string): Generator<string> {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -24,14 +25,6 @@ function* walkDir(dir: string): Generator<string> {
       yield full;
     }
   }
-}
-
-function parseS3Uri(uri: string): { bucket: string; prefix: string } {
-  const match = uri.match(/^s3:\/\/([^/]+)\/?(.*)$/);
-  if (!match) {
-    throw new Error(`Invalid S3 URI: ${uri}`);
-  }
-  return { bucket: match[1], prefix: match[2] ?? "" };
 }
 
 /** Console URL for browsing a bucket/prefix's objects (not just the raw s3:// URI). */
@@ -45,7 +38,7 @@ function s3ConsoleUrl(bucket: string, prefix: string): string {
  * each uploaded file. Rejects if any upload fails.
  */
 export async function uploadDirectoryToS3(localDir: string, s3Uri: string): Promise<void> {
-  const { bucket, prefix } = parseS3Uri(s3Uri);
+  const { bucket, key: prefix } = parseS3Uri(s3Uri);
   const files = [...walkDir(localDir)];
   console.log(`Uploading ${files.length} file(s) to ${s3Uri}...`);
   console.log(`  ${s3ConsoleUrl(bucket, prefix)}`);

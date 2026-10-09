@@ -67,7 +67,9 @@ async function renderRunSummary(
   // A bookkeeping command that succeeded has nothing worth uploading, and a second
   // "Run artifacts" block in the job summary is just noise. It still uploads when it
   // fails, because then the logs are the only record of why.
-  if (!heading && producedOnlyBoilerplate(artifacts)) {
+  // A command can also fail by setting process.exitCode and returning normally (fit health check).
+  const failed = !!heading || Number(process.exitCode ?? 0) !== 0;
+  if (!failed && producedOnlyBoilerplate(artifacts)) {
     return;
   }
 

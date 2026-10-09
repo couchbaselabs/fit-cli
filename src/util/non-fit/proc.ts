@@ -7,7 +7,10 @@ import { createRunFilePath } from "./replay.js";
 // Log files are plain-text artifacts, so strip the ANSI SGR (colour) sequences
 // that the terminal path embeds. Without this, colour leaks into session.info.log
 // / session.debug.log whenever colour is enabled (a real TTY, or GHA/FORCE_COLOR).
-const ANSI_SGR = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
+// The escape is matched as the real ESC byte or as the literal "^[" that `gh run view
+// --log` leaves in a CI log in its place.
+// eslint-disable-next-line no-control-regex
+const ANSI_SGR = /(?:\x1b|\^\[)\[[0-9;]*m/g;
 /** Exported so anything rendering captured output as plain text uses the same rule. */
 export const stripAnsi = (s: string): string => s.replace(ANSI_SGR, "");
 

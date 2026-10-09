@@ -120,6 +120,8 @@ User-facing (using the installed binary):
 - `fit performer run <sdk> [version]` — pull and start a single prebuilt performer image, for manual testing outside a full FIT run (e.g. `fit performer run scala`). Leaves it running; stop it yourself when done.
 - `fit performer metadata <sdk> [version]` — pull a performer image and print all its metadata: Docker image labels (build time, revision, source, PR, CI run) and everything it reports over the `performerCapsFetch` gRPC call (user agent, library version, transactions protocol, and every capability).
 - `fit caps table | sync` — show which FIT capabilities each SDK's performer reports (see Capabilities).
+- `fit health report | backfill | check | reparse | import-logs | notes | settings <sdk>` — which FIT tests an opted-in SDK fails consistently or intermittently, and what started or stopped failing, from its nightly runs; `notes` and `settings` show or set its hand-written notes and where its output goes (see `specs/health.md`).
+- `fit health cross` — compare every SDK's report: how the other SDKs fare on each failing test. `fit health overview` writes the site's top page: each SDK's last 30 nights, one chart each. `fit health opt-ins` lists the opted-in SDKs.
 - `fit ingest situational` drains the situational results uploaded to `s3://fit-cli/incoming/` into the perf Postgres database, moving each run to `processed/` or `failed/`. A run is only taken once it holds a `.done` marker, which the uploader writes as the last object of the run, so a half-uploaded run is never read. Meant for the cron on the database host, which connects as the `results_ingester` role and reads its password from the AWS Secrets Manager secret `performance-sdk/results-ingester` using its own IAM role (see `--help`).
 - `fit external-services otel start | stop` — start or stop the local otel stack (an OTel collector, Jaeger and Prometheus) for manual testing. A functional `fit run` already does this automatically.
 - `fit external-services otel replay <dump-dir>` — bring the Jaeger and Prometheus UIs back up over a finished run's traces and metrics.
@@ -193,6 +195,7 @@ LLMs (and humans :) ) you MUST read the following spec files if they relate to s
 `specs/errors.md` - Covers the error model: failure severities and how they map to CI exit behaviour.
 `specs/cng.md` - Covers how CNG (Cloud Native Gateway) testing works, including the shared ROSA OpenShift cluster.
 `specs/fit-testing-overview.md` - Concise overview of FIT itself (drivers, test types) as distinct from fit-cli.
+`specs/health.md` - Covers `fit health`: per-SDK FIT test health from nightly runs, the run records it is built on, and opting an SDK in.
 
 
 ### Steps and flows

@@ -23,6 +23,7 @@ import { ensureGhcrLogin, fetchCapsForSdk } from "./fetch-caps/fetch-caps.js";
 import { DEFAULT_CAPS_PATH, findCap, loadCapsFile } from "./util/caps-metadata.js";
 import { formatCapFocusReport, formatCapsMarkdown, formatCapsReport, type CapsFetchResult } from "./util/caps-table.js";
 import { formatCapsFile, syncCapsFile } from "./util/sync-caps-file.js";
+import { mapWithConcurrency } from "../../util/non-fit/concurrency.js";
 
 /**
  * Performers are started concurrently, but not all at once: each is a JVM or similar
@@ -58,21 +59,6 @@ Subcommands:
           jira/description/notes you have written.
 
 Capability metadata (including the Jira ticket for each cap) lives in caps.json5.`;
-}
-
-/** Run `worker` over `items`, at most `limit` at a time. */
-async function mapWithConcurrency<T, R>(items: readonly T[], limit: number, worker: (item: T, index: number) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let next = 0;
-  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    for (;;) {
-      const index = next++;
-      if (index >= items.length) return;
-      results[index] = await worker(items[index], index);
-    }
-  });
-  await Promise.all(runners);
-  return results;
 }
 
 /**

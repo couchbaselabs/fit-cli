@@ -8,22 +8,11 @@
  * Run on its own (add --root <dir> to point elsewhere):
  *   bun src/fit/shared/select-fit-tests/select-fit-tests.ts
  */
-import { readFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import JSON5 from "json5";
+import { basename } from "node:path";
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { checkbox, qualifyPromptId, search, select } from "../../../util/non-fit/prompts.js";
 import { createLocalFitExecutionContext, type FitExecutionContext } from "../util/remote-fit-run.js";
-
-const FIT_TESTS_CACHE_PATH = join(dirname(fileURLToPath(import.meta.url)), "fit-tests-cache.json5");
-const bundledFitTestsCachePath = import.meta.url.includes("/$bunfs/")
-  ? (
-      await import("./fit-tests-cache.json5", {
-        with: { type: "file" },
-      }) as { default: string }
-    ).default
-  : undefined;
+import { readFitTestPaths, toClassName } from "./fit-tests-cache.js";
 
 export interface FitTestCase {
   /** Basename shown in the picker, e.g. StandardTest.java. */
@@ -138,9 +127,7 @@ export const STANDARD_QE_CNG_REBALANCE_CLASS = "com.couchbase.situational.tests.
  *   bunx tsx src/fit/shared/select-fit-tests/generate-fit-tests-cache.ts --root /path/to/transactions-fit-performer
  */
 export function loadFitTestsFromCache(domain: FitTestDomain = FUNCTIONAL_TEST_DOMAIN): FitTestCase[] {
-  const cachePath = import.meta.url.includes("/$bunfs/") ? (bundledFitTestsCachePath ?? FIT_TESTS_CACHE_PATH) : FIT_TESTS_CACHE_PATH;
-  const paths = JSON5.parse<string[]>(readFileSync(cachePath, "utf8"));
-  return parseFitTests(paths.join("\n"), domain);
+  return parseFitTests(readFitTestPaths().join("\n"), domain);
 }
 
 /** Keep only the test paths the domain cares about (include/exclude prefixes). */
@@ -152,14 +139,6 @@ function matchesDomain(relativePath: string, domain: FitTestDomain): boolean {
     return false;
   }
   return true;
-}
-
-/** Convert a `java|scala/...` relative test path into its Maven-selectable FQCN. */
-function toClassName(relativePath: string): string {
-  return relativePath
-    .replace(/^(?:java|scala)\//, "")
-    .replace(/\.(?:java|scala)$/, "")
-    .replaceAll("/", ".");
 }
 
 /** Parse the `find` output produced by {@link listFitTests}. */
