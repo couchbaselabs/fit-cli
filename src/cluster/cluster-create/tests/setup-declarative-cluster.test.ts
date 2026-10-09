@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import YAML from "yaml";
 import type { ClusterCommandExecutor } from "../allocate-cluster.js";
-import { CBDINOCLUSTER_REMOVE_ALL_TIMEOUT, CBDINOCLUSTER_RM_TIMEOUT, cbdinoclusterNeedsInit, dockerNetworkFromInitArgs, remoteCbdinoclusterCloudEnabled, removeClusterArgs, removeRunCapellaClustersArgs, rmOutputShowsClusterGone, setupDeclarativeCluster } from "../setup-declarative-cluster.js";
+import { CBDINOCLUSTER_REMOVE_ALL_TIMEOUT, CBDINOCLUSTER_RM_TIMEOUT, cbdinoclusterNeedsInit, dockerNetworkFromInitArgs, remoteCbdinoclusterCloudEnabled, removeCluster, removeClusterArgs, removeRunCapellaClustersArgs, setupDeclarativeCluster } from "../setup-declarative-cluster.js";
 
 const STAMP = "fitcli-20260101-000000-0123abcd";
 
@@ -321,28 +321,22 @@ test("setupDeclarativeCluster runs a bare `init --auto` on this machine", async 
   assert.equal(result.cluster?.defaultHostname, "172.18.0.2");
 });
 
-test("removeClusterArgs bounds the removal so a foreign stuck cluster cannot hold the wait", () => {
-  assert.deepEqual(removeClusterArgs("abc123"), ["rm", "--timeout", CBDINOCLUSTER_RM_TIMEOUT, "abc123"]);
-  assert.ok(removeClusterArgs("abc123").includes("--timeout"));
+test("removeClusterArgs bounds the removal and accepts a cluster that is already gone", () => {
+  assert.deepEqual(removeClusterArgs("abc123"), ["rm", "--timeout", CBDINOCLUSTER_RM_TIMEOUT, "--ignore-missing", "abc123"]);
 });
 
-const RM_LOGGER_LINE = "2026-09-29T10:00:00.000Z\tINFO\tlogger initialized\n";
-const RM_IDENTIFY_FATAL =
-  '2026-09-29T10:00:01.000Z\tFATAL\tfailed to identify cluster using specified identifier\t{"identifier": "abc123"}\n';
-const RM_LIST_WARN =
-  '2026-09-29T10:00:00.500Z\tWARN\tfailed to list clusters\t{"error": "context deadline exceeded", "deployer": "cloud"}\n';
-
-test("rmOutputShowsClusterGone treats an unknown id as already removed", () => {
-  assert.equal(rmOutputShowsClusterGone(RM_LOGGER_LINE + RM_IDENTIFY_FATAL), true);
+test("removeCluster reports the cluster gone when rm exits 0", async () => {
+  const execution = executor();
+  assert.equal(await removeCluster("cbdinocluster", "abc123", execution), true);
+  assert.deepEqual(execution.runCalls, [{ command: "cbdinocluster", args: removeClusterArgs("abc123") }]);
 });
 
-test("rmOutputShowsClusterGone keeps a failure when a deployer could not list its clusters", () => {
-  assert.equal(rmOutputShowsClusterGone(RM_LOGGER_LINE + RM_LIST_WARN + RM_IDENTIFY_FATAL), false);
-});
-
-test("rmOutputShowsClusterGone keeps every other failure", () => {
-  assert.equal(rmOutputShowsClusterGone(""), false);
-  assert.equal(rmOutputShowsClusterGone(`${RM_LOGGER_LINE}2026-09-29T10:00:01.000Z\tFATAL\tfailed to remove cluster\n`), false);
+test("removeCluster reports a failure when rm exits non-zero", async () => {
+  const execution = {
+    ...executor(),
+    run: () => Promise.reject(new Error("cbdinocluster exited with code 1")),
+  };
+  assert.equal(await removeCluster("cbdinocluster", "abc123", execution), false);
 });
 
 test("removeRunCapellaClustersArgs targets the cloud deployer with the run's exact stamp", () => {
