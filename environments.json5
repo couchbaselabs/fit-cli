@@ -204,7 +204,8 @@
   },
 
   // projectId names the project cbdinocluster puts every cluster in. It belongs to the env's org.
-  // fit-cli forwards it as CAPELLA_PROJECT_ID to the box and the hourly sweep. Optional per env.
+  // fit-cli forwards it as CAPELLA_PROJECT_ID to the box and the hourly sweep.
+  // A box run needs it to allocate. The hourly sweep works without it.
   capella: {
     prod: {
       endpoint: "https://api.cloud.couchbase.com",
