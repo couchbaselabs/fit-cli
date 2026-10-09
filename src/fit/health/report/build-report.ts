@@ -28,7 +28,6 @@ import { buildSeries, testHistories, type Series } from "./series.js";
 import { addDays, calendarDays, daysBetween } from "./dates.js";
 import { SDKS } from "../../../util/sdk/sdks.js";
 
-export const HEALTH_REPORT_SCHEMA = 1 as const;
 
 /** The "what changed" lists cover the last two weeks. */
 export const RECENT_DAYS = 14;
@@ -73,8 +72,8 @@ export interface ReportTest extends Classification {
 
 /**
  * One night a series ran: the CI run, and the SDK commit it tested. The run's page is
- * `https://github.com/<repo>/actions/runs/<runId>/attempts/<attempt>` (`runUrl`), with the
- * report's `repo` unless the night names another.
+ * `https://github.com/<repo>/actions/runs/<runId>/attempts/<attempt>`, with the report's
+ * `repo` unless the night names another.
  */
 export interface ReportNight {
   repo?: string;
@@ -93,10 +92,6 @@ export interface ReportNight {
   archive?: { uri: string; member: string };
   /** "run-archive-junit": every outcome is known; "run-log-scrape": only failures are named. */
   source: RunRecord["source"];
-}
-
-export function runUrl(repo: string, night: Pick<ReportNight, "runId" | "attempt">): string {
-  return `https://github.com/${repo}/actions/runs/${night.runId}/attempts/${night.attempt}`;
 }
 
 /**
@@ -178,7 +173,6 @@ export interface ParamComparison {
 }
 
 export interface HealthReport {
-  schema: typeof HEALTH_REPORT_SCHEMA;
   sdk: string;
   /** The SDK repo the nightly runs are in (the latest night's), for run and commit links. */
   repo?: string;
@@ -413,7 +407,6 @@ export function buildHealthReport(
   const blackout = dates.filter((d) => !functional.some((s) => d in s.perNight && s.perNight[d] !== null));
 
   const report: Omit<HealthReport, "digest"> = {
-    schema: HEALTH_REPORT_SCHEMA,
     sdk,
     ...(repo ? { repo } : {}),
     generatedAt: (opts.now ?? new Date()).toISOString(),

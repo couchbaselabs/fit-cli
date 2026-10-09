@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { RUN_RECORD_SCHEMA, addOutcome, type RunRecord } from "../../record/run-record.js";
-import { buildHealthReport, presetWhere, reportFindings, runUrl } from "../build-report.js";
+import { buildHealthReport, presetWhere, reportFindings } from "../build-report.js";
 import { buildSeries, testHistories } from "../series.js";
 
 let runId = 1;
@@ -377,7 +377,7 @@ test("a test carries its latest failure run and the nights either side, and each
   const first = s.nights[t.lastEpisode.from];
   assert.equal(report.repo, "couchbase/couchbase-net-client");
   assert.equal(first.repo, undefined, "only a night in another repo names it");
-  assert.match(runUrl(report.repo, first), /^https:\/\/github.com\/couchbase\/couchbase-net-client\/actions\/runs\/\d+\/attempts\/1$/);
+  assert.equal(first.attempt, 1);
   assert.deepEqual([first.sdkCommit, first.sdkCommitFrom, first.archive?.uri, first.source], ["bbb", "workflow", "s3://fit-cli/runs/2026-09-06.zip", "run-archive-junit"]);
   assert.equal(s.nights[t.lastGood!].sdkCommit, "aaa");
   // Every test that ran in the window, for other SDKs' reports to say "it runs that test".

@@ -17,11 +17,10 @@ test("a minimal entry is valid; branch is optional", () => {
 });
 
 test("invalid entries say exactly what is wrong", () => {
-  const p = validateOptIn("klingon", { repo: "nope", workflows: [], slack: { channel: "#general" } });
+  const p = validateOptIn("klingon", { repo: "nope", workflows: [] });
   assert.ok(p.some((x) => /not an SDK/.test(x)));
   assert.ok(p.some((x) => /owner\/name/.test(x)));
   assert.ok(p.some((x) => /non-empty list/.test(x)));
-  assert.ok(p.some((x) => /fit health settings/.test(x)), "slack has moved to the store's settings");
 });
 
 test("a local opt-in file adds entries and overrides committed ones, marked local", () => {

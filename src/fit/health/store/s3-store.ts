@@ -80,12 +80,6 @@ export interface OpenStoreOptions {
   skipRawLogs?: boolean;
 }
 
-/**
- * The per-SDK index object the store kept before fit-cli-role could list the bucket. A
- * listing that still finds one ignores it, and the next push deletes it.
- */
-export const LEGACY_INDEX = "index.json";
-
 /** The order changed keys are pushed in: everything else first, then the manifests, which vouch for the records and logs of their run. */
 export function pushStages(written: Iterable<string>): string[][] {
   const keys = [...written];
@@ -93,11 +87,10 @@ export function pushStages(written: Iterable<string>): string[][] {
   return [keys.filter((k) => !isManifest(k)), keys.filter(isManifest)].filter((stage) => stage.length);
 }
 
-/** The store keys to pull from a listing of `<prefix><sdk>/`: relative to the store, without the legacy index, raw logs only if wanted. */
+/** The store keys to pull from a listing of `<prefix><sdk>/`: relative to the store, raw logs only if wanted. */
 export function keysToPull(objectKeys: readonly string[], prefix: string, sdk: string, opts: OpenStoreOptions = {}): string[] {
   return objectKeys
     .map((k) => k.slice(prefix.length))
-    .filter((k) => k !== `${sdk}/${LEGACY_INDEX}`)
     .filter((k) => !(opts.skipRawLogs && k.startsWith(`${sdk}/raw/`)))
     .sort();
 }
@@ -130,7 +123,6 @@ export async function openStore(spec: string | undefined, sdk: string, opts: Ope
   const mirror = mkdtempSync(join(tmpdir(), "fit-health-store-"));
   const store = new TrackingHealthStore(mirror);
   const sdkPrefix = `${prefix}${sdk}/`;
-  let legacyIndex = false;
   // Until the store is handed back, nothing else can close it: a failed pull removes its own mirror.
   try {
     let listed: string[];
@@ -139,7 +131,6 @@ export async function openStore(spec: string | undefined, sdk: string, opts: Ope
     } catch (err) {
       throw new Error(`Could not list the fit health store for ${sdk} at s3://${bucket}/${sdkPrefix}: check the AWS credentials.`, { cause: err });
     }
-    legacyIndex = listed.includes(`${sdkPrefix}${LEGACY_INDEX}`);
     const pull = keysToPull(listed, prefix, sdk, opts);
     if (!listed.length) fitCliInfo(`fit health: no data for ${sdk} at s3://${bucket}/${sdkPrefix} yet; starting a new store`);
     fitCliInfo(`fit health: pulling ${pull.length} objects for ${sdk} from s3://${bucket}/${sdkPrefix}`);
@@ -168,10 +159,6 @@ export async function openStore(spec: string | undefined, sdk: string, opts: Ope
       await mapWithConcurrency(removed, 16, async (k) => {
         await s3Client.send(new DeleteObjectCommand({ Bucket: bucket, Key: `${prefix}${k}` }));
       });
-      if (legacyIndex) {
-        await s3Client.send(new DeleteObjectCommand({ Bucket: bucket, Key: `${sdkPrefix}${LEGACY_INDEX}` }));
-        legacyIndex = false;
-      }
       store.written.clear();
       store.removed.clear();
       if (written.length || removed.length) {

@@ -10,10 +10,8 @@ import type { HealthReport, ReportSeries } from "./build-report.js";
 import { addDays } from "./dates.js";
 import { WINDOW_DAYS } from "./classify.js";
 
-export const OVERVIEW_SCHEMA = "fit-health-overview/1";
-
 /** The parts of a report the overview reads. */
-export type OverviewInput = Pick<HealthReport, "sdk" | "generatedAt" | "start" | "end"> & {
+export type OverviewInput = Pick<HealthReport, "sdk" | "start" | "end"> & {
   series: Pick<ReportSeries, "testCounts">[];
 };
 
@@ -43,9 +41,8 @@ export type OverviewDay = OverviewNight | "none" | "unreported";
 export interface OverviewSdk {
   sdk: string;
   name: string;
-  /** The SDK report's own end date and when it was generated. */
+  /** The SDK report's own end date. */
   end: string;
-  generatedAt: string;
   /** One per date in the overview's `dates`. */
   days: OverviewDay[];
   /** The newest night the SDK ran, in or before the window. */
@@ -53,7 +50,7 @@ export interface OverviewSdk {
 }
 
 export interface Overview {
-  schema: typeof OVERVIEW_SCHEMA;
+  /** When the page was built, shown in its header. */
   generatedAt: string;
   windowDays: number;
   /** The window, oldest first: WINDOW_DAYS calendar days ending on the newest report's end. */
@@ -102,13 +99,11 @@ export function buildOverview(
       sdk: input.sdk,
       name,
       end: input.end,
-      generatedAt: input.generatedAt,
       days,
       latest: latestDate ? nights.get(latestDate) : undefined,
     };
   });
   return {
-    schema: OVERVIEW_SCHEMA,
     generatedAt: now.toISOString(),
     windowDays,
     dates,

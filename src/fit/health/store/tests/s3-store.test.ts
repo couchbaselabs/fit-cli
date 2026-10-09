@@ -13,8 +13,8 @@ import { test } from "node:test";
 import { LocalHealthStore } from "../health-store.js";
 import { keysToPull, pushStages } from "../s3-store.js";
 
-test("a listing becomes store keys: relative to the store, without the old index, raw logs only if wanted", () => {
-  const listed = ["health-dev/dotnet/index.json", "health-dev/dotnet/records/2026/a.json", "health-dev/dotnet/raw/1-1.log.gz", "health-dev/dotnet/manifests/1-1.json"];
+test("a listing becomes store keys: relative to the store, raw logs only if wanted", () => {
+  const listed = ["health-dev/dotnet/records/2026/a.json", "health-dev/dotnet/raw/1-1.log.gz", "health-dev/dotnet/manifests/1-1.json"];
   assert.deepEqual(keysToPull(listed, "health-dev/", "dotnet"), ["dotnet/manifests/1-1.json", "dotnet/raw/1-1.log.gz", "dotnet/records/2026/a.json"]);
   assert.deepEqual(keysToPull(listed, "health-dev/", "dotnet", { skipRawLogs: true }), ["dotnet/manifests/1-1.json", "dotnet/records/2026/a.json"]);
   // A new SDK's prefix lists nothing: an empty store, not an error.

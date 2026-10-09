@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { NightTests } from "../build-report.js";
-import { buildOverview, nightTotals, OVERVIEW_SCHEMA, type OverviewInput } from "../overview.js";
+import { buildOverview, nightTotals, type OverviewInput } from "../overview.js";
 import { fillOverviewTemplate } from "../render/render-html.js";
 
 const full = (passed: number, failing: number, skipped: number): NightTests => ({
@@ -20,7 +20,7 @@ const full = (passed: number, failing: number, skipped: number): NightTests => (
 const logOnly = (failing: number): NightTests => ({ testCases: 500, failing });
 
 function input(sdk: string, start: string, end: string, series: Record<string, NightTests>[]): OverviewInput {
-  return { sdk, generatedAt: `${end}T12:00:00.000Z`, start, end, series: series.map((testCounts) => ({ testCounts })) };
+  return { sdk, start, end, series: series.map((testCounts) => ({ testCounts })) };
 }
 
 test("nightTotals adds every series' night together", () => {
@@ -47,7 +47,7 @@ test("the window is the last N calendar days to the newest report's end", () => 
     new Date("2026-10-03T00:00:00Z"),
     5,
   );
-  assert.equal(o.schema, OVERVIEW_SCHEMA);
+  assert.equal(o.generatedAt, "2026-10-03T00:00:00.000Z");
   assert.deepEqual(o.dates, ["2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02"]);
 });
 

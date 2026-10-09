@@ -118,8 +118,6 @@ export function validateOptIn(sdk: string, o: unknown): string[] {
     problems.push("workflows must be a non-empty list of workflow file names (e.g. fit-testing-java.yml)");
   }
   if (e.branch !== undefined && (typeof e.branch !== "string" || !e.branch)) problems.push("branch, when given, must be a branch name");
-  // Where output goes is data, not code: `fit health settings <sdk> --slack-channel <id>`.
-  if ((o as Record<string, unknown>).slack !== undefined) problems.push("slack is no longer part of an opt-in: set it with `fit health settings <sdk> --slack-channel <id>`");
   for (const field of ["paths", "sharedCorePaths", "sharedHarnessPaths"] as const) {
     const v = e[field];
     if (v === undefined) continue;

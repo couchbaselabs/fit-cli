@@ -6,7 +6,6 @@
 #   <site-dir>      is created; the site is written there:
 #                     index.html               redirects to health/
 #                     health/index.html        each SDK's last 30 nights, one chart each (fit health overview)
-#                     health/overview.json     that page's data
 #                     health/sdks.json         the SDKs on the site, for the next run
 #                     health/<sdk>/index.html  the SDK's report page
 #                     health/<sdk>/report.json the report data: what the page draws and tools read

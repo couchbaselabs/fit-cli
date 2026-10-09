@@ -5,7 +5,7 @@
  *   bun src/fit/health/report/overview-command.ts --dir <site>/health
  *
  * <site>/health holds one directory per SDK, as health-site.sh lays them out: <sdk>/index.html
- * (its page) and <sdk>/report.json (its report). Writes index.html and overview.json there.
+ * (its page) and <sdk>/report.json (its report). Writes index.html there.
  */
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -25,7 +25,7 @@ Usage:
   ${prefix} --dir <site>/health
 
 <site>/health holds <sdk>/index.html and <sdk>/report.json for each SDK, as the health
-workflow lays out the site. Writes index.html (the page) and overview.json (its data) there.
+workflow lays out the site. Writes index.html (the page) there.
 An SDK with a page but no report.json is listed with a link only.`;
 }
 
@@ -55,7 +55,6 @@ export async function runOverviewCommand(argv: string[], prefix: string): Promis
     }
   }
   const overview = buildOverview(reports, missing);
-  writeFileSync(join(dir, "overview.json"), JSON.stringify(overview, null, 1) + "\n");
   writeFileSync(join(dir, "index.html"), await renderOverviewHtml(overview));
   fitCliInfo(`Overview of ${overview.sdks.length + overview.missing.length} SDKs, ${overview.dates[0] ?? "-"} to ${overview.dates.at(-1) ?? "-"}.`);
   return {};
