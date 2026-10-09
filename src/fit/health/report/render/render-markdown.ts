@@ -6,7 +6,7 @@
  */
 import type { HealthReport, ReportSeries } from "../build-report.js";
 import { shortDate } from "../dates.js";
-import { testMethod } from "../digest.js";
+import { startedTests, stoppedTests, testMethod } from "../digest.js";
 
 const code = (s: string) => `\`${s.replace(/`/g, "'")}\``;
 
@@ -30,7 +30,7 @@ export function renderMarkdown(report: HealthReport, sdkName: string): string {
     "",
     `| Series | Failing now | Started (${recent}d) | Stopped (${recent}d) | Intermittent | Tests run, last night |`,
     "| --- | ---: | ---: | ---: | ---: | ---: |",
-    ...active.map((s) => `| ${s.label} | ${s.counts.always + s.counts.failing} | ${s.started.length} | ${s.stopped.length} | ${s.counts.intermittent} | ${testsRun(s)} |`),
+    ...active.map((s) => `| ${s.label} | ${s.counts.always + s.counts.failing} | ${startedTests(s, report.end, recent).length} | ${stoppedTests(s, report.end, recent).length} | ${s.counts.intermittent} | ${testsRun(s)} |`),
   ];
   if (d.startedGroups.length) lines.push("", `### Started failing (last ${recent} days)`, "", ...d.startedGroups.map((g) => `- ${code(g.cls)} ${g.tests.map(testMethod).join(", ")} since ${shortDate(g.since)} (${g.where})`));
   if (d.stoppedTests.length) lines.push("", `### Stopped failing (last ${recent} days)`, "", ...d.stoppedTests.map((t) => `- ${code(t.test)} last failed ${shortDate(t.last)} (${t.where})${t.fix?.ticket ? ` - ${t.fix.ticket}` : ""}`));

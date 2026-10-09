@@ -21,9 +21,7 @@
  *
  * Everything that talks to GitHub is behind `ChangeSource`; the rest is pure.
  */
-import type { RunManifest } from "../record/run-manifest.js";
 import type { HealthOptIn } from "../registry/health-opt-ins.js";
-import type { DriverCheckout } from "../log-parse/parse-run-log.js";
 import { reportFindings, type HealthReport, type ReportNight, type ReportSeries, type ReportTest } from "./build-report.js";
 import { isAnalyticsSdk, sdkByValue } from "../../../util/sdk/sdks.js";
 import { ANALYTICS_TEST_DRIVER_MODULE, DEFAULT_TEST_DRIVER_MODULE } from "../../shared/run-test-driver/run-test-driver.js";
@@ -175,13 +173,6 @@ export function categorise(sdk: SdkChanges | undefined, driver: DriverChanges | 
   return { category: "neither", ...(driver.helperCommits?.length ? { reason: "the driver's shared test code changed, though not this test's file" } : {}) };
 }
 
-/** How a night got the driver: from its run's manifest, by the CI job that produced it. */
-export function driverCheckout(night: ReportNight, manifests: ReadonlyMap<string, RunManifest>): DriverCheckout | undefined {
-  const m = manifests.get(`${night.runId}-${night.attempt}`);
-  if (!m?.driver) return undefined;
-  return (night.job ? m.driver[night.job] : undefined) ?? Object.values(m.driver)[0];
-}
-
 type DatedNight = ReportNight & { date: string };
 
 /**
@@ -206,9 +197,8 @@ const MEMO = <T>() => new Map<string, Promise<T>>();
  */
 export async function analyseChanges(
   report: HealthReport,
-  ctx: { manifests: RunManifest[]; optIn: HealthOptIn; source: ChangeSource },
+  ctx: { optIn: HealthOptIn; source: ChangeSource },
 ): Promise<{ analysed: number; failed: number }> {
-  const manifests = new Map(ctx.manifests.map((m) => [`${m.runId}-${m.runAttempt}`, m]));
   const module = driverModuleFor(report.sdk);
   const compares = MEMO<Commit[]>();
   const files = MEMO<string[]>();
@@ -237,7 +227,7 @@ export async function analyseChanges(
   }
 
   const side = (night: DatedNight): DriverSide => {
-    const c = driverCheckout(night, manifests);
+    const c = night.driver;
     if (!c) return { date: night.date, inferred: false };
     if (c.gerritRef) return { date: night.date, gerritRef: c.gerritRef, clonedAt: c.clonedAt, inferred: false };
     if (c.branch) return { date: night.date, branch: c.branch, clonedAt: c.clonedAt, inferred: false };

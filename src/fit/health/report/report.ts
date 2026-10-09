@@ -136,7 +136,7 @@ export async function runReportCommand(argv: string[], prefix: string): Promise<
   // What changed around each change point, in the SDK and in the FIT driver: needs GitHub.
   const optIn = healthOptIn(sdk);
   if (optIn && !values["no-changes"]) {
-    const r = await analyseChanges(report, { manifests, optIn, source: githubChanges });
+    const r = await analyseChanges(report, { optIn, source: githubChanges });
     fitCliInfo(`Changes: looked up the SDK and driver commits for ${r.analysed} tests${r.failed ? ` (${r.failed} couldn't be: see changeAnalysis in health-report.json)` : ""}.`);
   }
   writeFileSync(jsonPath, JSON.stringify(report) + "\n");

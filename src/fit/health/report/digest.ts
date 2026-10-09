@@ -8,7 +8,7 @@
  * them on their own.
  */
 import type { HealthReport, NightTests, ReportSeries } from "./build-report.js";
-import { addDays } from "./dates.js";
+import { addDays, daysBetween } from "./dates.js";
 
 /** A total over the functional series, and each one's part of it by short name. */
 export interface DigestCount {
@@ -30,6 +30,54 @@ export interface StartedGroup extends Where {
   nights: number;
 }
 
+export interface StartedTest {
+  test: string;
+  since: string;
+  nights: number;
+}
+
+export interface StoppedTest {
+  test: string;
+  last: string;
+  run: number;
+  clean: number;
+  fix?: { ticket?: string; text: string };
+}
+
+export interface StoppedRunningTest {
+  test: string;
+  lastRan: string;
+  lastResult: "p" | "f" | "e";
+  since: string;
+}
+
+/**
+ * A series' tests that started failing in the last `recentDays` days to `end`. One failing
+ * since the series' first night isn't known to have started then, so isn't listed.
+ */
+export function startedTests(s: Pick<ReportSeries, "tests">, end: string, recentDays: number): StartedTest[] {
+  return s.tests
+    .filter((t) => t.cls === "failing" && t.streak && t.since && !t.sinceFirstNight && daysBetween(t.since, end) < recentDays)
+    .map((t) => ({ test: t.test, since: t.since!, nights: t.streak }));
+}
+
+/** A series' tests that stopped failing in the last `recentDays` days to `end`. */
+export function stoppedTests(s: Pick<ReportSeries, "tests">, end: string, recentDays: number): StoppedTest[] {
+  return s.tests
+    .filter((t) => t.cls === "recovered" && t.lastFail && daysBetween(t.lastFail, end) < recentDays)
+    .map((t) => ({ test: t.test, last: t.lastFail!, run: t.lastEpisode!.nights, clean: t.cleanTail, fix: t.fix }));
+}
+
+/**
+ * A series' tests that failed and then stopped running. The report keeps such a test in
+ * `tests` only for its recent days, so these are the ones that stopped recently.
+ */
+export function stoppedRunningTests(s: Pick<ReportSeries, "tests">): StoppedRunningTest[] {
+  return s.tests
+    .filter((t) => t.cls === "stopped")
+    .map((t) => ({ test: t.test, lastRan: t.lastRan!, lastResult: t.lastResult!, since: t.notRunSince! }));
+}
+
 export interface Digest {
   failingNow: DigestCount;
   started: DigestCount;
@@ -37,8 +85,8 @@ export interface Digest {
   intermittent: DigestCount;
   /** Newest first. */
   startedGroups: StartedGroup[];
-  stoppedTests: (ReportSeries["stopped"][number] & Where)[];
-  stoppedRunning: (ReportSeries["stoppedRunning"][number] & Where)[];
+  stoppedTests: (StoppedTest & Where)[];
+  stoppedRunning: (StoppedRunningTest & Where)[];
   /** Tests that failed every night they ran in the classification window. */
   always: ({ test: string } & Where)[];
   /**
@@ -70,9 +118,11 @@ export function buildDigest(report: Omit<HealthReport, "digest">): Digest {
     return { total: bySeries.reduce((a, x) => a + x.n, 0), bySeries };
   };
   const each = <T>(f: (s: ReportSeries) => T[]) => func.flatMap((s) => f(s).map((x) => ({ ...x, series: s.id, where: s.short })));
+  const { end } = report;
+  const recent = report.classes.recentDays;
 
   const startedGroups: StartedGroup[] = [];
-  for (const t of each((s) => s.started)) {
+  for (const t of each((s) => startedTests(s, end, recent))) {
     const cls = testClass(t.test);
     const g = startedGroups.find((x) => x.cls === cls && x.since === t.since && x.series === t.series);
     if (g) g.tests.push(t.test);
@@ -86,12 +136,12 @@ export function buildDigest(report: Omit<HealthReport, "digest">): Digest {
 
   return {
     failingNow: count((s) => s.counts.always + s.counts.failing),
-    started: count((s) => s.started.length),
-    stopped: count((s) => s.stopped.length),
+    started: count((s) => startedTests(s, end, recent).length),
+    stopped: count((s) => stoppedTests(s, end, recent).length),
     intermittent: count((s) => s.counts.intermittent),
     startedGroups,
-    stoppedTests: each((s) => s.stopped),
-    stoppedRunning: each((s) => s.stoppedRunning),
+    stoppedTests: each((s) => stoppedTests(s, end, recent)),
+    stoppedRunning: each(stoppedRunningTests),
     always: each((s) => s.tests.filter((t) => t.cls === "always").map((t) => ({ test: t.test }))),
     ...(known.length
       ? {

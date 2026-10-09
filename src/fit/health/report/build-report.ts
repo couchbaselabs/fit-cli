@@ -12,6 +12,7 @@ import type { CrossSdk } from "./cross.js";
 import { buildDigest, type Digest } from "./digest.js";
 import { sdkCommitOf, type RunManifest } from "../record/run-manifest.js";
 import type { RunRecord } from "../record/run-record.js";
+import type { DriverCheckout } from "../log-parse/parse-run-log.js";
 import {
   CLASS_BLURBS,
   CLASS_LABELS,
@@ -92,6 +93,8 @@ export interface ReportNight {
   archive?: { uri: string; member: string };
   /** "run-archive-junit": every outcome is known; "run-log-scrape": only failures are named. */
   source: RunRecord["source"];
+  /** How the night's CI job got the FIT driver, when its log shows it (see changes.ts). */
+  driver?: DriverCheckout;
 }
 
 /**
@@ -150,11 +153,7 @@ export interface ReportSeries {
   latest?: NightTests & { date: string; usable: boolean };
   counts: Record<TestClass, number>;
   tests: ReportTest[];
-  started: { test: string; since: string; nights: number }[];
-  stopped: { test: string; last: string; run: number; clean: number; fix?: { ticket?: string; text: string } }[];
-  /** Tests that stopped running in the last RECENT_DAYS days, after failing in the window. */
-  stoppedRunning: { test: string; lastRan: string; lastResult: "p" | "f" | "e"; since: string }[];
-  /** Tests that stopped running longer ago than that: left out of `tests` altogether. */
+  /** Tests that stopped running more than RECENT_DAYS days ago: left out of `tests` altogether. */
   stoppedRunningEarlier: number;
   /** False when the series last ran before the window: shown, but kept out of the headline. */
   active: boolean;
@@ -218,6 +217,7 @@ type Manifests = ReadonlyMap<string, RunManifest>;
 
 function reportNight(r: RunRecord, manifest: RunManifest | undefined, repo: string | undefined): ReportNight {
   const sdk = sdkCommitOf(r, manifest);
+  const driver = manifest?.driver && ((r.ci.job ? manifest.driver[r.ci.job] : undefined) ?? Object.values(manifest.driver)[0]);
   return {
     ...(r.ci.repo !== repo ? { repo: r.ci.repo } : {}),
     runId: r.ci.runId,
@@ -227,6 +227,7 @@ function reportNight(r: RunRecord, manifest: RunManifest | undefined, repo: stri
     ...(sdk.fromImage && r.ci.sha && r.ci.sha !== sdk.sha ? { workflowCommit: r.ci.sha } : {}),
     ...(r.archive ? { archive: r.archive } : {}),
     source: r.source,
+    ...(driver ? { driver } : {}),
   };
 }
 
@@ -307,15 +308,6 @@ function reportSeries(s: Series, end: string, notes: ReportNotes, manifests: Man
     ...(lastNight ? { latest: { date: lastNight, ...testCounts[lastNight], usable: lastNight === end && !s.degraded.includes(lastNight) } } : {}),
     counts,
     tests,
-    started: tests
-      .filter((t) => t.cls === "failing" && t.streak && t.since && !t.sinceFirstNight && daysBetween(t.since, end) < RECENT_DAYS)
-      .map((t) => ({ test: t.test, since: t.since!, nights: t.streak })),
-    stopped: tests
-      .filter((t) => t.cls === "recovered" && t.lastFail && daysBetween(t.lastFail, end) < RECENT_DAYS)
-      .map((t) => ({ test: t.test, last: t.lastFail!, run: t.lastEpisode!.nights, clean: t.cleanTail, fix: t.fix })),
-    stoppedRunning: tests
-      .filter((t) => t.cls === "stopped")
-      .map((t) => ({ test: t.test, lastRan: t.lastRan!, lastResult: t.lastResult!, since: t.notRunSince! })),
     stoppedRunningEarlier,
     active: !!lastRan && daysBetween(lastRan, end) < WINDOW_DAYS,
   };

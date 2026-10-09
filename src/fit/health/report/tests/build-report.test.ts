@@ -7,7 +7,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { RUN_RECORD_SCHEMA, addOutcome, type RunRecord } from "../../record/run-record.js";
-import { buildHealthReport, presetWhere, reportFindings } from "../build-report.js";
+import { buildHealthReport, presetWhere, RECENT_DAYS, reportFindings } from "../build-report.js";
+import { startedTests, stoppedRunningTests, stoppedTests } from "../digest.js";
 import { buildSeries, testHistories } from "../series.js";
 
 let runId = 1;
@@ -74,8 +75,9 @@ test("the report lists what started and stopped failing in the last two weeks", 
   );
   const report = buildHealthReport("dotnet", rs, [], { end: "2026-09-28", now: new Date("2026-09-28T12:00:00Z") });
   const [s] = report.series;
-  assert.deepEqual(s.started.map((t) => [t.test, t.since]), [["New.broke", "2026-09-25"]]);
-  assert.deepEqual(s.stopped.map((t) => [t.test, t.last, t.run]), [["Old.fixed", "2026-09-20", 10]]);
+  assert.deepEqual(startedTests(s, report.end, RECENT_DAYS).map((t) => [t.test, t.since]), [["New.broke", "2026-09-25"]]);
+  assert.deepEqual(stoppedTests(s, report.end, RECENT_DAYS).map((t) => [t.test, t.last, t.run]), [["Old.fixed", "2026-09-20", 10]]);
+  assert.deepEqual([report.digest.started.total, report.digest.stoppedTests.map((t) => t.test)], [1, ["Old.fixed"]]);
   assert.equal(s.counts.failing, 1);
   assert.equal(s.counts.recovered, 1);
   assert.equal(s.nights["2026-09-28"].sdkCommit, "sha2026-09-28");
@@ -92,7 +94,7 @@ test("a test already failing on the series' first night is failing since then, n
   assert.equal(old.since, "2026-09-24");
   assert.equal(old.sinceFirstNight, true);
   assert.equal(s.tests.find((t) => t.test === "New.broke")!.sinceFirstNight, undefined);
-  assert.deepEqual(s.started.map((t) => [t.test, t.since]), [["New.broke", "2026-09-26"]]);
+  assert.deepEqual(startedTests(s, report.end, RECENT_DAYS).map((t) => [t.test, t.since]), [["New.broke", "2026-09-26"]]);
 });
 
 test("two presets differing only by one run parameter are compared over the nights both ran", () => {
@@ -179,11 +181,11 @@ test("a test that stopped running is listed for 14 days, then left out of the re
   // Failing to the 10th, skipped from the 11th.
   const rs = days(1, 28).map((d, i) => junit(d, i < 10 ? "f" : "s"));
   const recent = buildHealthReport("dotnet", rs.slice(0, 20), [], { end: "2026-09-20" }).series[0];
-  assert.deepEqual(recent.stoppedRunning, [{ test: "Breaker.canaries", lastRan: "2026-09-10", lastResult: "f", since: "2026-09-11" }]);
+  assert.deepEqual(stoppedRunningTests(recent), [{ test: "Breaker.canaries", lastRan: "2026-09-10", lastResult: "f", since: "2026-09-11" }]);
   assert.equal(recent.tests.find((t) => t.test === "Breaker.canaries")?.cls, "stopped");
   assert.equal(recent.counts.failing, 0);
   const later = buildHealthReport("dotnet", rs, [], { end: "2026-09-28" }).series[0];
-  assert.deepEqual(later.stoppedRunning, []);
+  assert.deepEqual(stoppedRunningTests(later), []);
   assert.equal(later.tests.length, 0);
   assert.equal(later.stoppedRunningEarlier, 1);
 });
@@ -406,6 +408,17 @@ test("the SDK commit under test is the performer image's revision, not the workf
   // Without the revision (older logs), the workflow's commit is used and says so.
   const [plain] = buildHealthReport("dotnet", rs, [], { end: "2026-09-04" }).series;
   assert.deepEqual([plain.nights["2026-09-04"].sdkCommit, plain.nights["2026-09-04"].sdkCommitFrom], ["merged-after-image", "workflow"]);
+});
+
+test("a night carries how its job got the FIT driver, from its run's manifest", () => {
+  const rs = days(1, 2).map((d) => junit(d, [["A.x", "p"]], "sha"));
+  const manifests = rs.map((r) => ({
+    schema: 1 as const, sdk: "dotnet", runId: r.ci.runId, runAttempt: 1, date: r.date, ci: r.ci, status: "ok" as const, records: [],
+    driver: { "fit / other-job": { clonedAt: "x" }, "fit / op-onprem-func-lite": { clonedAt: `${r.date}T00:20:00.000Z`, gerritRef: "refs/changes/1/1/1" } },
+  }));
+  const [s] = buildHealthReport("dotnet", rs, manifests, { end: "2026-09-02" }).series;
+  assert.deepEqual(s.nights["2026-09-02"].driver, { clonedAt: "2026-09-02T00:20:00.000Z", gerritRef: "refs/changes/1/1/1" });
+  assert.equal(buildHealthReport("dotnet", rs, [], { end: "2026-09-02" }).series[0].nights["2026-09-02"].driver, undefined);
 });
 
 test("the tests a report follows up are those that aren't dormant, in series that are still active", () => {

@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { RunManifest } from "../../record/run-manifest.js";
+import type { DriverCheckout } from "../../log-parse/parse-run-log.js";
 import type { HealthOptIn } from "../../registry/health-opt-ins.js";
 import { DRIVER_REPO, analyseChanges, categorise, commitAt, splitDriverCommits, splitSdkCommits, testFilesFor, type ChangeSource } from "../changes.js";
 import type { HealthReport, ReportNight, ReportTest } from "../build-report.js";
@@ -109,24 +109,15 @@ test("the category follows the SDK / test-file grid, and says when it can't tell
 });
 
 type Night = ReportNight & { date: string };
-const night = (date: string, runId: number, sha: string): Night => ({
+/** A night whose job cloned the driver at `time` (00:20 UTC that night by default). */
+const night = (date: string, runId: number, sha: string, driver: Partial<DriverCheckout> = {}): Night => ({
   date,
   runId,
   attempt: 1,
   job: "fit / op-onprem-func-lite",
   sdkCommit: sha,
   source: "run-archive-junit",
-});
-const manifest = (runId: number, clonedAt: string, gerritRef?: string): RunManifest => ({
-  schema: 1,
-  sdk: "dotnet",
-  runId,
-  runAttempt: 1,
-  date: clonedAt.slice(0, 10),
-  ci: { repo: "couchbase/couchbase-net-client", runId, runAttempt: 1 },
-  status: "ok",
-  records: [],
-  driver: { "fit / op-onprem-func-lite": { clonedAt, ...(gerritRef ? { gerritRef } : {}) } },
+  driver: { clonedAt: `${date}T00:20:00.000Z`, ...driver },
 });
 /** A failing test whose last good night is `before` and whose failure run began on `after`. */
 const finding = (test: string, before: Night, after: Night) => ({ test, before, after });
@@ -161,9 +152,14 @@ test("the RangeScan night: same SDK commit, and the driver changed the test's ow
     ],
     tree: () => [testFile],
   });
-  const t = report([finding("RangeScanTest.testParentSpanPrefix", night("2026-09-23", 1, "afdb7689e"), night("2026-09-24", 2, "afdb7689e"))]);
+  const t = report([
+    finding(
+      "RangeScanTest.testParentSpanPrefix",
+      night("2026-09-23", 1, "afdb7689e", { clonedAt: "2026-09-23T00:20:45.000Z" }),
+      night("2026-09-24", 2, "afdb7689e", { clonedAt: "2026-09-24T00:20:45.000Z" }),
+    ),
+  ]);
   const r = await analyseChanges(t, {
-    manifests: [manifest(1, "2026-09-23T00:20:45.000Z"), manifest(2, "2026-09-24T00:20:45.000Z")],
     optIn: { repo: "couchbase/couchbase-net-client", workflows: ["fit-testing-dotnet.yml"] },
     source,
   });
@@ -179,26 +175,25 @@ test("the RangeScan night: same SDK commit, and the driver changed the test's ow
 test("a pinned Gerrit patchset is the driver exactly: the same pin is no change, a different one can't be compared", async () => {
   const source = src({ compare: () => [], files: () => [], history: () => [], tree: () => [] });
   const optIn = { repo: "couchbase/couchbase-net-client", workflows: ["x.yml"] };
-  const same = report([finding("S.x", night("2026-09-23", 1, "a"), night("2026-09-24", 2, "a"))]);
-  await analyseChanges(same, { manifests: [manifest(1, "2026-09-23T00:20:00.000Z", "refs/changes/15/252815/3"), manifest(2, "2026-09-24T00:20:00.000Z", "refs/changes/15/252815/3")], optIn, source });
+  const same = report([finding("S.x", night("2026-09-23", 1, "a", { gerritRef: "refs/changes/15/252815/3" }), night("2026-09-24", 2, "a", { gerritRef: "refs/changes/15/252815/3" }))]);
+  await analyseChanges(same, { optIn, source });
   assert.deepEqual([only(same).driverChanges?.changed, only(same).changeAnalysis?.category], [false, "neither"]);
-  const moved = report([finding("S.x", night("2026-09-23", 1, "a"), night("2026-09-24", 2, "a"))]);
-  await analyseChanges(moved, { manifests: [manifest(1, "2026-09-23T00:20:00.000Z", "refs/changes/75/247275/2"), manifest(2, "2026-09-24T00:20:00.000Z", "refs/changes/15/252815/3")], optIn, source });
+  const moved = report([finding("S.x", night("2026-09-23", 1, "a", { gerritRef: "refs/changes/75/247275/2" }), night("2026-09-24", 2, "a", { gerritRef: "refs/changes/15/252815/3" }))]);
+  await analyseChanges(moved, { optIn, source });
   assert.deepEqual([only(moved).driverChanges?.changed, only(moved).changeAnalysis?.category], [true, "unknown"]);
 });
 
 test("nights far apart say the comparison covers more than one night's changes", async () => {
   const source = src({ compare: () => [], files: () => [], history: () => [{ sha: "d0", landedAt: "2026-08-01T00:00:00.000Z" }], tree: () => [] });
   const t = report([finding("A.x", night("2026-08-20", 1, "a"), night("2026-08-28", 2, "a"))]);
-  await analyseChanges(t, { manifests: [manifest(1, "2026-08-20T00:20:00.000Z"), manifest(2, "2026-08-28T00:20:00.000Z")], optIn: { repo: "o/r", workflows: ["x.yml"] }, source });
+  await analyseChanges(t, { optIn: { repo: "o/r", workflows: ["x.yml"] }, source });
   assert.equal(only(t).changeAnalysis?.span?.days, 8);
   assert.match(only(t).changeAnalysis?.reason ?? "", /8 days apart/);
 });
 
 test("a driver cloned from a branch is unknown, not unchanged: a branch moves", async () => {
-  const t = report([finding("A.x", night("2026-09-23", 1, "a"), night("2026-09-24", 2, "a"))]);
-  const branchManifest = (runId: number, at: string): RunManifest => ({ ...manifest(runId, at), driver: { "fit / op-onprem-func-lite": { clonedAt: at, branch: "dk/x" } } });
-  await analyseChanges(t, { manifests: [branchManifest(1, "2026-09-23T00:20:00.000Z"), branchManifest(2, "2026-09-24T00:20:00.000Z")], optIn: { repo: "o/r", workflows: ["x.yml"] }, source: src({}) });
+  const t = report([finding("A.x", night("2026-09-23", 1, "a", { branch: "dk/x" }), night("2026-09-24", 2, "a", { branch: "dk/x" }))]);
+  await analyseChanges(t, { optIn: { repo: "o/r", workflows: ["x.yml"] }, source: src({}) });
   assert.equal(only(t).driverChanges?.changed, null);
   assert.equal(only(t).changeAnalysis?.category, "unknown");
 });
@@ -211,7 +206,7 @@ test("a GitHub failure leaves the finding's category unknown, with the reason, a
     tree: () => [],
   });
   const t = report([finding("A.x", night("2026-09-23", 1, "a"), night("2026-09-24", 2, "b"))]);
-  const r = await analyseChanges(t, { manifests: [manifest(1, "2026-09-23T00:20:00.000Z"), manifest(2, "2026-09-24T00:20:00.000Z")], optIn: { repo: "o/r", workflows: ["x.yml"] }, source });
+  const r = await analyseChanges(t, { optIn: { repo: "o/r", workflows: ["x.yml"] }, source });
   assert.deepEqual(r, { analysed: 1, failed: 1 });
   assert.equal(only(t).changeAnalysis?.category, "unknown");
   assert.match(only(t).changeAnalysis?.reason ?? "", /HTTP 502/);
@@ -225,7 +220,7 @@ test("no file found for the test's class: whether the test changed is unknown, n
     tree: () => [],
   });
   const t = report([finding("Missing.x", night("2026-09-23", 1, "a"), night("2026-09-24", 2, "a"))]);
-  await analyseChanges(t, { manifests: [manifest(1, "2026-09-23T00:20:00.000Z"), manifest(2, "2026-09-24T00:20:00.000Z")], optIn: { repo: "o/r", workflows: ["x.yml"] }, source });
+  await analyseChanges(t, { optIn: { repo: "o/r", workflows: ["x.yml"] }, source });
   const f = only(t);
   assert.equal(f.driverChanges?.testFileCommits, null);
   assert.deepEqual(f.driverChanges?.helperCommits?.map((x) => x.sha), ["h1"]);
