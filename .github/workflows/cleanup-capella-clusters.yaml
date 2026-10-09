@@ -31,7 +31,7 @@ on:
         default: false
 
 # Don't pile up overlapping sweeps. An in-flight one is left to finish, because a
-# Capella delete takes minutes and cancelling one strands the project it was on.
+# Capella delete takes minutes and cancelling one strands the cluster it was on.
 concurrency:
   group: cleanup-capella-clusters
   cancel-in-progress: false
