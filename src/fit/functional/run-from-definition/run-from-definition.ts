@@ -477,7 +477,7 @@ async function uploadCapellaCredsForCloudDeployer(
       `${caller}, but the "${capellaEnvironment}" Capella credentials couldn't be resolved: ${(err as Error).message}`,
     );
   }
-  await uploadRemoteCapellaConfig(execution.target, execution.rootDir, capella);
+  await uploadRemoteCapellaConfig(execution.target, execution.rootDir, capella, capellaEnvironment);
   return capella.endpoint;
 }
 
@@ -2587,7 +2587,7 @@ export async function runFromDefinition(
                     `credentials couldn't be resolved: ${(err as Error).message}`,
                 );
               }
-              await uploadRemoteCapellaConfig(execution.target, execution.rootDir, capella);
+              await uploadRemoteCapellaConfig(execution.target, execution.rootDir, capella, capellaEnvironment);
               // Private endpoint setup needs cbdinocluster's own AWS block enabled (it calls
               // the EC2 API directly for CreateVpcEndpoint) — forward the same fit-cli-role
               // credentials the situational branch uses, so setup-link can authenticate.
