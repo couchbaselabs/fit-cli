@@ -38,17 +38,21 @@ export function reconcileUpgraded(
 /**
  * Why a new parse can't replace the run's earlier records: some earlier record - scraped or
  * JUnit - has no record of the same preset, kind and cluster in the new parse. A record whose
- * key only moved (a variant was added) still has one, and is replaced as usual. Undefined if
- * nothing was lost.
+ * key only moved (a variant was added) still has one, and is replaced as usual. Each new record
+ * answers for one earlier record only, so two earlier variants of one preset need two new
+ * records. Undefined if nothing was lost.
  */
 export function lostRuns(store: LocalHealthStore, previous: RunManifest, records: readonly RunRecord[]): string | undefined {
-  const found = new Set(records.map(runLabel));
+  const unclaimed = new Map<string, number>();
+  for (const r of records) unclaimed.set(runLabel(r), (unclaimed.get(runLabel(r)) ?? 0) + 1);
   const lost = new Set<string>();
   for (const key of vouchedKeys(previous)) {
     const record = store.readRecord(key);
     if (!record) continue;
     const s = runLabel(record);
-    if (!found.has(s)) lost.add(s);
+    const n = unclaimed.get(s) ?? 0;
+    if (n > 0) unclaimed.set(s, n - 1);
+    else lost.add(s);
   }
   return lost.size ? `the new parse no longer finds ${[...lost].join(", ")}` : undefined;
 }

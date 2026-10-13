@@ -34,3 +34,27 @@ test("results keep the order of the items, and no more than `limit` workers run 
 test("an empty list makes no workers", async () => {
   assert.deepEqual(await mapWithConcurrency([], 4, () => Promise.reject(new Error("not called"))), []);
 });
+
+test("after a failure, no more items start, and the call rejects only once running workers finish", async () => {
+  const started: number[] = [];
+  let releaseSlow!: () => void;
+  let slowFinished = false;
+  const done = mapWithConcurrency([0, 1, 2, 3, 4], 2, async (n) => {
+    started.push(n);
+    if (n === 0) {
+      await new Promise<void>((resolve) => (releaseSlow = resolve));
+      slowFinished = true;
+      return n;
+    }
+    throw new Error(`item ${n} failed`);
+  });
+  let settled = false;
+  done.catch(() => {}).finally(() => (settled = true));
+  // Item 1 has failed; item 0 is still running, so the call must not have settled yet.
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+  assert.equal(settled, false);
+  releaseSlow();
+  await assert.rejects(done, /item 1 failed/);
+  assert.equal(slowFinished, true);
+  assert.deepEqual(started, [0, 1]);
+});

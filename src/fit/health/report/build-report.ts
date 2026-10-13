@@ -25,7 +25,7 @@ import {
   type NightOutcome,
   type TestClass,
 } from "./classify.js";
-import { buildSeries, testHistories, type Series } from "./series.js";
+import { buildSeries, latestAttempts, testHistories, type Series } from "./series.js";
 import { addDays, calendarDays, daysBetween } from "./dates.js";
 import { SDKS } from "../../../util/sdk/sdks.js";
 
@@ -416,7 +416,8 @@ export function buildHealthReport(
     sdkNames: Object.fromEntries(SDKS.map((s) => [s.value, s.name])),
     series,
     comparisons: paramComparisons(series, historyOf),
-    testsSeen: testsSeen(inRange, addDays(end, -(WINDOW_DAYS - 1)), end),
+    // From the same records as the series: a re-run replaces the attempt it re-ran.
+    testsSeen: testsSeen(latestAttempts(inRange), addDays(end, -(WINDOW_DAYS - 1)), end),
     source: {
       records: inRange.length,
       scraped: inRange.filter((r) => r.source === "run-log-scrape").length,

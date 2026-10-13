@@ -160,6 +160,30 @@ test("a reparse that no longer finds one of the run's presets keeps the run as i
   }
 });
 
+test("a reparse that finds one of two variants of a preset keeps the run as it was", async () => {
+  const { LocalHealthStore } = await import("../../store/health-store.js");
+  const { ingestLog } = await import("../../backfill/ingest-log.js");
+  const { buildRecords, parseRunLog } = await import("../../log-parse/parse-run-log.js");
+  const { runLabel } = await import("../run-record.js");
+  const root = mkdtempSync(join(tmpdir(), "fit-health-test-"));
+  try {
+    const store = new LocalHealthStore(root);
+    const text = readFileSync(LOG, "utf8");
+    const meta = { sdk: "dotnet", date: "2026-09-27", ci: { repo: "r", runId: 1, runAttempt: 1 } };
+    const scraped = buildRecords(parseRunLog(text), meta).records;
+    // A second variant of the first record's preset, kind and cluster, which the parse doesn't find.
+    const second = store.writeRecord({ ...scraped[0], variant: "second" });
+    const keys = [...scraped.map((r) => store.writeRecord(r)), second];
+    store.writeManifest(manifest({ records: keys, parserVersion: "log-1" }));
+    const m = ingestLog(store, meta, text, { keepRaw: false });
+    assert.deepEqual(m.records, keys);
+    assert.equal(m.reparseError?.reason, `the new parse no longer finds ${runLabel(scraped[0])}`);
+    assert.ok(store.read(second), "the second variant is still there");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a reparse that only moves a record to a new key replaces it", async () => {
   const { LocalHealthStore } = await import("../../store/health-store.js");
   const { ingestLog } = await import("../../backfill/ingest-log.js");

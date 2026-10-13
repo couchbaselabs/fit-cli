@@ -62,7 +62,7 @@ export function renderSlackDigest(report: HealthReport, sdkName: string, reportU
             ` — ${failed.persistent} persistent · ${failed.new} new · ${failed.intermittent} intermittent`,
         ]
       : []),
-    `• Last ${recent} days: *${d.started.total}* started failing · *${d.stopped.total}* stopped · *${d.intermittent.total}* intermittent`,
+    `• Last ${recent} days: *${d.started.total}* started failing · *${d.stopped.total}* stopped · last ${report.classes.windowDays} days: *${d.intermittent.total}* intermittent`,
     ...(caveats.length ? [`_Data: ${caveats.join("; ")}._`] : []),
     ...(reportUrl ? [`<${reportUrl}|Full report>`] : []),
   ].join("\n");

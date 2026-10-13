@@ -404,7 +404,7 @@ const split = (c) => c.bySeries.map((x) => `${x.n} ${esc(x.series)}`).join(' · 
 $('summary').innerHTML = lastNightStat() + [
   [`Started failing, last ${RECENT} days`, DG.started, 'bad'],
   [`Stopped failing, last ${RECENT} days`, DG.stopped, 'good'],
-  ['Intermittent', DG.intermittent, ''],
+  [`Intermittent, last ${WIN} days`, DG.intermittent, ''],
 ].map(([l, n, c]) => `<div class="stat"><span class="label">${l}</span><span class="big ${c}">${n.total}</span><span class="split">${split(n)}</span></div>`).join('');
 
 // ----- what changed

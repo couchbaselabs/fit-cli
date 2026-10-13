@@ -43,6 +43,8 @@ test("the headline states the counts, and the thread lists what changed", () => 
   assert.match(d.headline, /Failed last night: \*3\* of 3 run · 0 skipped \(3 on-prem\) — 3 persistent · 0 new · 0 intermittent/);
   assert.match(d.thread, /^\*Failed last night\*\n• `Chronic\.always` — persistent: fails every night, on-prem/);
   assert.match(d.headline, /\*2\* started failing/);
+  // Started and stopped are counted over the recent window, intermittent over the whole one.
+  assert.match(d.headline, /Last 14 days: \*2\* started failing · \*\d+\* stopped · last 30 days: \*\d+\* intermittent/);
   // A report covers its own SDK only: no claims about other SDKs.
   assert.doesNotMatch(d.headline + d.thread, /Java|other SDK/);
   assert.match(d.headline, /<https:\/\/example\.com\/report\|Full report>/);

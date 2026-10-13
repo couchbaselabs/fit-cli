@@ -408,6 +408,17 @@ test("a test carries its latest failure run and the nights either side, and each
   assert.deepEqual(report.testsSeen.functional, { tests: ["A.x", "Other.y"], complete: true });
 });
 
+test("testsSeen reads only each night's latest attempt, as the series do", () => {
+  const rs = days(1, 4).map((d) => junit(d, [["A.x", "p"]], "aaa"));
+  // The 5th ran twice: attempt 1, read only from its log, also ran Gone.z; attempt 2 replaced it.
+  const first = rec("2026-09-05", { tests: {}, ci: { repo: "r", runId: 999, runAttempt: 1, sha: "aaa" } });
+  addOutcome(first.tests, "Gone.z", "p");
+  const second = junit("2026-09-05", [["A.x", "p"]], "aaa");
+  second.ci = { ...second.ci, runId: 999, runAttempt: 2 };
+  const report = buildHealthReport("dotnet", [...rs, first, second], [], { end: "2026-09-05" });
+  assert.deepEqual(report.testsSeen.functional, { tests: ["A.x"], complete: true });
+});
+
 test("a whole-class error is a test named by its class; a night it didn't run doesn't break its failure run", () => {
   // The class errored as a whole every night it ran, and didn't run on the 4th.
   const rs = days(1, 6).map((d, i) => (i === 3 ? junit(d, [["Other.y", "p"]], "aaa") : junit(d, [["Disc.", "e"], ["Disc.a", "p"]], "aaa")));
