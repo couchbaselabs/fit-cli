@@ -40,7 +40,8 @@ test("the headline states the counts, and the thread lists what changed", () => 
   const report = buildHealthReport("dotnet", rs, [], { end: "2026-09-28" });
   const d = renderSlackDigest(report, ".NET", "https://example.com/report");
   assert.match(d.headline, /^\*\.NET FIT health\* · as of 28 Sep · last 30 days/);
-  assert.match(d.headline, /Failing now: \*3\* \(3 on-prem\)/);
+  assert.match(d.headline, /Failed last night: \*3\* of 3 run · 0 skipped \(3 on-prem\) — 3 persistent · 0 new · 0 intermittent/);
+  assert.match(d.thread, /^\*Failed last night\*\n• `Chronic\.always` — persistent: fails every night, on-prem/);
   assert.match(d.headline, /\*2\* started failing/);
   // A report covers its own SDK only: no claims about other SDKs.
   assert.doesNotMatch(d.headline + d.thread, /Java|other SDK/);

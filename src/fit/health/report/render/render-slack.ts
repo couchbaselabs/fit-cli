@@ -10,7 +10,7 @@
  */
 import type { HealthReport } from "../build-report.js";
 import { shortDate } from "../dates.js";
-import { testMethod, type DigestCount } from "../digest.js";
+import { testMethod, type DigestCount, type FailedLastNight } from "../digest.js";
 
 export interface SlackDigest {
   headline: string;
@@ -32,6 +32,13 @@ function list(items: string[]): string[] {
 }
 
 const n = (x: number) => x.toLocaleString("en-US");
+/** What a test that failed last night is, in the headline's terms. */
+const KIND: Partial<Record<FailedLastNight["tests"][number]["cls"], string>> = {
+  always: "persistent: fails every night",
+  failing: "persistent: 3+ nights in a row",
+  new: "new",
+  intermittent: "intermittent",
+};
 const split = (c: DigestCount) => c.bySeries.map((x) => `${x.n} ${x.series}`).join(" · ");
 
 export function renderSlackDigest(report: HealthReport, sdkName: string, reportUrl?: string): SlackDigest {
@@ -45,17 +52,28 @@ export function renderSlackDigest(report: HealthReport, sdkName: string, reportU
   ].filter(Boolean);
 
   const last = d.lastNight;
+  const failed = d.failedLastNight;
+  const ran = last ? ` of ${n(last.tests)} run · ${n(last.skipped)} skipped${failed?.atLeast ? " (series with full results)" : ""}` : "";
   const headline = [
     `*${slackEscape(sdkName)} FIT health* · as of ${shortDate(report.end)} · last ${report.classes.windowDays} days`,
-    `• Failing now: *${d.failingNow.total}* (${split(d.failingNow)})`,
-    ...(last ? [`• Last night: *${n(last.tests)}* tests ran (${last.bySeries.map((x) => `${n(x.tests)} ${x.series}`).join(" · ")}) · ${n(last.skipped)} skipped`] : []),
+    ...(failed
+      ? [
+          `• Failed last night: *${failed.atLeast ? "at least " : ""}${failed.total}*${ran} (${split(failed)})` +
+            ` — ${failed.persistent} persistent · ${failed.new} new · ${failed.intermittent} intermittent`,
+        ]
+      : []),
     `• Last ${recent} days: *${d.started.total}* started failing · *${d.stopped.total}* stopped · *${d.intermittent.total}* intermittent`,
     ...(caveats.length ? [`_Data: ${caveats.join("; ")}._`] : []),
     ...(reportUrl ? [`<${reportUrl}|Full report>`] : []),
   ].join("\n");
 
   const thread: string[] = [];
+  if (failed?.tests.length) {
+    thread.push(`*Failed last night*`);
+    thread.push(...list(failed.tests.map((t) => `\`${slackEscape(t.test)}\` — ${KIND[t.cls] ?? t.cls}, ${t.where}`)));
+  }
   if (d.startedGroups.length) {
+    if (thread.length) thread.push("");
     thread.push(`*Started failing (last ${recent} days)*`);
     thread.push(...list(d.startedGroups.map((g) => `\`${g.cls}\` ${slackEscape(g.tests.map(testMethod).join(", "))} — since ${shortDate(g.since)}, ${g.where}`)));
   }

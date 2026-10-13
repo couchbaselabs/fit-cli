@@ -1,6 +1,6 @@
 /**
- * The digest of a health report: the lists and counts every view leads with - failing now,
- * what started and stopped failing, what stopped running, last night's test counts, and what
+ * The digest of a health report: the lists and counts every view leads with - what failed
+ * last night, what keeps failing, what started and stopped failing, what stopped running, last night's test counts, and what
  * the data can't vouch for. Built once here, over the active functional series, and carried in
  * report.json; the page, Slack, Markdown and terminal renderers only format it.
  *
@@ -8,6 +8,7 @@
  * them on their own.
  */
 import type { HealthReport, NightTests, ReportSeries } from "./build-report.js";
+import type { TestClass } from "./classify.js";
 import { addDays, daysBetween } from "./dates.js";
 
 /** A total over the functional series, and each one's part of it by short name. */
@@ -78,8 +79,30 @@ export function stoppedRunningTests(s: Pick<ReportSeries, "tests">): StoppedRunn
     .map((t) => ({ test: t.test, lastRan: t.lastRan!, lastResult: t.lastResult!, since: t.notRunSince! }));
 }
 
+/**
+ * The tests that failed or errored on the report's end date, in the series that ran then, split
+ * by class so a reader can tell a new break from a known flake at a glance.
+ */
+export interface FailedLastNight extends DigestCount {
+  /** Failing every night in the window, or 3+ nights in a row (the `persistent` count). */
+  persistent: number;
+  /** Failing the last 1-2 nights after a clean window. */
+  new: number;
+  /** A current failure on a test that already flipped in the window. */
+  intermittent: number;
+  /**
+   * A series' last night was read from the CI log only, which names at most a few failures per
+   * package: the total is a minimum.
+   */
+  atLeast: boolean;
+  tests: ({ test: string; cls: TestClass } & Where)[];
+}
+
 export interface Digest {
-  failingNow: DigestCount;
+  /** Failing every night they ran in the window, or 3+ nights in a row: what keeps failing. */
+  persistent: DigestCount;
+  /** Absent when no functional series ran on the report's end date. */
+  failedLastNight?: FailedLastNight;
   started: DigestCount;
   stopped: DigestCount;
   intermittent: DigestCount;
@@ -134,8 +157,27 @@ export function buildDigest(report: Omit<HealthReport, "digest">): Digest {
   const ran = (s: (typeof known)[number]) => s.latest.passed + s.latest.failing;
   const windowStart = addDays(report.end, -(report.classes.windowDays - 1));
 
+  // Last night: the series whose latest night is the end date and usable, JUnit or log.
+  const lastRan = func.filter((s) => s.latest?.usable && s.latest.date === end);
+  const failedOnEnd = (s: ReportSeries) => s.tests.filter((t) => t.seq.length === s.ran.length && /[fe]$/.test(t.seq));
+  const lastFails = lastRan.flatMap((s) => failedOnEnd(s).map((t) => ({ test: t.test, cls: t.cls, series: s.id, where: s.short })));
+  const inClasses = (...c: TestClass[]) => lastFails.filter((t) => c.includes(t.cls)).length;
+
   return {
-    failingNow: count((s) => s.counts.always + s.counts.failing),
+    persistent: count((s) => s.counts.always + s.counts.failing),
+    ...(lastRan.length
+      ? {
+          failedLastNight: {
+            total: lastFails.length,
+            bySeries: lastRan.map((s) => ({ series: s.short, n: failedOnEnd(s).length })),
+            persistent: inClasses("always", "failing"),
+            new: inClasses("new"),
+            intermittent: inClasses("intermittent"),
+            atLeast: lastRan.some((s) => s.latest!.tests == null),
+            tests: lastFails,
+          },
+        }
+      : {}),
     started: count((s) => startedTests(s, end, recent).length),
     stopped: count((s) => stoppedTests(s, end, recent).length),
     intermittent: count((s) => s.counts.intermittent),

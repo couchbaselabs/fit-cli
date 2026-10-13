@@ -55,7 +55,7 @@ test("started tests group by class, night and series, newest first, and situatio
     ],
   );
   assert.deepEqual(digest.started, { total: 4, bySeries: [{ series: "on-prem", n: 3 }, { series: "CNG", n: 1 }] });
-  assert.equal(digest.failingNow.total, 4);
+  assert.equal(digest.persistent.total, 4);
 });
 
 test("the caveats cover only the classification window", () => {
@@ -67,4 +67,48 @@ test("the caveats cover only the classification window", () => {
   const report = buildHealthReport("dotnet", rs, [], { end: "2026-09-29" });
   assert.deepEqual(report.blackout, ["2026-08-02", "2026-09-20"]);
   assert.deepEqual(report.digest.gaps, ["2026-09-20"]);
+});
+
+test("failed last night counts every test that failed on the end date, split by class", () => {
+  // 30 nights. Broke.a: clean, then failing the last 4 nights (persistent). Flake.b: failed on
+  // nights 10 and 20, and last night (intermittent). New.c: clean, then failed last night only
+  // (new - in no other headline yet). Old.d: failed earlier and passes now (not counted).
+  const rs = Array.from({ length: 30 }, (_, i) => {
+    const d = new Date(Date.UTC(2026, 8, 1 + i)).toISOString().slice(0, 10);
+    const f = [
+      ...(i >= 26 ? ["Broke.a"] : []),
+      ...(i === 10 || i === 20 || i === 29 ? ["Flake.b"] : []),
+      ...(i === 29 ? ["New.c"] : []),
+      ...(i === 5 ? ["Old.d"] : []),
+    ];
+    // A JUnit record lists passes too: a test missing from it didn't run.
+    const r = rec(d, f);
+    for (const t of ["Broke.a", "Flake.b", "New.c", "Old.d"]) if (!f.includes(t)) addOutcome(r.tests, t, "p");
+    return r;
+  });
+  const { digest } = buildHealthReport("dotnet", rs, [], { end: "2026-09-30" });
+  const f = digest.failedLastNight!;
+  assert.deepEqual([f.total, f.persistent, f.new, f.intermittent, f.atLeast], [3, 1, 1, 1, false]);
+  assert.deepEqual(f.tests.map((t) => [t.test, t.cls]).sort(), [["Broke.a", "failing"], ["Flake.b", "intermittent"], ["New.c", "new"]]);
+  assert.deepEqual(f.bySeries, [{ series: "on-prem", n: 3 }]);
+  // The persistent count is the old "failing now": only Broke.a.
+  assert.equal(digest.persistent.total, 1);
+});
+
+test("failed last night leaves out a series that didn't run then, and is a minimum when a night came from the log", () => {
+  const rs = days(28).flatMap((d, i) => [
+    rec(d, i === 27 ? ["A.x"] : [], i === 27 ? { source: "run-log-scrape", passesKnown: false } : {}),
+    ...(i < 27 ? [rec(d, i === 26 ? ["B.y"] : [], { preset: "op-cng-func-lite" })] : []),
+  ]);
+  const { digest } = buildHealthReport("dotnet", rs, [], { end: "2026-09-28" });
+  const f = digest.failedLastNight!;
+  assert.deepEqual(f.bySeries, [{ series: "on-prem", n: 1 }]);
+  assert.equal(f.total, 1);
+  assert.equal(f.atLeast, true);
+});
+
+test("there is no failed-last-night count when no functional series ran on the end date", () => {
+  const rs = days(10).map((d) => rec(d, []));
+  const { digest } = buildHealthReport("dotnet", rs, [], { end: "2026-09-12" });
+  assert.equal(digest.failedLastNight, undefined);
 });

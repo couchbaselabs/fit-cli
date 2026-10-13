@@ -31,7 +31,13 @@ export function renderTerminal(report: HealthReport): string {
     for (const t of d.stoppedRunning) lines.push(`  ${t.where.padEnd(26)} not run since ${t.since}  ${t.test}`);
   }
 
-  lines.push("", "Failing now:");
+  if (d.failedLastNight) {
+    const f = d.failedLastNight;
+    lines.push("", `Failed last night (${f.atLeast ? "at least " : ""}${f.total}: ${f.persistent} persistent, ${f.new} new, ${f.intermittent} intermittent):`);
+    for (const t of f.tests) lines.push(`  ${t.where.padEnd(26)} ${t.cls.padEnd(17)} ${t.test}`);
+  }
+
+  lines.push("", "Persistently failing (every night, or 3+ nights in a row):");
   for (const s of active) {
     for (const t of s.tests.filter((x) => x.cls === "always" || x.cls === "failing")) {
       const tag = t.cls === "always" ? "always" : t.sinceFirstNight ? `since first night` : `since ${t.since}`;

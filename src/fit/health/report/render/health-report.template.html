@@ -383,20 +383,29 @@ function testsLine(l) {
 // The lists and counts the page leads with are built once, in TS, as the report's digest
 // (digest.ts): the page only lays them out.
 const DG = D.digest;
+// Last night first: how many tests failed, out of how many ran, and of what kind - a new break
+// reads differently from a known flake. The count is a minimum when a series' night came only
+// from the CI log, which names a few failures per package at most.
 function lastNightStat() {
+  const f = DG.failedLastNight;
+  if (!f) return '';
   const l = DG.lastNight;
-  if (!l) return '';
-  return `<div class="stat" title="${num(l.testCases)} ${CASES_NOTE}"><span class="label">Tests run, last night</span><span class="big">${num(l.tests)}</span><span class="split">${l.bySeries.map((x) => `${num(x.tests)} ${esc(x.series)}`).join(' · ')} · ${num(l.skipped)} skipped</span></div>`;
+  // lastNight counts only series with full JUnit results: say so when a log-only one is in the total.
+  const ran = !l ? 'passes not known (read from the CI log)'
+    : `of ${num(l.tests)} run · ${num(l.skipped)} skipped${f.atLeast ? ' (series with full results)' : ''}`;
+  const kinds = `${f.persistent} persistent · ${f.new} new · ${f.intermittent} intermittent`;
+  const names = f.tests.map((t) => `${t.test} (${t.cls}, ${t.where})`).join('\n');
+  const title = [l ? `${num(l.testCases)} ${CASES_NOTE}` : '', names].filter(Boolean).join('\n\n');
+  return `<div class="stat" title="${esc(title)}"><span class="label">Failed last night</span><span class="big ${f.total ? 'bad' : 'good'}">${f.atLeast ? '≥ ' : ''}${f.total}</span><span class="split">${ran}</span><span class="split">${kinds}</span><span class="split">${split(f)}</span></div>`;
 }
 
 // ----- summary
 const split = (c) => c.bySeries.map((x) => `${x.n} ${esc(x.series)}`).join(' · ');
-$('summary').innerHTML = [
-  ['Failing now', DG.failingNow, 'bad'],
+$('summary').innerHTML = lastNightStat() + [
   [`Started failing, last ${RECENT} days`, DG.started, 'bad'],
   [`Stopped failing, last ${RECENT} days`, DG.stopped, 'good'],
   ['Intermittent', DG.intermittent, ''],
-].map(([l, n, c]) => `<div class="stat"><span class="label">${l}</span><span class="big ${c}">${n.total}</span><span class="split">${split(n)}</span></div>`).join('') + lastNightStat();
+].map(([l, n, c]) => `<div class="stat"><span class="label">${l}</span><span class="big ${c}">${n.total}</span><span class="split">${split(n)}</span></div>`).join('');
 
 // ----- what changed
 const groups = DG.startedGroups;
