@@ -27,8 +27,6 @@ import { renderTerminal } from "./render/render-terminal.js";
 import { renderSlackDigest } from "./render/render-slack.js";
 import { readNotes } from "./notes.js";
 import { readSettings, reportUrlFor, type HealthSettings } from "./settings.js";
-import { renderMarkdown } from "./render/render-markdown.js";
-import { appendFileSync } from "node:fs";
 import { postDigest } from "./post-digest.js";
 import { healthOptIn } from "../registry/health-opt-ins.js";
 import { STORE_OPTION, parseSdkCommandArgs } from "../cli-args.js";
@@ -53,8 +51,8 @@ Usage:
   --slack-channel  Post to this channel or user ID instead of the configured one (implies --slack).
 
 Writes health-report.json, health-report.html and slack-digest.txt to the run's artifact
-directory, or to --out. Written to --out, they aren't run artifacts: the health workflow keeps
-them as a GitHub artifact and on Pages, so the run directory isn't uploaded to S3. Posts the digest to Slack only when asked, with --slack (and the SDK has a channel
+directory, or to --out. Written to --out, they aren't run artifacts: the health workflow
+publishes them to the private health site, so the run directory isn't uploaded to S3. Posts the digest to Slack only when asked, with --slack (and the SDK has a channel
 set with \`fit health settings <sdk> --slack-channel <id>\`) or --slack-channel - so a run
 never posts by accident.
 Fill the store first with \`fit health backfill <sdk>\`.`;
@@ -141,9 +139,6 @@ export async function runReportCommand(argv: string[], prefix: string): Promise<
   }
   writeFileSync(jsonPath, JSON.stringify(report) + "\n");
   writeFileSync(htmlPath, await renderHtml(report, sdkName));
-
-  // In GitHub Actions, the job summary shows the result on the workflow run page.
-  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, renderMarkdown(report, sdkName));
 
   const slack = settings.slack;
   const digest = renderSlackDigest(report, sdkName, reportUrlFor(sdk, settings));

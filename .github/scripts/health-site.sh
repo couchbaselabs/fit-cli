@@ -1,23 +1,25 @@
 #!/usr/bin/env bash
 # Builds the fit health Pages site from this run's per-SDK report artifacts.
-# Usage: health-site.sh <reports-dir> <site-dir> [live-site-url]
+# Usage: health-site.sh <reports-dir> <site-dir> [previous-site-dir]
 #
 #   <reports-dir>   holds one health-report-<sdk>/ directory per SDK that reported this run
 #   <site-dir>      is created; the site is written there:
 #                     index.html               redirects to health/
+#                     .nojekyll                Pages serves the files as they are
 #                     health/index.html        each SDK's last 30 nights, one chart each (fit health overview)
 #                     health/sdks.json         the SDKs on the site, for the next run
 #                     health/<sdk>/index.html  the SDK's report page
 #                     health/<sdk>/report.json the report data: what the page draws and tools read
-#   [live-site-url] the site as currently published. A Pages deploy replaces the whole site,
-#                   so an SDK with no report this run (a failed job, or a dispatch for one
-#                   SDK) keeps its published page instead of vanishing. The page shows its
-#                   own date, so a carried-over report never passes for a new one.
+#   [previous-site-dir] the site as currently published (a checkout of fit-health's site
+#                   branch). Each publish replaces the whole site, so an SDK with no report
+#                   this run (a failed job, or a dispatch for one SDK) keeps its published page
+#                   instead of vanishing. The page shows its own date, so a carried-over report
+#                   never passes for a new one.
 set -euo pipefail
 
 reports="$1"
 site="$2"
-live="${3:-}"
+previous="${3:-}"
 SDK_RE='^[a-z0-9][a-z0-9-]{0,40}$'
 
 mkdir -p "$site/health"
@@ -37,23 +39,23 @@ for dir in "$reports"/health-report-*/; do
   sdks+=("$sdk")
 done
 
-if [ -n "$live" ]; then
-  if published="$(curl -fsSL "$live/health/sdks.json" 2>/dev/null)"; then
-    for sdk in $(jq -r '.[]' <<<"$published"); do
+if [ -n "$previous" ]; then
+  if [ -f "$previous/health/sdks.json" ]; then
+    for sdk in $(jq -r '.[]' "$previous/health/sdks.json"); do
       [[ "$sdk" =~ $SDK_RE ]] || continue
       [ -d "$site/health/$sdk" ] && continue
-      mkdir -p "$site/health/$sdk"
-      if curl -fsSL "$live/health/$sdk/" -o "$site/health/$sdk/index.html"; then
-        curl -fsSL "$live/health/$sdk/report.json" -o "$site/health/$sdk/report.json" || rm -f "$site/health/$sdk/report.json"
-        echo "::notice::$sdk had no report this run; keeping its published one"
+      if [ -f "$previous/health/$sdk/index.html" ]; then
+        mkdir -p "$site/health/$sdk"
+        cp "$previous/health/$sdk/index.html" "$site/health/$sdk/index.html"
+        [ -f "$previous/health/$sdk/report.json" ] && cp "$previous/health/$sdk/report.json" "$site/health/$sdk/report.json"
+        echo "$sdk had no report this run; keeping its published one"
         sdks+=("$sdk")
       else
-        rm -rf "${site:?}/health/$sdk"
-        echo "::warning::$sdk had no report this run and its published one could not be fetched; dropped"
+        echo "$sdk had no report this run and has no published page; dropped"
       fi
     done
   else
-    echo "No published site at $live yet (or it could not be read): publishing this run's reports only."
+    echo "No published site in $previous yet: publishing this run's reports only."
   fi
 fi
 
@@ -71,6 +73,7 @@ printf '%s\n' "${sdks[@]}" | jq -R . | jq -cs . > "$site/health/sdks.json"
 
 bun src/fit/main/main.ts health overview --dir "$site/health"
 
+touch "$site/.nojekyll"
 cat > "$site/index.html" <<'EOF'
 <!doctype html>
 <meta charset="utf-8">

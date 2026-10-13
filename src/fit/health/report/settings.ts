@@ -25,8 +25,11 @@ export interface HealthSettings {
 
 export const settingsKey = (sdk: string) => `${sdk}/settings.json`;
 
-/** The health Pages site; each SDK's report is at <this>/<sdk>/. */
-export const PAGES_URL = "https://couchbaselabs.github.io/fit-cli/health/";
+/**
+ * The health site: the internal couchbaselabs/fit-health repo's private Pages, readable by anyone
+ * who can read that repo. Each SDK's report is at <this>/<sdk>/.
+ */
+export const PAGES_URL = "https://fuzzy-engine-qq7g1z2.pages.github.io/health/";
 
 export function readSettings(store: LocalHealthStore, sdk: string): HealthSettings {
   return store.readJson<HealthSettings>(settingsKey(sdk)) ?? {};
