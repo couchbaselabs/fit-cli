@@ -161,10 +161,12 @@ export function testHistories(series: Series, opts: { include?: Iterable<string>
   const pkgOfClass = new Map<string, string>();
   for (const n of series.nights) for (const [cls, pkg] of Object.entries(n.record.packages ?? {})) pkgOfClass.set(cls, pkg);
   const hiddenOn = new Map(series.nights.filter((n) => n.record.hiddenFailures).map((n) => [n.date, n.record.hiddenFailures!]));
-  // A log line names a class by its simple name, so for a name the driver reuses across
-  // packages ("GetTest.x") a log-only night can't say which test failed. Where JUnit nights
-  // have seen the qualified tests ("kv/GetTest.x"), each of them is unknown that night, rather
-  // than the log's name becoming a history of its own.
+  // A log line names a class by its simple name ("ObservabilityTest.x"), though the driver
+  // reuses some names across packages. Where JUnit nights have seen just one qualified test of
+  // that name ("client/observability/ObservabilityTest.x"), the line can only mean it. Where
+  // they have seen several ("kv/GetTest.x", "states/GetTest.x"), the night can't say which
+  // failed, and each is unknown that night - rather than the log's name becoming a history of
+  // its own.
   const qualifiedBySimple = new Map<string, Set<string>>();
   for (const n of series.nights) {
     if (!n.record.passesKnown) continue;
@@ -182,6 +184,11 @@ export function testHistories(series: Series, opts: { include?: Iterable<string>
     if (truncated.has(n.date)) continue;
     for (const t of n.failing) {
       const candidates = !n.record.passesKnown && isReusedClassName(t.slice(0, t.indexOf("."))) ? qualifiedBySimple.get(t) : undefined;
+      if (candidates?.size === 1) {
+        const [q] = candidates;
+        (failing.get(q) ?? failing.set(q, new Set()).get(q)!).add(n.date);
+        continue;
+      }
       if (candidates) {
         for (const q of candidates) {
           (ambiguousOn.get(q) ?? ambiguousOn.set(q, new Set()).get(q)!).add(n.date);
@@ -204,7 +211,9 @@ export function testHistories(series: Series, opts: { include?: Iterable<string>
       test,
       series.ran.map((d) => {
         const record = recordOn.get(d);
-        if (dates.has(d)) return wholeClass || record?.tests[cls]?.e?.includes(method) ? "e" : "f";
+        // A log record names the class simply, though the history may be the qualified test's.
+        const errored = record?.tests[cls]?.e?.includes(method) || (!record?.passesKnown && record?.tests[asLogged(cls)]?.e?.includes(method));
+        if (dates.has(d)) return wholeClass || errored ? "e" : "f";
         if (degraded.has(d)) return "u";
         if (ambiguousOn.get(test)?.has(d)) return "u";
         if (record?.passesKnown) {

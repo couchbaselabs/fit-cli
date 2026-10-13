@@ -301,6 +301,28 @@ test("a log-only night naming a reused class's test makes each qualified test un
   assert.equal(h.get("GetTest.getX"), undefined);
 });
 
+test("a log-only night naming a reused class's test is that test's when only one qualified test has the name", () => {
+  // Only client.observability.ObservabilityTest has bucketFlush and kvReplace; the transactions
+  // ObservabilityTest doesn't. On 5-7 Oct 2026 the .NET log named both, and they were unknowns.
+  const junit = (d: string) => {
+    const tests = {};
+    addOutcome(tests, "client/observability/ObservabilityTest.bucketFlush", "p");
+    addOutcome(tests, "client/observability/ObservabilityTest.kvReplace", "p");
+    addOutcome(tests, "transactions/observability/ObservabilityTest.commit", "p");
+    return rec(d, { source: "run-archive-junit", passesKnown: true, tests });
+  };
+  const log = (() => {
+    const tests = {};
+    addOutcome(tests, "ObservabilityTest.bucketFlush", "f");
+    addOutcome(tests, "ObservabilityTest.kvReplace", "e");
+    return rec("2026-09-02", { tests, counts: { passed: 100, failed: 1, errored: 1, skipped: 0 }, outcome: "tests_failed" });
+  })();
+  const h = testHistories(buildSeries([junit("2026-09-01"), log, junit("2026-09-03")])[0]);
+  assert.deepEqual(h.get("client/observability/ObservabilityTest.bucketFlush"), ["p", "f", "p"]);
+  assert.deepEqual(h.get("client/observability/ObservabilityTest.kvReplace"), ["p", "e", "p"], "💥 stays errored");
+  assert.equal(h.get("ObservabilityTest.bucketFlush"), undefined);
+});
+
 test("notes files are validated: only known fixes, keyed by an exact test id, with text", async () => {
   const { validateNotes } = await import("../notes.js");
   assert.deepEqual(validateNotes({ fixes: { "SetAuthenticatorTest.canSetAuthenticator": { ticket: "NCBC-4304", text: "fixed" } } }), []);
