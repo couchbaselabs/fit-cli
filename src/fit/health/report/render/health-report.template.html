@@ -95,6 +95,9 @@ code, .mono { font-family: var(--mono); font-size: .92em; }
 a { color: var(--series-1); }
 
 header { padding-top: 40px; display: flex; flex-direction: column; gap: 14px; }
+.crumbs { font-size: 13px; color: var(--muted); }
+.crumbs a { text-decoration: none; }
+.crumbs a:hover { text-decoration: underline; }
 .lede { font-size: 17px; max-width: 64ch; color: var(--ink-2); }
 .meta { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--muted); font-size: 13px; }
 
@@ -248,6 +251,7 @@ footer { color: var(--muted); font-size: 12.5px; border-top: 1px solid var(--rul
 
 <div class="wrap">
   <header>
+    <nav class="crumbs" aria-label="Breadcrumb"><a href="../">FIT Health</a> / __SDK_NAME__</nav>
     <div class="eyebrow">Couchbase __SDK_NAME__ SDK · FIT nightly</div>
     <h1>__SDK_NAME__ FIT Health</h1>
     <p class="lede" id="lede"></p>
