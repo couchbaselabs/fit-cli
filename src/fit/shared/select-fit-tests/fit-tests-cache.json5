@@ -62,6 +62,8 @@
   "java/com/couchbase/client/management/collection/CollectionManagerMaxTTLTest.java",
   "java/com/couchbase/client/management/collection/CollectionManagerTest.java",
   "java/com/couchbase/client/management/collection/ExternalCollectionsTest.java",
+  "java/com/couchbase/client/management/eventing/EventingManagerTest.java",
+  "java/com/couchbase/client/management/eventing/util/EventingTest.java",
   "java/com/couchbase/client/management/query/QueryIndexManagerMissingRoleTest.java",
   "java/com/couchbase/client/management/query/QueryIndexManagerPreCollectionClusterTest.java",
   "java/com/couchbase/client/management/query/QueryIndexManagerServerlessTest.java",
