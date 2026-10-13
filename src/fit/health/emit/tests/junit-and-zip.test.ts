@@ -14,9 +14,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { gzipSync } from "node:zlib";
 import { StreamSectionStripper, canonicalTestName, decodeXmlEntities, junitOutcomes, junitXmlFromTarGz } from "../junit-outcomes.js";
 import { extractMember, findCentralDirectory, parseCentralDirectory } from "../s3-zip.js";
+import { tarGz } from "./tar-fixture.js";
 
 const FIXTURES = join(import.meta.dirname, "fixtures");
 
@@ -72,22 +72,6 @@ for (const fixture of ["run.zip", "run-zip64.zip"]) {
     assert.deepEqual(tests.DisconnectTest, { classError: true });
     assert.equal(tests.ExtBinarySupportBasicTest.p?.length, 6, "passes are named, not just counted");
   });
-}
-
-/** A tar archive built by hand: `entries` are [header name, type, data]. */
-function tarGz(entries: [string, string, string][]): Buffer {
-  const blocks: Buffer[] = [];
-  for (const [name, type, data] of entries) {
-    const h = Buffer.alloc(512);
-    h.write(name.slice(0, 100), 0, "utf8");
-    h.write(Buffer.byteLength(data).toString(8).padStart(11, "0") + "\0", 124, "utf8");
-    h.write(type, 156, "utf8");
-    const body = Buffer.alloc(Math.ceil(Buffer.byteLength(data) / 512) * 512);
-    body.write(data, 0, "utf8");
-    blocks.push(h, body);
-  }
-  blocks.push(Buffer.alloc(1024));
-  return gzipSync(Buffer.concat(blocks));
 }
 
 test("tar entries with names over 100 bytes are read, in both GNU and pax form", async () => {
