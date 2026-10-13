@@ -78,8 +78,9 @@ export interface ArchiveUpgrade {
  * Bump when the JUnit reader would build different records from the same archive: backfill
  * then re-reads every archive still in S3. junit-2: package-qualified class names where the
  * driver reuses one (kv/GetTest), and no class-level error for a skipped nested class.
+ * junit-3: a parameterised test's variants are one test, with the failing variants kept (v).
  */
-export const JUNIT_READER_VERSION = "junit-2";
+export const JUNIT_READER_VERSION = "junit-3";
 
 export const MAX_FETCH_ATTEMPTS = 5;
 

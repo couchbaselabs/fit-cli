@@ -30,9 +30,23 @@ function readZipMember(zip: Buffer, name: string): Buffer {
   return extractMember(entry, zip.subarray(entry.localHeaderOffset));
 }
 
-test("test ids match fit-cli's ❌ lines: simple class name, cut at the first whitespace", () => {
+test("test ids are Class.method: a parameterised test's variants are one test", () => {
   assert.equal(canonicalTestName("com.couchbase.client.core.LockTest", "getAndLock"), "LockTest.getAndLock");
-  assert.equal(canonicalTestName("com.couchbase.client.core.LockTest", "upsertLocked(API) [2] ASYNC"), "LockTest.upsertLocked(API)");
+  assert.equal(canonicalTestName("com.couchbase.client.core.LockTest", "upsertLocked(API) [2] ASYNC"), "LockTest.upsertLocked");
+  // JUnit 5 writes no space before the index: each [N] was counted as a test of its own.
+  assert.equal(canonicalTestName("com.couchbase.client.query.QueryConfigTest", "durability(Durability)[3]"), "QueryConfigTest.durability");
+});
+
+test("a parameterised test is one test: the worst variant wins, and the failing variants are kept", () => {
+  const xml = `<testsuite>
+    <testcase classname="a.QueryConfigTest" name="durability(Durability)[1]"/>
+    <testcase classname="a.QueryConfigTest" name="durability(Durability)[10]"><failure message="x"/></testcase>
+    <testcase classname="a.QueryConfigTest" name="durability(Durability)[2]"><failure message="x"/></testcase>
+    <testcase classname="a.QueryConfigTest" name="plain"/>
+  </testsuite>`;
+  const o = junitOutcomes([xml]);
+  assert.deepEqual(o.tests.QueryConfigTest, { f: ["durability"], p: ["plain"], v: { durability: ["(Durability)[2]", "(Durability)[10]"] } });
+  assert.deepEqual(o.counts, { passed: 2, failed: 2, errored: 0, skipped: 0 }, "test cases are still counted one by one");
 });
 
 for (const fixture of ["run.zip", "run-zip64.zip"]) {
@@ -50,9 +64,10 @@ for (const fixture of ["run.zip", "run-zip64.zip"]) {
     assert.deepEqual(tests.LockTest, {
       f: ["getAndLockTimeoutHasRetryReasonLocked"],
       // A parameterised test that passed once and errored once is, like in the log, errored.
-      e: ["upsertLocked(API)"],
+      e: ["upsertLocked"],
       s: ["needsServer8"],
       p: ["plain"],
+      v: { upsertLocked: ["(API) [2] ASYNC"] },
     });
     assert.deepEqual(tests.DisconnectTest, { classError: true });
     assert.equal(tests.ExtBinarySupportBasicTest.p?.length, 6, "passes are named, not just counted");

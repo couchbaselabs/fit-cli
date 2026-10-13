@@ -3,15 +3,16 @@
  * a run record needs and what junit-to-markdown.ts deliberately does not keep (it names only
  * failing cases, for the CI summary). Kept separate so the summary/Slack code is untouched.
  *
- * Test identity is `SimpleClass.name`, the same spelling fit-cli prints in its ❌/💥 lines,
- * cut at the first whitespace as the log parser does. That makes a record built from JUnit
- * and one scraped from the log directly comparable, and collapses a parameterised test's
- * repeats (`method(Param) [2]`) into one test exactly as the log does.
+ * Test identity is `SimpleClass.method`: the name fit-cli prints in its ❌/💥 lines without a
+ * parameterised test's signature and repeat index (`durability(Durability)[2]` is the test
+ * `durability`; see splitVariant). The log parser names tests the same way, so a record built
+ * from JUnit and one scraped from the log are directly comparable. The variants that failed
+ * are kept beside the test (`v`).
  */
-import { classKey } from "./test-identity.js";
+import { classKey, splitVariant } from "./test-identity.js";
 import { Readable } from "node:stream";
 import { createGunzip } from "node:zlib";
-import { addOutcome, type ClassOutcomes, type ResultCounts } from "../record/run-record.js";
+import { addOutcome, addVariant, type ClassOutcomes, type ResultCounts } from "../record/run-record.js";
 import { getXmlAttr } from "../../../util/non-fit/xml.js";
 export { decodeXmlEntities } from "../../../util/non-fit/xml.js";
 
@@ -25,12 +26,12 @@ export interface JunitOutcomes {
 }
 
 /**
- * The canonical test id: the part of `Class.name` before any whitespace, where Class is the
- * simple class name - or, for a name the driver uses in several packages, a package-qualified
- * one (see test-identity.ts).
+ * The canonical test id: `Class.method`, where Class is the simple class name - or, for a name
+ * the driver uses in several packages, a package-qualified one - and method is the name without
+ * a parameterised test's variant (see test-identity.ts).
  */
 export function canonicalTestName(classname: string, name: string): string {
-  return `${classKey(classname)}.${name}`.split(/\s/)[0];
+  return `${classKey(classname)}.${splitVariant(name).method}`;
 }
 
 type Outcome = "p" | "f" | "e" | "s";
@@ -40,6 +41,7 @@ const RANK: Record<Outcome, number> = { s: 0, p: 1, f: 2, e: 3 };
 /** Outcomes from the XML of any number of TEST-*.xml files. */
 export function junitOutcomes(xmls: Iterable<string>): JunitOutcomes {
   const worst = new Map<string, Outcome>();
+  const failedAs = new Map<string, Set<string>>();
   const packages: Record<string, string> = {};
   const counts: ResultCounts = { passed: 0, failed: 0, errored: 0, skipped: 0 };
   let files = 0;
@@ -63,10 +65,13 @@ export function junitOutcomes(xmls: Iterable<string>): JunitOutcomes {
       const id = name ? canonicalTestName(classname, name) : `${classKey(classname)}.`;
       const prev = worst.get(id);
       if (!prev || RANK[outcome] > RANK[prev]) worst.set(id, outcome);
+      const { variant } = splitVariant(name);
+      if (variant && (outcome === "f" || outcome === "e")) (failedAs.get(id) ?? failedAs.set(id, new Set()).get(id)!).add(variant);
     }
   }
   const tests: Record<string, ClassOutcomes> = {};
   for (const [id, outcome] of [...worst.entries()].sort(([a], [b]) => a.localeCompare(b))) addOutcome(tests, id, outcome);
+  for (const [id, variants] of failedAs) for (const v of [...variants].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))) addVariant(tests, id, v);
   return { tests, packages, counts, files };
 }
 

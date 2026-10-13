@@ -28,10 +28,12 @@ import { createHash } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { isMain } from "../../../util/non-fit/cli.js";
 import { stripAnsi } from "../../../util/non-fit/proc.js";
+import { splitVariant } from "../emit/test-identity.js";
 import { parseHealthArgs } from "../cli-args.js";
 import {
   RUN_RECORD_SCHEMA,
   addOutcome,
+  addVariant,
   recordSlug,
   type CiContext,
   type ResultCounts,
@@ -39,8 +41,11 @@ import {
   type TestKind,
 } from "../record/run-record.js";
 
-/** Bump when a parser change could alter what an already-parsed log yields. */
-export const LOG_PARSER_VERSION = "log-8";
+/**
+ * Bump when a parser change could alter what an already-parsed log yields. log-9: a
+ * parameterised test's variants (`durability(Durability)[2]`) are one test, as in JUnit.
+ */
+export const LOG_PARSER_VERSION = "log-9";
 
 /**
  * Before this date fit-cli printed a second copy of the functional summary under the
@@ -70,6 +75,16 @@ const TOP_PRESET = /fit run preset "?([\w-]+)"?/;
 const DEPLOYER = /--deployer=(\w+)/;
 // fit-cli prints at most 3 failures per package, then this.
 const HIDDEN = /\.\.\. and (\d+) more failure\(s\) in (\S+)/;
+
+/** The test a logged failure names - its variant noted on the run - as JUnit names it. */
+function noteVariant(run: { variants: Map<string, Set<string>> }, logged: string): string {
+  const dot = logged.indexOf(".");
+  if (dot < 0) return logged;
+  const { method, variant } = splitVariant(logged.slice(dot + 1));
+  const name = `${logged.slice(0, dot)}.${method}`;
+  if (variant) (run.variants.get(name) ?? run.variants.set(name, new Set()).get(name)!).add(variant);
+  return name;
+}
 const PE_PARAM = /"enablePrivateEndpoint":\s*(true|false)/;
 // fit-cli names the classification of a fatal error - "FitCliError/FatalToCluster: <why>" -
 // and prints unclassified ones as a bare "FitCliError: <why>" (e.g. "ssh exited with code 255").
@@ -94,6 +109,8 @@ export interface ParsedRun {
   performer?: string;
   /** Failures counted but not named, per package (fit-cli's per-package display cap). */
   hidden: Record<string, number>;
+  /** Per name in `failing`, the variants the log named it with (see splitVariant). */
+  variants: Map<string, Set<string>>;
   job: string;
 }
 
@@ -214,7 +231,7 @@ export function parseRunLog(text: string): ParsedLog {
     const key = `${preset}|${suite}|${cluster ?? ""}`;
     let run = runs.get(key);
     if (!run) {
-      run = { preset, suite, kind, cluster, params: {}, failing: new Set(), errored: new Set(), hidden: {}, job };
+      run = { preset, suite, kind, cluster, params: {}, failing: new Set(), errored: new Set(), hidden: {}, variants: new Map(), job };
       runs.set(key, run);
     }
     if (performer && !run.performer) run.performer = performer;
@@ -222,15 +239,17 @@ export function parseRunLog(text: string): ParsedLog {
     const body = msg.replace(TAG, "").trimEnd();
     const fm = FAIL.exec(msg);
     if (fm) {
+      const name = noteVariant(run, fm[2]);
       // A test named under both markers (say, once per API) counts as failed, not errored.
-      if (fm[1] === "💥" && !run.failing.has(fm[2])) run.errored.add(fm[2]);
-      if (fm[1] === "❌") run.errored.delete(fm[2]);
-      run.failing.add(fm[2]);
+      if (fm[1] === "💥" && !run.failing.has(name)) run.errored.add(name);
+      if (fm[1] === "❌") run.errored.delete(name);
+      run.failing.add(name);
     }
     const om = OLDFAIL.exec(rawMsg.replace(RAWTAG, "").trimEnd());
     if (om) {
-      run.errored.delete(om[1]);
-      run.failing.add(om[1]);
+      const name = noteVariant(run, om[1]);
+      run.errored.delete(name);
+      run.failing.add(name);
     }
     const hm = HIDDEN.exec(body);
     if (hm) run.hidden[hm[2]] = (run.hidden[hm[2]] ?? 0) + Number(hm[1]);
@@ -347,6 +366,7 @@ export function buildRecords(parsed: ParsedLog, ctx: { sdk: string; date: string
     }
     const tests = {};
     for (const n of named) addOutcome(tests, n, run.errored.has(n) ? "e" : "f");
+    for (const [n, vs] of run.variants) for (const v of vs) addVariant(tests, n, v);
     const abort = !c ? parsed.aborts[run.preset] : undefined;
     records.push({
       ...base(run.preset, run.kind),

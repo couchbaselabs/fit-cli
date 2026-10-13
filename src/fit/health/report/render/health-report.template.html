@@ -576,7 +576,9 @@ function row(s, t) {
   if (t.cls === 'stopped') extra.push(`last ran ${fmt(t.lastRan)} (${RESULT[t.lastResult]}) · not run since ${fmt(t.notRunSince)}`);
   const cross = crossLine(t);
   if (cross) extra.push(cross);
-  return `<div class="row"><div class="name"><div class="tname">${nameHtml(t.test)}</div>
+  // A parameterised test is one test; which of its variants failed is on hover.
+  const variants = t.failedAs ? ` title="${esc(`Failed on ${fmt(t.failedAs.date)} as: ${t.failedAs.variants.join(', ')}`)}"` : '';
+  return `<div class="row"><div class="name"><div class="tname"${variants}>${nameHtml(t.test)}</div>
     <div class="rate"><span class="pill p-${t.cls}" title="${esc(D.classes.blurbs[t.cls])}">${LABEL[t.cls]}${since}</span><span>${t.windowFails}/${t.windowRuns} in ${WIN} days · ${t.fails}/${t.runs} overall</span></div>
     ${extra.length ? `<div class="hist">${extra.join(' · ')}</div>` : ''}</div>
     <div class="cells">${strip(s, t)}</div></div>`;

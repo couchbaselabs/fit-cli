@@ -56,3 +56,17 @@ export function classKey(classname: string, table: Map<string, Map<string, strin
   const q = table.get(outer)?.get(outerFq);
   return q ? q + simple.slice(outer.length) : simple;
 }
+
+/**
+ * A JUnit test name split into the method and the variant: the parameter signature and repeat
+ * index of a parameterised test ("durability(Durability)[2]" -> "durability", "(Durability)[2]").
+ * One test is the method, however many variants it runs as: counting each variant as a test
+ * made a 5-case parameterised test 5 tests. The method ends at the first whitespace, "(" or "[";
+ * the variant is the rest ("upsertLocked(API) [2] ASYNC" -> "(API) [2] ASYNC").
+ */
+export function splitVariant(name: string): { method: string; variant: string } {
+  const word = name.split(/\s/)[0];
+  const cut = word.search(/[([]/);
+  const method = cut > 0 ? word.slice(0, cut) : word;
+  return { method, variant: name.slice(method.length).trim() };
+}

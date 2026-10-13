@@ -152,6 +152,17 @@ test("💥 is kept as errored and ❌ as failed, as JUnit would record them", ()
   assert.deepEqual([...both.runs[0].errored], []);
 });
 
+test("a parameterised test's variants are one test, named as JUnit names it, with its failing variants", () => {
+  const tag = "[01:00:00·1/1·aws1·8.5-stable·dotnet:main·functional]";
+  const line = (msg: string) => `fit / op-onprem-func-lite\tRun\t2026-09-27T01:00:00.0Z ${tag} ${msg}`;
+  const parsed = parseRunLog(
+    [line("❌ QueryConfigTest.durability(Durability)[1]"), line("❌ QueryConfigTest.durability(Durability)[3]"), line("TOTAL | 10 | 0 | 2 | 0 | 80.0% | 1:00")].join("\n"),
+  );
+  assert.deepEqual([...parsed.runs[0].failing], ["QueryConfigTest.durability"]);
+  const { records: rs } = buildRecords(parsed, { sdk: "dotnet", date: "2026-09-27", ci: { repo: "x", runId: 1, runAttempt: 1 } });
+  assert.deepEqual(rs[0].tests.QueryConfigTest, { f: ["durability"], v: { durability: ["(Durability)[1]", "(Durability)[3]"] } });
+});
+
 test("sanity checks: counted-but-unnamed and named-but-uncounted failures are not stored", () => {
   const tag = "[01:00:00·1/1·aws1·8.5-stable·dotnet:main·functional]";
   const line = (msg: string) => `fit / op-onprem-func-lite\tRun\t2026-09-27T01:00:00.0Z ${tag} ${msg}`;

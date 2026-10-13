@@ -44,6 +44,17 @@ export interface ClassOutcomes {
   e?: string[];
   s?: string[];
   classError?: boolean;
+  /** Per failing method, the variants that failed or errored ("(Durability)[2]"), when it has them. */
+  v?: Record<string, string[]>;
+}
+
+/** Note that `Class.method` failed as `variant` (see splitVariant). */
+export function addVariant(tests: Record<string, ClassOutcomes>, id: string, variant: string): void {
+  const dot = id.indexOf(".");
+  if (dot < 0 || !variant) return;
+  const entry = (tests[id.slice(0, dot)] ??= {});
+  const list = ((entry.v ??= {})[id.slice(dot + 1)] ??= []);
+  if (!list.includes(variant)) list.push(variant);
 }
 
 export interface CiContext {
