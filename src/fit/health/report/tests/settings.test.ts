@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { PAGES_URL, applySettingsArgs, reportUrlFor, validateSettings } from "../settings.js";
+import { applySettingsArgs, reportUrlFor, validateSettings } from "../settings.js";
 
 test("setting a channel, a report link, and turning Slack off", () => {
   const on = applySettingsArgs({}, { slackChannel: "CCFM9S771" });
@@ -19,9 +19,12 @@ test("setting a channel, a report link, and turning Slack off", () => {
   assert.throws(() => applySettingsArgs({}, { reportUrl: "https://example.com/r" }), /needs a Slack channel/);
 });
 
-test("the digest links to the SDK's Pages report unless told otherwise", () => {
-  assert.equal(reportUrlFor("java", {}), `${PAGES_URL}java/`);
-  assert.equal(reportUrlFor("java", { slack: { channel: "C0123456", reportUrl: "https://example.com/r" } }), "https://example.com/r");
+test("the digest links to the SDK's page on the health site unless told otherwise", () => {
+  const site = "https://random-name.pages.github.io/health/";
+  assert.equal(reportUrlFor("java", {}, site), `${site}java/`);
+  assert.equal(reportUrlFor("java", { slack: { channel: "C0123456", reportUrl: "https://example.com/r" } }, site), "https://example.com/r");
+  // Without the site's address, a digest without a link beats one with a wrong link.
+  assert.equal(reportUrlFor("java", {}, undefined), undefined);
 });
 
 test("settings are validated", () => {

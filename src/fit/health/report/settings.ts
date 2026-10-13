@@ -12,32 +12,44 @@ import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import type { LocalHealthStore } from "../store/health-store.js";
 import { openStore, showOrSetJson } from "../store/s3-store.js";
 import { STORE_OPTION, parseSdkCommandArgs } from "../cli-args.js";
+import { capture } from "../../../util/non-fit/proc.js";
 
 export interface HealthSettings {
   /** Post a digest - a headline in the channel, the detail in its thread - after each CI report. */
   slack?: {
     /** Channel ID (C0123…), or a user ID (U0123…) to post to that person's conversation with the bot. The bot must be in a channel. */
     channel: string;
-    /** Where the full report is, linked from the digest. Default: the SDK's page on the health Pages site. */
+    /** Where the full report is, linked from the digest. Default: the SDK's page on the health site. */
     reportUrl?: string;
   };
 }
 
 export const settingsKey = (sdk: string) => `${sdk}/settings.json`;
 
+/** The internal repo whose private Pages serves the health site, readable by anyone who can read the repo. */
+export const SITE_REPO = "couchbaselabs/fit-health";
+
 /**
- * The health site: the internal couchbaselabs/fit-health repo's private Pages, readable by anyone
- * who can read that repo. Each SDK's report is at <this>/<sdk>/.
+ * The health site's address, each SDK's report at <this>/<sdk>/, or undefined when GitHub can't
+ * say. Asked for, not written down: private Pages gets a random hostname, which changes if Pages
+ * is turned off and on again.
  */
-export const PAGES_URL = "https://fuzzy-engine-qq7g1z2.pages.github.io/health/";
+export async function healthSiteUrl(): Promise<string | undefined> {
+  try {
+    const url = (await capture("gh", ["api", `repos/${SITE_REPO}/pages`, "--jq", ".html_url"], process.cwd(), { quiet: true, timeoutMs: 30_000 })).trim();
+    return /^https:\/\//.test(url) ? `${url.replace(/\/?$/, "/")}health/` : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export function readSettings(store: LocalHealthStore, sdk: string): HealthSettings {
   return store.readJson<HealthSettings>(settingsKey(sdk)) ?? {};
 }
 
-/** The digest's report link: the setting, else the SDK's Pages page. */
-export function reportUrlFor(sdk: string, settings: HealthSettings): string {
-  return settings.slack?.reportUrl ?? `${PAGES_URL}${sdk}/`;
+/** The digest's report link: the setting, else the SDK's page on the health site, if its address is known. */
+export function reportUrlFor(sdk: string, settings: HealthSettings, siteUrl: string | undefined): string | undefined {
+  return settings.slack?.reportUrl ?? (siteUrl ? `${siteUrl}${sdk}/` : undefined);
 }
 
 /** Problems with a settings object, as sentences. */
@@ -76,7 +88,8 @@ Usage:
 
   --slack-channel  Post the digest to this channel (C0123...) or user (U0123...). Invite the bot to a channel first.
   --no-slack       Stop posting the digest.
-  --report-url     Link the digest to this page instead of ${PAGES_URL}<sdk>/.
+  --report-url     Link the digest to this page instead of the SDK's page on the health site
+                   (${SITE_REPO}'s private Pages).
 
 With no option, prints the current settings. A digest posts only from a report run with
 --slack, as the scheduled health workflow runs it.`;

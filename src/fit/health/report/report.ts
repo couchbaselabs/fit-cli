@@ -26,7 +26,7 @@ import { renderHtml } from "./render/render-html.js";
 import { renderTerminal } from "./render/render-terminal.js";
 import { renderSlackDigest } from "./render/render-slack.js";
 import { readNotes } from "./notes.js";
-import { readSettings, reportUrlFor, type HealthSettings } from "./settings.js";
+import { healthSiteUrl, readSettings, reportUrlFor, type HealthSettings } from "./settings.js";
 import { postDigest } from "./post-digest.js";
 import { healthOptIn } from "../registry/health-opt-ins.js";
 import { STORE_OPTION, parseSdkCommandArgs } from "../cli-args.js";
@@ -141,7 +141,8 @@ export async function runReportCommand(argv: string[], prefix: string): Promise<
   writeFileSync(htmlPath, await renderHtml(report, sdkName));
 
   const slack = settings.slack;
-  const digest = renderSlackDigest(report, sdkName, reportUrlFor(sdk, settings));
+  const siteUrl = settings.slack?.reportUrl ? undefined : await healthSiteUrl();
+  const digest = renderSlackDigest(report, sdkName, reportUrlFor(sdk, settings, siteUrl));
   writeFileSync(digestPath, `${digest.headline}\n\n--- thread ---\n${digest.thread}\n`);
   const details = [{ label: "Open", value: `open ${htmlPath}` }];
   const decision = slackDecision(values, slack?.channel);
