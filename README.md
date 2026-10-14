@@ -3,6 +3,7 @@ This is a CLI tool to help make FIT easier to use.  It lets you:
 * Generate a YAML/JSON5 definition file that will let you run functional FIT tests against any SDK.  (And later: FIT/SIT and FIT/PERF)
 * Run a definition file locally.
 * Run a definition file on a clean AWS EC2 instance you can SSH onto.  This is the exactly same command CI will ultimately execute, so you can reproduce (and debug!) CI locally.
+* See which FIT tests each SDK fails, night by night (`fit health`; see [FIT health](#fit-health)).
 
 
 If you're new to FIT in general see https://github.com/couchbaselabs/transactions-fit-performer/blob/master/README.md for an intro.
@@ -162,6 +163,16 @@ go unnoticed.
 
 Note the Analytics performers don't implement this call (they use the separate columnar-test-driver), so
 they aren't queried by default.
+
+## FIT health
+Which FIT tests each SDK fails, from its nightly runs: what fails every night, what fails some nights, and what started or stopped failing recently. A workflow here (`.github/workflows/health.yaml`) builds it daily for each opted-in SDK.
+
+- **Reports:** https://performance-sdk.couchbase.com/fit-health - one page per SDK, and a top page with each SDK's last 30 nights. The site is private: sign in to GitHub with an account that can read `couchbaselabs/fit-health` (any member of the Couchbase GitHub enterprise).
+- **Slack:** an SDK can get a daily digest in its own channel: `fit health settings <sdk> --slack-channel <id>`.
+- **Opting an SDK in:** one entry in `src/fit/health/registry/health-opt-ins.ts`.
+- **Locally:** `fit health report <sdk> --store s3://fit-cli/health-dev/` builds the same report from the shared store (needs AWS access), prints a summary, and writes the page to the run's artifact directory.
+
+See `specs/health.md` for how it works.
 
 ## General rules
 Everyone - AI and human - please follow these as best you can.
