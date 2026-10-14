@@ -61,6 +61,8 @@ export interface ReportTest extends Classification {
   fix?: { ticket?: string; text: string };
   /** A parameterised test: the variants that failed on its last failing night ("(Durability)[2]"). */
   failedAs?: { date: string; variants: string[] };
+  /** Situational tests: each night the test failed because its scenario scored below zero, with the score and why. */
+  scores?: Record<string, { score: number; reasons: string[] }>;
   /**
    * What changed between the baseline night (`lastGood`, else `previousNight`) and the first
    * night of `lastEpisode`, in the SDK and in the FIT driver, and the likely cause (see
@@ -253,6 +255,7 @@ function reportSeries(s: Series, end: string, notes: ReportNotes, manifests: Man
     const dot = test.indexOf(".");
     const lastFailRecord = c.lastFail ? s.nights.find((n) => n.date === c.lastFail)?.record : undefined;
     const variants = dot > 0 ? lastFailRecord?.tests[test.slice(0, dot)]?.v?.[test.slice(dot + 1)] : undefined;
+    const scores = Object.fromEntries(s.nights.flatMap((n) => (n.record.scoreFailures?.[test] ? [[n.date, n.record.scoreFailures[test]]] : [])));
     tests.push({
       test,
       seq: seq.join(""),
@@ -262,6 +265,7 @@ function reportSeries(s: Series, end: string, notes: ReportNotes, manifests: Man
       ...(c.since && c.since === s.ran[0] ? { sinceFirstNight: true } : {}),
       ...(fix ? { fix } : {}),
       ...(variants?.length ? { failedAs: { date: c.lastFail!, variants } } : {}),
+      ...(Object.keys(scores).length ? { scores } : {}),
     });
   }
   const order = (c: TestClass) => CLASS_ORDER.indexOf(c);

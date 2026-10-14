@@ -115,6 +115,11 @@ export interface RunRecord {
   hiddenFailures?: Record<string, number>;
   /** For "run-archive-junit": where the JUnit results were read from. */
   archive?: { uri: string; member: string };
+  /**
+   * Situational records: the tests failed because their scenario scored below zero, with the
+   * score and the Scorer's reasons (see situational-scores.ts). Each is also in its class's `f`.
+   */
+  scoreFailures?: Record<string, { score: number; reasons: string[] }>;
   /** Emitted records: each test class's Java package, which log output never shows. */
   packages?: Record<string, string>;
   /**

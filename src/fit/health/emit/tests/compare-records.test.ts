@@ -123,3 +123,15 @@ test("a record built from JUnit keeps the scraped record's variant, so both have
   const rec = recordFromJunit(junitOutcomes([xml(tc("getAndLock"))]), { ...scraped, variant: "rebalance" }, ARCHIVE);
   assert.equal(rec.variant, "rebalance");
 });
+
+test("a situational test failed on its score is expected to be missing from the log, and from its counts", () => {
+  const sit = { ...scraped, preset: "op-capella-pe-sit-lite", kind: "situational" as const, counts: { passed: 2, failed: 0, errored: 0, skipped: 0 }, tests: {} };
+  const rec = recordFromJunit(junitOutcomes([xml(tc("vertical") + tc("horizontal"))]), sit, ARCHIVE);
+  rec.tests.LockTest = { p: ["horizontal"], f: ["vertical"] };
+  rec.counts = { passed: 1, failed: 1, errored: 0, skipped: 0 };
+  rec.scoreFailures = { "LockTest.vertical": { score: -100, reasons: ["-100 for ramp"] } };
+  const c = compareRecords(rec, sit);
+  assert.ok(c.agree, JSON.stringify(c));
+  assert.deepEqual(c.scoredBelowZero, ["LockTest.vertical"]);
+  assert.deepEqual(c.onlyJunit, []);
+});

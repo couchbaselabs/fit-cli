@@ -17,6 +17,7 @@
  */
 import { RUN_RECORD_SCHEMA, type RunRecord } from "../record/run-record.js";
 import { junitOutcomes, junitXmlFromTarGz, type JunitOutcomes } from "./junit-outcomes.js";
+import { applyNegativeScores, scoresFromResultsTar, type ScenarioScore } from "./situational-scores.js";
 import { stripAnsi } from "../../../util/non-fit/proc.js";
 
 const UPLOADED = /✓ Uploaded run artifacts to (s3:\/\/\S+\.zip)/;
@@ -71,7 +72,12 @@ export function matchTarball(record: RunRecord, tarballs: string[], peers: RunRe
  * which run it was, the JUnit every outcome. Copied field by field, so the scraped record's
  * source, parserVersion and tests can't leak into it.
  */
-export function recordFromJunit(junit: JunitOutcomes, scraped: RunRecord, archive: { uri: string; member: string }): RunRecord {
+export function recordFromJunit(
+  junit: JunitOutcomes,
+  scraped: RunRecord,
+  archive: { uri: string; member: string },
+  scoreFailures: Record<string, ScenarioScore> = {},
+): RunRecord {
   const c = junit.counts;
   return {
     schema: RUN_RECORD_SCHEMA,
@@ -90,15 +96,29 @@ export function recordFromJunit(junit: JunitOutcomes, scraped: RunRecord, archiv
     passesKnown: true,
     packages: junit.packages,
     archive,
+    ...(Object.keys(scoreFailures).length ? { scoreFailures } : {}),
     tests: junit.tests,
   };
 }
 
-export async function upgradeRecord(scraped: RunRecord, tarGz: Buffer, archive: string, tarball: string): Promise<RunRecord | { reason: string }> {
+/**
+ * `results`, for a situational run, is its results.tar(.gz): a test whose scenario scored below
+ * zero is then failed (see situational-scores.ts). Without it the outcomes are JUnit's alone.
+ */
+export async function upgradeRecord(
+  scraped: RunRecord,
+  tarGz: Buffer,
+  archive: string,
+  tarball: string,
+  results?: { tar: Buffer; gzip: boolean },
+): Promise<{ record: RunRecord; warnings: string[] } | { reason: string }> {
   const junit = junitOutcomes(await junitXmlFromTarGz(tarGz));
   const c = junit.counts;
   if (junit.files === 0 || c.passed + c.failed + c.errored + c.skipped === 0) {
     return { reason: `${tarball} holds no JUnit results (${junit.files} TEST-*.xml files)` };
   }
-  return recordFromJunit(junit, scraped, { uri: archive, member: tarball });
+  if (!results) return { record: recordFromJunit(junit, scraped, { uri: archive, member: tarball }), warnings: [] };
+  const read = await scoresFromResultsTar(results.tar, results.gzip);
+  const applied = applyNegativeScores(junit, read.scores);
+  return { record: recordFromJunit(junit, scraped, { uri: archive, member: tarball }, applied.failures), warnings: [...read.warnings, ...applied.warnings] };
 }

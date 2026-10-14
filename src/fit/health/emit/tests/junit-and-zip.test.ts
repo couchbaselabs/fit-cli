@@ -128,7 +128,7 @@ test("a tarball with no JUnit results is refused, never turned into a clean reco
     assert.ok("reason" in r && /holds no JUnit results/.test(r.reason), JSON.stringify(r));
   }
   const ok = await upgradeRecord(scraped, tarGz([["./TEST-a.xml", "0", `<testsuite><testcase name="x" classname="c.A"><failure/></testcase></testsuite>`]]), "s3://fit-cli/runs/x.zip", "a/surefire-reports.tar.gz");
-  assert.ok(!("reason" in ok) && ok.source === "run-archive-junit");
+  assert.ok(!("reason" in ok) && ok.record.source === "run-archive-junit");
 });
 
 test("a nameless test case is a class-level error only when it failed or errored", () => {

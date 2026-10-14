@@ -25,6 +25,11 @@ export interface JunitOutcomes {
   counts: ResultCounts;
   /** TEST-*.xml files read. */
   files: number;
+  /**
+   * Test id -> the situational run UUIDs its captured output names (see StreamSectionStripper).
+   * How a situational scenario's score is tied to its test; empty for functional runs.
+   */
+  runUuids: Record<string, string[]>;
 }
 
 /**
@@ -46,6 +51,7 @@ export function junitOutcomes(xmls: Iterable<string>): JunitOutcomes {
   const failedAs = new Map<string, Set<string>>();
   const packages: Record<string, string> = {};
   const counts: ResultCounts = { passed: 0, failed: 0, errored: 0, skipped: 0 };
+  const runUuids: Record<string, string[]> = {};
   let files = 0;
   const caseRe = /<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g;
   for (const xml of xmls) {
@@ -69,23 +75,44 @@ export function junitOutcomes(xmls: Iterable<string>): JunitOutcomes {
       if (!prev || RANK[outcome] > RANK[prev]) worst.set(id, outcome);
       const { variant } = splitVariant(name);
       if (variant && (outcome === "f" || outcome === "e")) (failedAs.get(id) ?? failedAs.set(id, new Set()).get(id)!).add(variant);
+      for (const u of inner.matchAll(RUN_UUID)) {
+        const list = (runUuids[id] ??= []);
+        if (!list.includes(u[1])) list.push(u[1]);
+      }
     }
   }
   const tests: Record<string, ClassOutcomes> = {};
   for (const [id, outcome] of [...worst.entries()].sort(([a], [b]) => a.localeCompare(b))) addOutcome(tests, id, outcome);
   for (const [id, variants] of failedAs) for (const v of [...variants].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))) addVariant(tests, id, v);
-  return { tests, packages, counts, files };
+  return { tests, packages, counts, files, runUuids };
 }
+
+/**
+ * A situational run's UUID, as the driver logs it ("... for situationalRunUuid <uuid> and
+ * runUuid=<uuid>") and as StreamSectionStripper keeps it (`<!--runUuid=<uuid>-->`).
+ */
+const RUN_UUID = /runUuid=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/g;
 
 /**
  * Drops <system-out>/<system-err> bodies from XML arriving in chunks. Those sections are
  * captured test output, can run to gigabytes (a single night's reports once expanded past
- * 4 GB), and say nothing about outcomes.
+ * 4 GB), and say nothing about outcomes - except, for a situational test, which scenario run
+ * it was. So a `runUuid=` the output names is kept, as a `<!--runUuid=…-->` comment where the
+ * section was: the testcase it sits in is the test that run's score belongs to.
  */
 export class StreamSectionStripper {
   private kept: string[] = [];
   private carry = "";
   private closeTag: string | undefined;
+  /** The run UUIDs the open section has named so far, and its last few characters, so a match split across chunks is still seen. */
+  private uuids = new Set<string>();
+  private scanTail = "";
+
+  private scan(dropped: string): void {
+    const text = this.scanTail + dropped;
+    for (const m of text.matchAll(RUN_UUID)) this.uuids.add(m[1]);
+    this.scanTail = text.slice(-64);
+  }
 
   push(chunk: string): void {
     let s = this.carry + chunk;
@@ -95,9 +122,15 @@ export class StreamSectionStripper {
         const end = s.indexOf(this.closeTag);
         if (end < 0) {
           // Keep enough of the tail to spot a close tag split across chunks.
-          this.carry = s.slice(-this.closeTag.length);
+          const cut = Math.max(0, s.length - this.closeTag.length);
+          this.scan(s.slice(0, cut));
+          this.carry = s.slice(cut);
           return;
         }
+        this.scan(s.slice(0, end));
+        for (const u of this.uuids) this.kept.push(`<!--runUuid=${u}-->`);
+        this.uuids.clear();
+        this.scanTail = "";
         s = s.slice(end + this.closeTag.length);
         this.closeTag = undefined;
         continue;
@@ -122,6 +155,8 @@ export class StreamSectionStripper {
     this.kept = [];
     this.carry = "";
     this.closeTag = undefined;
+    this.uuids.clear();
+    this.scanTail = "";
     return out;
   }
 }
