@@ -175,20 +175,24 @@ test("extractJobErrorExcerpt falls back to the log's tail when there is no ##[er
   assert.equal(excerpt[excerpt.length - 1], "line 49");
 });
 
-test("formatRunHeartbeat names the jobs in progress", () => {
+const createdAt = "2026-10-14T08:00:00Z";
+const after = (ms: number) => Date.parse(createdAt) + ms;
+
+test("formatRunHeartbeat names the jobs in progress, timed from the run's start", () => {
   const job = (name: string, status: string) => ({ databaseId: 1, name, status, conclusion: "", url: "", steps: [] });
   assert.equal(
-    formatRunHeartbeat({ status: "in_progress", jobs: [job("deploy-vpc", "completed"), job("deploy-aws", "in_progress")] }, 754_000),
+    formatRunHeartbeat({ status: "in_progress", createdAt, jobs: [job("deploy-vpc", "completed"), job("deploy-aws", "in_progress")] }, after(754_000)),
     "  ...in progress (12m34s elapsed): deploy-aws",
   );
-  assert.equal(formatRunHeartbeat({ status: "queued", jobs: [] }, 30_000), "  ...queued (30s elapsed)");
+  assert.equal(formatRunHeartbeat({ status: "queued", createdAt, jobs: [] }, after(30_000)), "  ...queued (30s elapsed)");
+  assert.equal(formatRunHeartbeat({ status: "queued", createdAt, jobs: [] }, after(-5_000)), "  ...queued (0s elapsed)", "clock skew");
 });
 
 test("formatRunHeartbeat never rounds the seconds up to 60", () => {
-  assert.equal(formatRunHeartbeat({ status: "in_progress", jobs: [] }, 119_600), "  ...in progress (1m59s elapsed)");
-  assert.equal(formatRunHeartbeat({ status: "in_progress", jobs: [] }, 59_999), "  ...in progress (59s elapsed)");
+  assert.equal(formatRunHeartbeat({ status: "in_progress", createdAt, jobs: [] }, after(119_600)), "  ...in progress (1m59s elapsed)");
+  assert.equal(formatRunHeartbeat({ status: "in_progress", createdAt, jobs: [] }, after(59_999)), "  ...in progress (59s elapsed)");
 });
 
 test("formatRunHeartbeat says a waiting run needs an approval", () => {
-  assert.equal(formatRunHeartbeat({ status: "waiting", jobs: [] }, 60_000), "  ...waiting for an approval (1m00s elapsed)");
+  assert.equal(formatRunHeartbeat({ status: "waiting", createdAt, jobs: [] }, after(60_000)), "  ...waiting for an approval (1m00s elapsed)");
 });

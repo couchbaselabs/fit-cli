@@ -1,6 +1,7 @@
 /**
  * Dispatch a GitHub Actions `workflow_dispatch` workflow with the `gh` CLI, find the
- * run it created, wait for it, and read back its jobs, inputs and logs.
+ * run it created, wait for it, and read back its jobs and logs; also reads the dispatch
+ * inputs a workflow file declares on a branch or tag.
  *
  * Run on its own:
  *   bun src/util/non-fit/gh-workflow.ts --help
@@ -30,6 +31,13 @@ function gh(args: string[], { timeoutMs = GH_CALL_TIMEOUT_MS, quiet = true } = {
   return capture("gh", args, process.cwd(), { quiet, timeoutMs });
 }
 
+const isNotFound = (err: unknown): boolean => err instanceof Error && err.message.includes("HTTP 404");
+
+function undefinedIfNotFound(err: unknown): undefined {
+  if (isNotFound(err)) return undefined;
+  throw err;
+}
+
 export interface WorkflowDispatchInput {
   name: string;
   description: string;
@@ -55,22 +63,37 @@ export function parseWorkflowDispatchInputs(workflowYaml: string): WorkflowDispa
   return Object.entries(inputs).map(([name, spec]) => {
     const type = spec?.type ?? "string";
     const options = type === "boolean" ? ["true", "false"] : (spec?.options ?? []).map(String);
-    const declared = spec?.default;
     return {
       name,
       description: String(spec?.description ?? "").trim(),
       type,
       options,
-      default: declared !== undefined && declared !== null ? String(declared) : type === "boolean" ? "false" : (options[0] ?? ""),
+      default: String(spec?.default ?? (type === "boolean" ? "false" : (options[0] ?? ""))),
       required: spec?.required === true,
     };
   });
 }
 
-export async function fetchWorkflowDispatchInputs(workflow: GhWorkflow, ref?: string): Promise<WorkflowDispatchInput[]> {
+export async function findRefs(repo: string, name: string): Promise<string[]> {
+  const path = name.split("/").map(encodeURIComponent).join("/");
+  const refs = await Promise.all(["heads", "tags"].map((kind) =>
+    gh(["api", `repos/${repo}/git/ref/${kind}/${path}`]).then(() => `refs/${kind}/${name}`, undefinedIfNotFound)));
+  return refs.filter((ref): ref is string => ref !== undefined);
+}
+
+export async function repoVisible(repo: string): Promise<boolean> {
+  return gh(["api", `repos/${repo}`, "--jq", ".id"]).then(() => true, (err: unknown) => undefinedIfNotFound(err) ?? false);
+}
+
+export async function fetchWorkflowDispatchInputs(workflow: GhWorkflow, ref?: string): Promise<WorkflowDispatchInput[] | undefined> {
   const query = ref ? `?ref=${encodeURIComponent(ref)}` : "";
-  const yamlText = await gh(["api", `repos/${workflow.repo}/contents/.github/workflows/${workflow.workflow}${query}`, "-H", "Accept: application/vnd.github.raw+json"]);
-  return parseWorkflowDispatchInputs(yamlText);
+  const yamlText = await gh(["api", `repos/${workflow.repo}/contents/.github/workflows/${workflow.workflow}${query}`, "-H", "Accept: application/vnd.github.raw+json"])
+    .catch(undefinedIfNotFound);
+  return yamlText === undefined ? undefined : parseWorkflowDispatchInputs(yamlText);
+}
+
+export async function fetchRunWorkflowPath(repo: string, runId: number): Promise<string | undefined> {
+  return (await gh(["api", `repos/${repo}/actions/runs/${runId}`, "--jq", ".path"]).catch(undefinedIfNotFound))?.trim();
 }
 
 export function parseRunIdFromUrl(text: string): number | undefined {
@@ -89,16 +112,17 @@ export function pickDispatchedRun(runs: readonly GhWorkflowRunSummary[], baselin
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 const RUN_LOOKUP_TIMEOUT_MS = 90_000;
+const RUN_LOOKUP_ATTEMPT_TIMEOUT_MS = 15_000;
 const RUN_LOOKUP_INTERVAL_MS = 3_000;
 const RUN_STATUS_RETRY_DELAYS_MS = exponentialDelays({ attempts: 6, baseMs: 5_000, maxMs: 60_000 });
 const JOB_LOG_RETRY_DELAYS_MS = exponentialDelays({ attempts: 3, baseMs: 5_000, maxMs: 10_000 });
 
-async function listRecentRuns(workflow: GhWorkflow, limit: number, user?: string): Promise<GhWorkflowRunSummary[]> {
+async function listRecentRuns(workflow: GhWorkflow, limit: number, user?: string, timeoutMs?: number): Promise<GhWorkflowRunSummary[]> {
   const stdout = await gh([
     "run", "list", "--repo", workflow.repo, "--workflow", workflow.workflow, "--event", "workflow_dispatch",
     ...(user ? ["--user", user] : []),
     "--limit", String(limit), "--json", "databaseId",
-  ]);
+  ], { timeoutMs });
   return JSON.parse(stdout) as GhWorkflowRunSummary[];
 }
 
@@ -106,18 +130,13 @@ async function findDispatchedRun(workflow: GhWorkflow, baselineId: number): Prom
   const user = (await gh(["api", "user", "--jq", ".login"])).trim();
   const deadline = Date.now() + RUN_LOOKUP_TIMEOUT_MS;
   for (;;) {
-    try {
-      const found = pickDispatchedRun(await listRecentRuns(workflow, 5, user), baselineId);
-      if (found) return found.databaseId;
-    } catch (err) {
-      fitCliWarn(`Couldn't list ${workflow.workflow} runs (${err instanceof Error ? err.message : String(err)}); retrying.`);
-    }
-    if (Date.now() >= deadline) {
-      throw new Error(
-        `Dispatched ${workflow.workflow} but couldn't find the run it created after ${RUN_LOOKUP_TIMEOUT_MS / 1000}s; it may` +
-          ` still be running. Find it with: gh run list --repo ${workflow.repo} --workflow ${workflow.workflow} --user ${user}`,
-      );
-    }
+    const runs = await listRecentRuns(workflow, 5, user, RUN_LOOKUP_ATTEMPT_TIMEOUT_MS).catch((err: unknown) => {
+      fitCliWarn(`Couldn't list ${workflow.workflow} runs: ${err instanceof Error ? err.message : String(err)}`);
+      return [];
+    });
+    const found = pickDispatchedRun(runs, baselineId);
+    if (found) return found.databaseId;
+    if (Date.now() >= deadline) throw new Error(`no new run by ${user} showed up within ${RUN_LOOKUP_TIMEOUT_MS / 1000}s`);
     await sleep(RUN_LOOKUP_INTERVAL_MS);
   }
 }
@@ -140,7 +159,13 @@ export async function dispatchWorkflow(workflow: GhWorkflow, fields: Readonly<Re
   const runId = parseRunIdFromUrl(output);
   if (runId !== undefined) return runId;
   console.log(`\ngh didn't report the run it created (an older gh, or GitHub Enterprise Server); looking it up...`);
-  return findDispatchedRun(workflow, baselineId);
+  return findDispatchedRun(workflow, baselineId).catch((err: unknown) => {
+    throw new Error(
+      `Dispatched ${workflow.workflow}, but couldn't find the run it created (cause below); it may still be running, so check` +
+        ` gh run list --repo ${workflow.repo} --workflow ${workflow.workflow} before dispatching again.`,
+      { cause: err },
+    );
+  });
 }
 
 export interface GhStepSummary {
@@ -161,21 +186,21 @@ export interface GhJobSummary {
 export interface GhRunSnapshot {
   status: string;
   conclusion: string;
-  headBranch: string;
+  createdAt: string;
   jobs: GhJobSummary[];
 }
 
 const RUN_SNAPSHOT_JQ =
-  "{status, conclusion, headBranch, jobs: [.jobs[] | {databaseId, name, status, conclusion, url, steps: [.steps[] | {name, status, conclusion}]}]}";
+  "{status, conclusion, createdAt, jobs: [.jobs[] | {databaseId, name, status, conclusion, url, steps: [.steps[] | {name, status, conclusion}]}]}";
 
 export async function fetchRunSnapshot(repo: string, runId: number): Promise<GhRunSnapshot> {
-  const stdout = await gh(["run", "view", String(runId), "--repo", repo, "--json", "status,conclusion,headBranch,jobs", "--jq", RUN_SNAPSHOT_JQ]);
+  const stdout = await gh(["run", "view", String(runId), "--repo", repo, "--json", "status,conclusion,createdAt,jobs", "--jq", RUN_SNAPSHOT_JQ]);
   return JSON.parse(stdout) as GhRunSnapshot;
 }
 
-export function formatRunHeartbeat(snapshot: Pick<GhRunSnapshot, "status" | "jobs">, elapsedMs: number): string {
+export function formatRunHeartbeat(snapshot: Pick<GhRunSnapshot, "status" | "createdAt" | "jobs">, now: number): string {
   const running = snapshot.jobs.filter((job) => job.status === "in_progress").map((job) => job.name);
-  const totalSecs = Math.floor(elapsedMs / 1000);
+  const totalSecs = Math.max(0, Math.floor((now - Date.parse(snapshot.createdAt)) / 1000));
   const mins = Math.floor(totalSecs / 60);
   const secs = totalSecs % 60;
   const elapsed = mins > 0 ? `${mins}m${String(secs).padStart(2, "0")}s` : `${secs}s`;
@@ -188,17 +213,17 @@ export async function waitForRunCompletion(
   runId: number,
   onPoll?: (snapshot: GhRunSnapshot) => void,
 ): Promise<GhRunSnapshot> {
-  const startedAt = Date.now();
   for (;;) {
     const snapshot = await retryWhole(() => fetchRunSnapshot(repo, runId), {
       delaysMs: RUN_STATUS_RETRY_DELAYS_MS,
+      shouldRetry: (err) => !isNotFound(err),
       onRetry: (err, waitMs) => fitCliWarn(`Couldn't check run ${runId} (${err.message}); retrying in ${waitMs / 1000}s.`),
     });
     onPoll?.(snapshot);
     if (snapshot.status === "completed") {
       return snapshot;
     }
-    console.log(formatRunHeartbeat(snapshot, Date.now() - startedAt));
+    console.log(formatRunHeartbeat(snapshot, Date.now()));
     await sleep(HEARTBEAT_INTERVAL_SECS * 1000);
   }
 }
@@ -277,15 +302,17 @@ Subcommands:
 }
 
 if (isMain(import.meta.url)) {
+  const [subcommand, repo, id, mode] = process.argv.slice(2);
+  const help = process.argv.includes("--help") || process.argv.includes("-h");
+  if (help || !subcommand || !repo || !id) {
+    (help ? console.log : console.error)(helpText());
+    process.exit(help ? 0 : 2);
+  }
   runCli(async () => {
-    const [subcommand, repo, id, mode] = process.argv.slice(2);
-    if (!subcommand || subcommand === "--help" || subcommand === "-h" || !repo || !id) {
-      console.log(helpText());
-      if (subcommand !== "--help" && subcommand !== "-h") process.exit(2);
-      return;
-    }
     if (subcommand === "inputs") {
-      for (const input of await fetchWorkflowDispatchInputs({ repo, workflow: id })) {
+      const inputs = await fetchWorkflowDispatchInputs({ repo, workflow: id });
+      if (!inputs) throw new Error(`${id} not found in ${repo}.`);
+      for (const input of inputs) {
         console.log(`${input.name} [${input.type}] default=${JSON.stringify(input.default)}${input.options.length > 0 ? ` options=${input.options.join("|")}` : ""}`);
       }
       return;
