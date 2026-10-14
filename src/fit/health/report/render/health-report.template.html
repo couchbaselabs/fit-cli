@@ -440,7 +440,7 @@ function changeLine(t) {
   if (drv && (drv.from.gerritRef || drv.to.gerritRef) && a.category === 'unknown') parts.push(`the driver's pinned Gerrit patchset changed`);
   return parts.length ? `<div class="sub">${parts.join(' · ')}</div>` : '';
 }
-// The same test on the other SDKs (fit health cross), when the reports were compared.
+// The same test on the other SDKs (fit health site), when the reports were compared.
 const sdkNames = (xs) => xs.map((x) => esc(D.sdkNames[x] || x)).join(', ');
 function crossLine(t) {
   const x = t && t.crossSdk;

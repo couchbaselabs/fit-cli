@@ -4,7 +4,7 @@ This is a human-written doc.  Targeted, specific, reviewed LLM edits are permitt
 # fit health
 `fit health` answers, per SDK: which FIT tests fail every night, which fail intermittently, which started or stopped failing recently, and which way things are trending. A nightly that is red every night says nothing on its own; the set of failing tests does.
 
-A report is built from its own SDK's runs only; the workflow then adds how other SDKs fare on the same tests (`fit health cross`).
+A report is built from its own SDK's runs only; the workflow then adds how other SDKs fare on the same tests (`fit health site`).
 
 ## Run records
 Everything is built on run records: one per fit-cli run (a preset × test type × cluster, in one CI job), holding every test's outcome plus the run's SDK, performer, preset, cluster, run parameters and CI context. Rules like "chronic" or "intermittent" are applied when a report is built, never stored, so they can change without rewriting history.
@@ -40,7 +40,7 @@ Steps:
 - `fit health settings <sdk>` - shows or sets where the SDK's output goes (its Slack channel), kept in the store.
 - `fit health reparse <sdk>` - rebuilds records from stored logs after a parser change. No GitHub access needed.
 - `fit health import-logs <sdk>` - imports run logs already on disk.
-- `fit health overview --dir <site>/health` - writes the site's top page from each SDK's published `report.json`. The workflow runs it when it builds the site.
+- `fit health site --reports <dir> --out <site> [--previous <dir>]` - builds the Pages site from one run's reports: compares the SDKs (see "Across SDKs"), writes each SDK's page and `report.json`, and the top page from them. An SDK the published site (`--previous`, a checkout of `fit-health`'s `site` branch) has and this run didn't report keeps its published page. The workflow runs it after the reports.
 
 Backfill needs `gh` access to the SDK's repo, and AWS access to `s3://fit-cli/runs/` and the store. In CI the workflow assumes `fit-cli-role` through OIDC and uses the org GitHub token; run locally, a command uses your own `gh` login and AWS credentials.
 
@@ -73,7 +73,7 @@ Each entry in `tests[]` is one test:
 `changeAnalysis.category`, from the SDK and the test's own file only: `test-changed` (driver yes, SDK no), `sdk` (SDK yes, driver no), `both`, `neither` (environment, server or flakiness), or `unknown` (with a `reason`). `span` gives the two nights and how many days apart they are; over 2 days the `reason` says the commits cover more than one night. `--no-changes` skips the lookup.
 
 ## Across SDKs
-The driver's tests are shared, so a test id means the same test on every SDK. In the workflow, `fit health cross --dir <reports>` compares every SDK's report from the run with every other's and writes the result into each report (`crossSdk` on each test) and page. For each test, every other SDK is `failing`, `intermittent`, `recovered`, `stopped`, `passing` (ran it, never failed it), `not_run`, or `unknown` (its log-only nights can't say); same test id and test type only. `sameStart` marks an SDK that started failing it within a day. `category`: `only-this-sdk` (every other SDK that runs it passes), `every-sdk` (they all fail it too: likely the test, the driver, or the server or environment), `family` (this SDK's family - `jvm`, built on core-io, or `cxx`, built on the C++ SDK's core - fails it and the rest pass: likely the shared core), `mixed`, or `not-enough-data`. Failing on the same nights is not called a server issue: the server build isn't captured yet.
+The driver's tests are shared, so a test id means the same test on every SDK. In the workflow, `fit health site` compares every SDK's report from the run with every other's and writes the result into each report (`crossSdk` on each test) and page. For each test, every other SDK is `failing`, `intermittent`, `recovered`, `stopped`, `passing` (ran it, never failed it), `not_run`, or `unknown` (its log-only nights can't say); same test id and test type only. `sameStart` marks an SDK that started failing it within a day. `category`: `only-this-sdk` (every other SDK that runs it passes), `every-sdk` (they all fail it too: likely the test, the driver, or the server or environment), `family` (this SDK's family - `jvm`, built on core-io, or `cxx`, built on the C++ SDK's core - fails it and the rest pass: likely the shared core), `mixed`, or `not-enough-data`. Failing on the same nights is not called a server issue: the server build isn't captured yet.
 
 ## Slack
 Where an SDK's output goes is data in the store, not code: `fit health settings <sdk>` shows it, `--slack-channel <id>` sets it, `--no-slack` turns it off, and `--report-url` changes the digest's link (default: the SDK's page on the health site, whose address `report` asks GitHub for each time: private Pages gets a random hostname, which changes if Pages is turned off and on again). With a channel set, `fit health report` posts a digest: a headline in the channel and the detail in its thread. It posts only when asked: the scheduled workflow passes `--slack` (a manual run of it posts only with its `slack` input ticked), `--slack-channel <id>` posts to that channel instead, and `--slack-dry-run` prints the digest. A Slack failure is a warning, never a failed run.

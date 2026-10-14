@@ -229,14 +229,11 @@ jobs:
       - name: Install fit-cli dependencies
         run: bun install --frozen-lockfile
 
-      # Every SDK's report from this run, compared with every other's: the same test on the
-      # other SDKs, written back into each health-report.json and page.
-      - name: Compare the SDKs
-        run: .github/scripts/health-quiet.sh handoff/logs/site/cross.log bun src/fit/main/main.ts health cross --dir handoff
-
+      # Every SDK's report from this run, compared with every other's (the same test on the
+      # other SDKs), then each SDK's page and the top page. An SDK with no report this run
+      # keeps its page from the published site.
       - name: Build the site
-        id: build
-        run: .github/scripts/health-quiet.sh handoff/logs/site/build.log .github/scripts/health-site.sh handoff site previous
+        run: .github/scripts/health-quiet.sh handoff/logs/site/build.log bun src/fit/main/main.ts health site --reports handoff --out site --previous previous
 
       # This run's command output, kept with the site: the only place it can be read.
       - name: Add the logs
