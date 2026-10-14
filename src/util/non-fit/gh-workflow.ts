@@ -257,7 +257,7 @@ export function extractJobErrorExcerpt(jobLog: string): string[] {
     excerpt.push(...lines.slice(start, end + 1));
     shownUpTo = end;
   }
-  return excerpt.length > ERROR_EXCERPT_MAX_LINES ? ["…", ...excerpt.slice(-ERROR_EXCERPT_MAX_LINES)] : excerpt;
+  return excerpt.length > ERROR_EXCERPT_MAX_LINES ? ["…", ...excerpt.slice(-(ERROR_EXCERPT_MAX_LINES - 1))] : excerpt;
 }
 
 function helpText(): string {

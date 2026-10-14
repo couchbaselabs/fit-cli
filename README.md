@@ -119,7 +119,7 @@ User-facing (using the installed binary):
 - `fit performer list [<sdk>]` — list the prebuilt performer container images published to GHCR for an SDK (e.g. `fit performer list scala`), or for every SDK if none is given.
 - `fit performer run <sdk> [version]` — pull and start a single prebuilt performer image, for manual testing outside a full FIT run (e.g. `fit performer run scala`). Leaves it running; stop it yourself when done.
 - `fit performer metadata <sdk> [version]` — pull a performer image and print all its metadata: Docker image labels (build time, revision, source, PR, CI run) and everything it reports over the `performerCapsFetch` gRPC call (user agent, library version, transactions protocol, and every capability).
-- `fit sandbox deploy [--auto]` — deploy a Capella sandbox control plane through GitHub Actions, wait for it, and print its summaries (see Deploying a sandbox).
+- `fit sandbox deploy [--auto]` — deploy a Capella sandbox control plane through GitHub Actions, wait for it, and print its summaries.
 - `fit caps table | sync` — show which FIT capabilities each SDK's performer reports (see Capabilities).
 - `fit ingest situational` drains the situational results uploaded to `s3://fit-cli/incoming/` into the perf Postgres database, moving each run to `processed/` or `failed/`. A run is only taken once it holds a `.done` marker, which the uploader writes as the last object of the run, so a half-uploaded run is never read. Meant for the cron on the database host, which connects as the `results_ingester` role and reads its password from the AWS Secrets Manager secret `performance-sdk/results-ingester` using its own IAM role (see `--help`).
 - `fit external-services otel start | stop` — start or stop the local otel stack (an OTel collector, Jaeger and Prometheus) for manual testing. A functional `fit run` already does this automatically.
@@ -134,12 +134,6 @@ For development (from source with Bun):
 When running locally, we use Capella creds from your fit-cli config.  Generally you just need to provide your email address.  We default to using Capella's production environment.
 When running on CI, the user chooses what Capella environment to use (stage, dev, etc.) and we use previously-setup accounts for those. 
 cbdinocluster's cloud deployer authenticates with a Capella v4 organization API key.  By default the shared per-environment key is read from AWS Secrets Manager; override it with CAPELLA_API_KEY / CAPELLA_API_SECRET (or `config edit`).  The v2 username/password are still used for custom image deploys, server version changes, and columnar operations.
-
-### Deploying a sandbox
-`fit sandbox deploy` (also offered by `fit wizard`) deploys a Capella sandbox control plane through couchbase-cloud's [sandbox/deploy-control-plane](https://github.com/couchbasecloud/couchbase-cloud/actions/workflows/sandbox-deploy-control-plane.yml) workflow.
-It asks for each of the workflow's inputs, read from the workflow itself so they always match it.  The defaults are `sbx`, branch `main` and 10 hours, and the workflow's own for everything else; `--auto` skips the questions and deploys with them.
-It then waits for the run and prints the workflow's Report and Output summaries or, if it fails, the errors from each failed job, with their full logs saved as artifacts.
-`gh` must be authorised (SSO) for the couchbasecloud org.
 
 ## Capabilities
 Each performer declares what it supports — a set of "caps" — over the `performerCapsFetch` gRPC call.

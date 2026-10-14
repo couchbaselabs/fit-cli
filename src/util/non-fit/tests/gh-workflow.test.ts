@@ -160,6 +160,14 @@ test("extractJobErrorExcerpt keeps each error with its lead-up, merging overlaps
   assert.ok(!excerpt.includes("line 59"), "nothing after the last error");
 });
 
+test("extractJobErrorExcerpt never returns more than 80 lines, counting its leading gap marker", () => {
+  const lines = Array.from({ length: 400 }, (_, i) => ts(i % 10 === 9 ? `##[error]fail ${i}` : `line ${i}`));
+  const excerpt = extractJobErrorExcerpt(lines.join("\n"));
+  assert.equal(excerpt.length, 80);
+  assert.equal(excerpt[0], "…");
+  assert.equal(excerpt[excerpt.length - 1], "##[error]fail 399");
+});
+
 test("extractJobErrorExcerpt falls back to the log's tail when there is no ##[error]", () => {
   const lines = Array.from({ length: 50 }, (_, i) => ts(`line ${i}`));
   const excerpt = extractJobErrorExcerpt(`${lines.join("\n")}\n\n`);

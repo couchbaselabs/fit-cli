@@ -6,7 +6,9 @@
  * Asking for the inputs (askSandboxDeployInputs) is kept apart from deploying with them
  * (deploySandbox), which returns the sandbox as data for a flow that goes on to use it.
  * Following a run (followSandboxDeploy) also works for one already dispatched, which is
- * how to re-check a finished deploy's summaries or failures without deploying again.
+ * how to re-check a finished deploy's Output Summary or failures without deploying again.
+ * Its Report Summary is shown only for a run fit-cli dispatched: it lists the dispatched
+ * inputs, which GitHub doesn't report for a run.
  *
  * Run on its own:
  *   bun src/fit/sandbox/deploy/deploy-sandbox.ts
@@ -239,9 +241,12 @@ export async function followSandboxDeploy(runId: number, values?: Readonly<Recor
     if (sandboxId) console.log(`  Deploying to sandbox ${sandboxId}`);
   });
 
-  if (values) {
-    printBlock("Report Summary", renderReportSummary(finished.headBranch, values));
-  }
+  printBlock(
+    "Report Summary",
+    values
+      ? renderReportSummary(finished.headBranch, values)
+      : ["(not shown: it lists the run's dispatch inputs, which GitHub doesn't report for a run fit-cli didn't dispatch)"],
+  );
 
   if (finished.conclusion !== "success") {
     fitCliError(`Sandbox deploy finished with conclusion "${finished.conclusion}": ${runUrl}`);
@@ -330,16 +335,23 @@ export async function runSandboxDeployMain(argv: string[]): Promise<RunOutput | 
   return runSandboxDeploy();
 }
 
+const FOLLOW_USAGE = "bun src/fit/sandbox/deploy/deploy-sandbox.ts follow <run-id or run URL>";
+
 if (isMain(import.meta.url)) {
   applyDeployAutoFlag(process.argv.slice(2));
   runCli(async () => {
-    const [subcommand, runRef, ...extra] = withoutPromptSessionFlags(process.argv.slice(2));
+    const argv = process.argv.slice(2);
+    if (argv.includes("--help") || argv.includes("-h")) {
+      console.log(`${helpText()}\n\nRun directly, this file can also follow a run that was already dispatched, without deploying:\n  ${FOLLOW_USAGE}`);
+      return;
+    }
+    const [subcommand, runRef, ...extra] = withoutPromptSessionFlags(argv);
     if (subcommand !== "follow") {
-      return runSandboxDeployMain(process.argv.slice(2));
+      return runSandboxDeployMain(argv);
     }
     const runId = runRef === undefined ? undefined : /^\d+$/.test(runRef) ? Number(runRef) : parseRunIdFromUrl(runRef);
     if (runId === undefined || extra.length > 0) {
-      console.error("Usage: bun src/fit/sandbox/deploy/deploy-sandbox.ts follow <run-id or run URL>");
+      console.error(`Usage: ${FOLLOW_USAGE}`);
       process.exit(2);
     }
     return sandboxDetails(await followSandboxDeploy(runId));
