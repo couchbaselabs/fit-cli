@@ -11,12 +11,13 @@
  *   node --import tsx --test src/fit/health/emit/tests/junit-and-zip.test.ts
  */
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { StreamSectionStripper, canonicalTestName, decodeXmlEntities, junitOutcomes, junitXmlFromTarGz } from "../junit-outcomes.js";
+import { StreamSectionStripper, canonicalTestName, decodeXmlEntities, forEachTarFile, junitOutcomes, junitXmlFromTarGz } from "../junit-outcomes.js";
 import { extractMember, findCentralDirectory, parseCentralDirectory } from "../s3-zip.js";
-import { tarGz } from "./tar-fixture.js";
+import { tar, tarGz } from "./tar-fixture.js";
 
 const FIXTURES = join(import.meta.dirname, "fixtures");
 
@@ -113,6 +114,22 @@ test("XML entities are decoded exactly once, never twice", () => {
   assert.equal(decodeXmlEntities("&amp;lt;"), "&lt;");
   assert.equal(decodeXmlEntities("&#38;lt;"), "&lt;");
   assert.equal(decodeXmlEntities("&bogus; & plain"), "&bogus; & plain");
+});
+
+test("a truncated or corrupt archive is a rejected read, never a crash or a hang", async () => {
+  // Incompressible reports, so the cuts below land inside the gzip stream, not after it.
+  const entries = Array.from({ length: 20 }, (_, i): [string, string, string] => [`./TEST-${i}.xml`, "0", randomBytes(8000).toString("base64")]);
+  const good = tarGz(entries);
+  assert.equal((await junitXmlFromTarGz(good)).length, 20);
+  const corrupt = Buffer.from(good).fill(7, 2000, 2100);
+  for (const [what, archive] of [["truncated", good.subarray(0, good.length >> 1)], ["corrupt", corrupt], ["not gzip", Buffer.from("not an archive")]] as const) {
+    await assert.rejects(junitXmlFromTarGz(archive), Error, what);
+  }
+  // A plain tar cut short is refused the same way.
+  const plain = tar(entries);
+  await assert.rejects(forEachTarFile(plain.subarray(0, plain.length >> 1), { gzip: false }, () => true, async (_n, data) => {
+    for await (const _ of data);
+  }));
 });
 
 test("a tarball with no JUnit results is refused, never turned into a clean record", async () => {

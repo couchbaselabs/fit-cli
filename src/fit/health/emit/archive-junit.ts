@@ -118,7 +118,13 @@ export async function upgradeRecord(
     return { reason: `${tarball} holds no JUnit results (${junit.files} TEST-*.xml files)` };
   }
   if (!results) return { record: recordFromJunit(junit, scraped, { uri: archive, member: tarball }), warnings: [] };
-  const read = await scoresFromResultsTar(results.tar, results.gzip);
+  let read: Awaited<ReturnType<typeof scoresFromResultsTar>>;
+  try {
+    read = await scoresFromResultsTar(results.tar, results.gzip);
+  } catch (err) {
+    // Unreadable scores are a warning, never a failed read: JUnit's outcomes stand.
+    return { record: recordFromJunit(junit, scraped, { uri: archive, member: tarball }), warnings: [`situational results could not be read (${(err as Error).message}); JUnit's outcomes kept`] };
+  }
   const applied = applyNegativeScores(junit, read.scores);
   return { record: recordFromJunit(junit, scraped, { uri: archive, member: tarball }, applied.failures), warnings: [...read.warnings, ...applied.warnings] };
 }

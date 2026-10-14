@@ -103,6 +103,14 @@ test("a situational upgrade with a negative score is a failing record that says 
   assert.deepEqual(up.record.scoreFailures, { "CbDinoRebalanceTest.verticalScaleOut": { score: -100, reasons: ["-100 for ramp"] } });
   assert.deepEqual(up.warnings, []);
 
+  // Results that can't be read are a warning: the record keeps JUnit's outcomes.
+  const cut = await upgradeRecord(scraped, reports, "s3://fit-cli/runs/x.zip", "a/surefire-reports.tar.gz", { tar: results.subarray(0, 700), gzip: false });
+  assert.ok(!("reason" in cut));
+  assert.equal(cut.record.outcome, "passed");
+  assert.equal(cut.record.scoreFailures, undefined);
+  assert.equal(cut.warnings.length, 1);
+  assert.match(cut.warnings[0], /situational results could not be read .*JUnit's outcomes kept/);
+
   // Without results (an archive from before they were kept), the outcomes are JUnit's alone.
   const plain = await upgradeRecord(scraped, reports, "s3://fit-cli/runs/x.zip", "a/surefire-reports.tar.gz");
   assert.ok(!("reason" in plain));

@@ -11,6 +11,7 @@
  */
 import { classKey, splitVariant } from "./test-identity.js";
 import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { StringDecoder } from "node:string_decoder";
 import { createGunzip } from "node:zlib";
 import tar from "tar-stream";
@@ -175,12 +176,18 @@ export async function forEachTarFile(
 ): Promise<void> {
   const extract = tar.extract();
   const source = Readable.from([archive]);
-  (opts.gzip ? source.pipe(createGunzip()) : source).pipe(extract);
+  // pipeline, not pipe(): pipe() doesn't pass a gunzip error on, so a truncated or corrupt
+  // archive raised an unhandled 'error' event and took the whole process down. pipeline
+  // destroys extract with the error, which ends the loop below with it. Marked handled here,
+  // since the loop may be the one to fail first; it's awaited at the end either way.
+  const piped = opts.gzip ? pipeline(source, createGunzip(), extract) : pipeline(source, extract);
+  piped.catch(() => {});
   for await (const entry of extract) {
     const { name, type } = entry.header;
     if (type === "file" && want(name)) await read(name, entry);
     else entry.resume();
   }
+  await piped;
 }
 
 /**
