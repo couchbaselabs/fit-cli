@@ -69,7 +69,13 @@ function readReports(dir: string): HealthReport[] {
       fitCliWarn(`skipping ${join(dir, entry)}: not an SDK report`);
       continue;
     }
-    reports.push(JSON.parse(readFileSync(path, "utf8")) as HealthReport);
+    const report = JSON.parse(readFileSync(path, "utf8")) as HealthReport;
+    // The report's own sdk names its paths and its page, so it must be the checked name.
+    if (report.sdk !== sdk) {
+      fitCliWarn(`skipping ${join(dir, entry)}: its report is for ${JSON.stringify(report.sdk)}`);
+      continue;
+    }
+    reports.push(report);
   }
   return reports;
 }

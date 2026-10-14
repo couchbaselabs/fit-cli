@@ -111,10 +111,15 @@ test("with no published site yet, only this run's reports are published", async 
   assert.deepEqual(await buildSite(reportsDir(report("go", false)), site, tmp()), ["go"]);
 });
 
-test("a directory that isn't an SDK report is skipped, and no reports at all is an error", async () => {
+test("a directory that isn't an SDK report, or holds another SDK's, is skipped, and no reports at all is an error", async () => {
   const dir = reportsDir();
   mkdirSync(join(dir, "health-report-Bad_Name"));
   writeFileSync(join(dir, "health-report-Bad_Name", "health-report.json"), JSON.stringify(report("Bad_Name", false)));
   mkdirSync(join(dir, "health-report-go"));
-  await assert.rejects(buildSite(dir, join(tmp(), "site")), /no SDK reports to publish/);
+  // A report whose own sdk isn't its directory's: its sdk would name paths outside the site.
+  mkdirSync(join(dir, "health-report-java"));
+  writeFileSync(join(dir, "health-report-java", "health-report.json"), JSON.stringify(report("../x", false)));
+  const site = join(tmp(), "site");
+  await assert.rejects(buildSite(dir, site), /no SDK reports to publish/);
+  assert.ok(!existsSync(join(site, "x")));
 });
