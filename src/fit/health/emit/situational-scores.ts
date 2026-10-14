@@ -18,6 +18,8 @@ import { forEachTarFile, type JunitOutcomes } from "./junit-outcomes.js";
 export interface ScenarioScore {
   score: number;
   reasons: string[];
+  /** Set on a failure: the count JUnit had the test in when its score failed it (see applyNegativeScores). */
+  was?: "passed" | "skipped";
 }
 
 /** The archive member that holds a situational run's results, if it has one: beside its surefire tarball. */
@@ -62,7 +64,8 @@ export async function scoresFromResultsTar(archive: Buffer, gzip: boolean): Prom
 
 /**
  * Fail each test whose scenario scored below zero: it moves from passed (or skipped) to failed,
- * in `tests` and in the counts. A test that already failed or errored keeps that outcome. When
+ * in `tests` and in the counts, and its failure says which (`was`). A test that already failed
+ * or errored keeps that outcome, and its failure has no `was`. When
  * a test ran several scenarios, the lowest score is the one kept. Returns the failing scores by
  * test id, and a warning for each negative score no test claims.
  */
@@ -78,7 +81,7 @@ export function applyNegativeScores(junit: JunitOutcomes, scores: Map<string, Sc
       warnings.push(`situational run ${uuid} scored ${s.score}, but no test names it`);
       continue;
     }
-    if (!failures[test] || s.score < failures[test].score) failures[test] = s;
+    if (!failures[test] || s.score < failures[test].score) failures[test] = { ...s };
   }
   for (const test of Object.keys(failures)) {
     const dot = test.indexOf(".");
@@ -93,6 +96,7 @@ export function applyNegativeScores(junit: JunitOutcomes, scores: Map<string, Sc
       (o.f ??= []).push(method);
       junit.counts[count]--;
       junit.counts.failed++;
+      failures[test].was = count;
     }
   }
   return { failures, warnings };

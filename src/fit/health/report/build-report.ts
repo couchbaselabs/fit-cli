@@ -255,7 +255,7 @@ function reportSeries(s: Series, end: string, notes: ReportNotes, manifests: Man
     const dot = test.indexOf(".");
     const lastFailRecord = c.lastFail ? s.nights.find((n) => n.date === c.lastFail)?.record : undefined;
     const variants = dot > 0 ? lastFailRecord?.tests[test.slice(0, dot)]?.v?.[test.slice(dot + 1)] : undefined;
-    const scores = Object.fromEntries(s.nights.flatMap((n) => (n.record.scoreFailures?.[test] ? [[n.date, n.record.scoreFailures[test]]] : [])));
+    const scores = Object.fromEntries(s.nights.flatMap((n) => (n.record.scoreFailures?.[test] ? [[n.date, { score: n.record.scoreFailures[test].score, reasons: n.record.scoreFailures[test].reasons }]] : [])));
     tests.push({
       test,
       seq: seq.join(""),

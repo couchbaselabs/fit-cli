@@ -50,8 +50,11 @@ export const asLogged = (id: string) => id.replace(/^[^.]*\//, "");
 export function compareRecords(junit: RunRecord, scraped: RunRecord): RecordComparison {
   const j = new Set(failingTests(junit).map(asLogged));
   const l = new Set(failingTests(scraped));
-  const scored = new Set(Object.keys(junit.scoreFailures ?? {}).map(asLogged));
-  const scoredBelowZero = [...scored].filter((t) => j.has(t) && !l.has(t)).sort();
+  // Only a test its score moved to failed (`was`) is expected to be missing from the log: one
+  // JUnit had already failed or errored is a failure the log should name like any other.
+  const scored = new Map<string, "passed" | "skipped">();
+  for (const [t, f] of Object.entries(junit.scoreFailures ?? {})) if (f.was) scored.set(asLogged(t), f.was);
+  const scoredBelowZero = [...scored.keys()].filter((t) => j.has(t) && !l.has(t)).sort();
   const missing = [...j].filter((t) => !l.has(t) && !scored.has(t)).sort();
   // Class-level errors, by the name the log prints (a reused class name is one name there).
   const cj = [...new Set(classErrors(junit).map(asLogged))].sort();
@@ -87,8 +90,14 @@ export function compareRecords(junit: RunRecord, scraped: RunRecord): RecordComp
   const onlyLog = [...l].filter((t) => !j.has(t)).sort();
   const classErrorsOnlyJunit = missingClasses.filter((c) => !hiddenByCap.includes(c));
   const classErrorsOnlyLog = clog.filter((c) => !cj.includes(c));
-  // A scored-below-zero test is one test case the log's table counted as passed.
-  const ce = junit.counts && { ...junit.counts, passed: junit.counts.passed + scoredBelowZero.length, failed: junit.counts.failed - scoredBelowZero.length };
+  // A scored-below-zero test is one test case the log's table counted where JUnit had it.
+  const ce = junit.counts && { ...junit.counts };
+  if (ce) {
+    for (const t of scoredBelowZero) {
+      ce[scored.get(t)!]++;
+      ce.failed--;
+    }
+  }
   const cl = scraped.counts;
   const countsAgree = !!ce && !!cl && ce.passed === cl.passed && ce.failed === cl.failed && ce.errored === cl.errored && ce.skipped === cl.skipped;
   return {

@@ -71,7 +71,7 @@ test("a negative score fails its test; a positive one, or one no test claims, ch
   ]);
   const { failures, warnings } = applyNegativeScores(junit, scores);
   assert.deepEqual(failures, {
-    "CbDinoRebalanceTest.verticalScaleOut": { score: -100, reasons: ["-100 for ramp"] },
+    "CbDinoRebalanceTest.verticalScaleOut": { score: -100, reasons: ["-100 for ramp"], was: "passed" },
     "CbDinoRebalanceTest.horizontalScaleIn": { score: -50, reasons: ["-50 for rebound"] },
   });
   assert.equal(warnings.length, 1);
@@ -100,7 +100,7 @@ test("a situational upgrade with a negative score is a failing record that says 
   assert.ok(!("reason" in up));
   assert.equal(up.record.outcome, "tests_failed");
   assert.deepEqual(failingTests(up.record), ["CbDinoRebalanceTest.verticalScaleOut"]);
-  assert.deepEqual(up.record.scoreFailures, { "CbDinoRebalanceTest.verticalScaleOut": { score: -100, reasons: ["-100 for ramp"] } });
+  assert.deepEqual(up.record.scoreFailures, { "CbDinoRebalanceTest.verticalScaleOut": { score: -100, reasons: ["-100 for ramp"], was: "passed" } });
   assert.deepEqual(up.warnings, []);
 
   // Results that can't be read are a warning: the record keeps JUnit's outcomes.
