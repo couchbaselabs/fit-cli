@@ -50,14 +50,21 @@ test("results.tar: each scored scenario by runUuid; unscored ones left out; unre
     ["./bbbbbbbb/scores.json5", "0", scoresJson(-50, "x")],
     ["./cccccccc/run.json5", "0", runJson(U3)],
     ["./cccccccc/scores.json5", "0", "{not json"],
+    // JSON5 reads these as numbers; neither is a score.
+    ["./dddddddd/run.json5", "0", runJson("dddddddd-0000-0000-0000-000000000000")],
+    ["./dddddddd/scores.json5", "0", "{score: NaN, reasons: []}"],
+    ["./eeeeeeee/run.json5", "0", runJson("eeeeeeee-0000-0000-0000-000000000000")],
+    ["./eeeeeeee/scores.json5", "0", "{score: -Infinity, reasons: []}"],
   ];
   for (const [archive, gzip] of [[tar(files), false], [tarGz(files), true]] as const) {
     const { scores, warnings } = await scoresFromResultsTar(archive, gzip);
     assert.deepEqual([...scores.keys()].sort(), [U2, U1].sort());
     assert.deepEqual(scores.get(U1), { score: -100, reasons: ["-100 for Failed as % of successful results during ramp (86.4%) < required (95.0%"] });
-    assert.equal(warnings.length, 2, warnings.join("\n"));
+    assert.equal(warnings.length, 4, warnings.join("\n"));
     assert.match(warnings.join("\n"), /bbbbbbbb: no run\.json5/);
     assert.match(warnings.join("\n"), /cccccccc: scores\.json5 is unparseable/);
+    assert.match(warnings.join("\n"), /dddddddd: scores\.json5's score is not a finite number \(NaN\)/);
+    assert.match(warnings.join("\n"), /eeeeeeee: scores\.json5's score is not a finite number \(-Infinity\)/);
   }
 });
 

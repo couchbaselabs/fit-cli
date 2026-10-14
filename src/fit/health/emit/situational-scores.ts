@@ -33,7 +33,8 @@ export function resultsMember(names: string[], tarball: string): { member: strin
 
 /**
  * runUuid -> score, from a results.tar(.gz). A scenario with no score key wasn't scored and is
- * left out; one whose files can't be read is a warning, never a failed read.
+ * left out; one whose files can't be read, or whose score isn't a finite number, is a warning,
+ * never a failed read.
  */
 export async function scoresFromResultsTar(archive: Buffer, gzip: boolean): Promise<{ scores: Map<string, ScenarioScore>; warnings: string[] }> {
   const byDir = new Map<string, { run?: string; scores?: string }>();
@@ -53,7 +54,9 @@ export async function scoresFromResultsTar(archive: Buffer, gzip: boolean): Prom
       if (f.run === undefined) throw new Error("no run.json5");
       const { runUuid } = parseRunJson5(f.run);
       const s = parseScoresJson5(f.scores);
-      if (typeof s.score !== "number") continue;
+      if (s.score === undefined) continue;
+      // JSON5 reads NaN and Infinity as numbers. NaN is never >= 0, so it would fail the test.
+      if (typeof s.score !== "number" || !Number.isFinite(s.score)) throw new Error(`scores.json5's score is not a finite number (${typeof s.score === "number" ? String(s.score) : JSON.stringify(s.score)})`);
       scores.set(runUuid, { score: s.score, reasons: Array.isArray(s.reasons) ? s.reasons.map(String) : [] });
     } catch (err) {
       warnings.push(`situational results ${dir}: ${(err as Error).message}`);
