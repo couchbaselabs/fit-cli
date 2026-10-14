@@ -46,9 +46,12 @@ const SANDBOX_DEPLOY_ORG = SANDBOX_DEPLOY_WORKFLOW.repo.split("/")[0];
 
 export const FIT_CLI_INPUT_DEFAULTS: Readonly<Record<string, string>> = {
   type: "sbx",
-  branch: "main",
   "reserved-hours": "10",
 };
+
+const DEFAULT_GHA_BRANCH = "main";
+
+export interface SandboxDeployRequest { ref: string; values: Record<string, string> }
 
 const REPORT_SUMMARY_JOB = "summary";
 const REPORT_SUMMARY_STEP = /^Report Summary \((?<sandboxId>[^)]+)\)$/;
@@ -116,12 +119,22 @@ function errorMessage(err: unknown): string {
 
 const PROMPT_MESSAGES: Readonly<Record<string, string>> = {
   "cloud-id": "Sandbox to deploy to, e.g. sbx-25 (leave empty to pick a free one of the chosen type)",
+  "image-tag": "Container image tag for the Capella services",
+  // `branch` also takes a branch or tag, but it only picks the Terraform checked out (the GHA branch or tag
+  // picks the workflow), so we take just a full commit hash to keep the two apart.
+  branch: "Full commit hash to deploy (leave empty for the latest on the GHA branch or tag)",
 };
 
 export function promptMessage(workflowInput: WorkflowDispatchInput): string {
   return Object.hasOwn(PROMPT_MESSAGES, workflowInput.name)
     ? PROMPT_MESSAGES[workflowInput.name]
     : `${workflowInput.name} — ${workflowInput.description || "(no description)"}`;
+}
+
+export function validateInput(workflowInput: WorkflowDispatchInput, value: string): true | string {
+  if (workflowInput.required && value.trim() === "") return `${workflowInput.name} is required.`;
+  if (workflowInput.name === "branch" && !/^([0-9a-f]{40})?$/i.test(value.trim())) return "Enter a full 40-character commit hash, or leave it empty.";
+  return true;
 }
 
 async function askInputs(inputs: readonly WorkflowDispatchInput[], promptIdPrefix?: string): Promise<Record<string, string>> {
@@ -140,7 +153,7 @@ async function askInputs(inputs: readonly WorkflowDispatchInput[], promptIdPrefi
           promptId,
           message,
           default: workflowInput.default,
-          validate: (value) => !workflowInput.required || value.trim() !== "" || `${workflowInput.name} is required.`,
+          validate: (value) => validateInput(workflowInput, value),
         })).trim();
   }
   return values;
@@ -193,14 +206,20 @@ async function readOutputSummary(jobs: readonly GhJobSummary[]): Promise<string[
   }
 }
 
-export async function askSandboxDeployInputs(promptIdPrefix?: string): Promise<Record<string, string> | undefined> {
+export async function askSandboxDeployInputs(promptIdPrefix?: string): Promise<SandboxDeployRequest | undefined> {
   const workflow = SANDBOX_DEPLOY_WORKFLOW;
   console.log(
     `\nThis deploys a Capella sandbox control plane by dispatching ${workflow.workflow} on ${workflow.repo}` +
       ` (needs gh authorised for the ${SANDBOX_DEPLOY_ORG} org).\nThe inputs below are read from the` +
       ` workflow itself, with its defaults except for ${Object.keys(FIT_CLI_INPUT_DEFAULTS).join(", ")}.\n`,
   );
-  const workflowInputs = await fetchWorkflowDispatchInputs(workflow);
+  const ref = (await input({
+    promptId: qualifyPromptId("sandbox.deploy.gha-branch", promptIdPrefix),
+    message: `GHA branch or tag — the ${workflow.repo} branch or tag to run ${workflow.workflow} from`,
+    default: DEFAULT_GHA_BRANCH,
+    validate: (value) => value.trim() !== "" || "A branch or tag is required.",
+  })).trim();
+  const workflowInputs = await fetchWorkflowDispatchInputs(workflow, ref);
   if (workflowInputs.length === 0) {
     throw new Error(`Found no workflow_dispatch inputs in ${workflow.workflow} on ${workflow.repo} — has the workflow moved or changed shape?`);
   }
@@ -223,7 +242,7 @@ export async function askSandboxDeployInputs(promptIdPrefix?: string): Promise<R
     console.log("Not deploying.");
     return undefined;
   }
-  return values;
+  return { ref, values };
 }
 
 export async function followSandboxDeploy(runId: number, values?: Readonly<Record<string, string>>): Promise<DeployedSandbox> {
@@ -267,8 +286,8 @@ export async function followSandboxDeploy(runId: number, values?: Readonly<Recor
   return { sandboxId, uiUrl, runUrl };
 }
 
-export async function deploySandbox(values: Readonly<Record<string, string>>): Promise<DeployedSandbox> {
-  return followSandboxDeploy(await dispatchWorkflow(SANDBOX_DEPLOY_WORKFLOW, values), values);
+export async function deploySandbox({ ref, values }: SandboxDeployRequest): Promise<DeployedSandbox> {
+  return followSandboxDeploy(await dispatchWorkflow(SANDBOX_DEPLOY_WORKFLOW, values, ref), values);
 }
 
 function sandboxDetails(sandbox: DeployedSandbox): RunOutput {
@@ -281,8 +300,8 @@ function sandboxDetails(sandbox: DeployedSandbox): RunOutput {
 }
 
 export async function runSandboxDeploy(): Promise<RunOutput> {
-  const values = await askSandboxDeployInputs();
-  return values ? sandboxDetails(await deploySandbox(values)) : { artifacts: [], details: [] };
+  const request = await askSandboxDeployInputs();
+  return request ? sandboxDetails(await deploySandbox(request)) : { artifacts: [], details: [] };
 }
 
 export function withoutPromptSessionFlags(argv: string[]): string[] {
@@ -309,8 +328,8 @@ Usage:
 
   ${AUTO_FLAG}    Ask nothing: deploy straight away with the defaults below.
 
-Asks for each input of ${SANDBOX_DEPLOY_WORKFLOW.workflow} (read live from
-${SANDBOX_DEPLOY_WORKFLOW.repo}, so the options always match the workflow), dispatches
+Asks for the GHA branch or tag to run ${SANDBOX_DEPLOY_WORKFLOW.workflow} from (default ${DEFAULT_GHA_BRANCH}),
+then for each of its inputs (read live from that ref, so the options always match), dispatches
 it, and waits for it to finish. On success it prints the workflow's Report and Output
 summaries; on failure, the errors from each failed job, with their full logs saved as
 artifacts.

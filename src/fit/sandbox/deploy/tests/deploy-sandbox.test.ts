@@ -15,6 +15,7 @@ import {
   promptMessage,
   renderReportSummary,
   selectedSandboxId,
+  validateInput,
   withoutPromptSessionFlags,
 } from "../deploy-sandbox.js";
 
@@ -40,7 +41,7 @@ test("applyFitCliDefaults sets fit-cli's defaults and leaves every other input o
   assert.deepEqual(Object.fromEntries(inputs.map((i) => [i.name, i.default])), {
     "type": "sbx",
     "cloud-id": "",
-    "branch": "main",
+    "branch": "",
     "profile": "default",
     "image-tag": "main",
     "remind-notification": "No",
@@ -127,7 +128,9 @@ test("withoutPromptSessionFlags drops the flags the prompt session reads, keepin
 
 test("promptMessage asks for cloud-id as the sandbox, and anything else with the workflow's description", () => {
   assert.match(promptMessage(text("cloud-id")), /^Sandbox to deploy to, e\.g\. sbx-25/);
-  assert.equal(promptMessage({ ...text("image-tag", "main"), description: "The image tag to use" }), "image-tag — The image tag to use");
+  assert.match(promptMessage(text("branch")), /^Full commit hash to deploy/);
+  assert.match(promptMessage(text("image-tag", "main")), /^Container image tag for the Capella services/);
+  assert.equal(promptMessage({ ...text("profile"), description: "The profile to use" }), "profile — The profile to use");
   assert.equal(promptMessage(text("constructor")), "constructor — (no description)");
 });
 
@@ -136,4 +139,13 @@ test("parseDeployArgs spots --auto among the prompt session's flags and rejects 
   assert.deepEqual(parseDeployArgs(["--auto"]), { auto: true, unexpected: [] });
   assert.deepEqual(parseDeployArgs(["--replay", "/tmp/fit-cli/x/prompts.json", "--auto"]), { auto: true, unexpected: [] });
   assert.deepEqual(parseDeployArgs(["--default"]), { auto: false, unexpected: ["--default"] });
+});
+
+test("validateInput takes only a full commit hash, or nothing, for branch", () => {
+  assert.equal(validateInput(text("branch"), ""), true);
+  assert.equal(validateInput(text("branch"), "4a5b762c0e3f1d2a9b8c7d6e5f4a3b2c1d0e9f8a"), true);
+  assert.match(String(validateInput(text("branch"), "4a5b762")), /full 40-character commit hash/);
+  assert.match(String(validateInput(text("branch"), "main")), /full 40-character commit hash/);
+  assert.match(String(validateInput({ ...text("ticket"), required: true }, " ")), /ticket is required/);
+  assert.equal(validateInput(text("image-tag"), "feature/x"), true);
 });

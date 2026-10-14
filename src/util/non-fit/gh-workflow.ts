@@ -67,8 +67,9 @@ export function parseWorkflowDispatchInputs(workflowYaml: string): WorkflowDispa
   });
 }
 
-export async function fetchWorkflowDispatchInputs(workflow: GhWorkflow): Promise<WorkflowDispatchInput[]> {
-  const yamlText = await gh(["api", `repos/${workflow.repo}/contents/.github/workflows/${workflow.workflow}`, "-H", "Accept: application/vnd.github.raw+json"]);
+export async function fetchWorkflowDispatchInputs(workflow: GhWorkflow, ref?: string): Promise<WorkflowDispatchInput[]> {
+  const query = ref ? `?ref=${encodeURIComponent(ref)}` : "";
+  const yamlText = await gh(["api", `repos/${workflow.repo}/contents/.github/workflows/${workflow.workflow}${query}`, "-H", "Accept: application/vnd.github.raw+json"]);
   return parseWorkflowDispatchInputs(yamlText);
 }
 
@@ -121,12 +122,12 @@ async function findDispatchedRun(workflow: GhWorkflow, baselineId: number): Prom
   }
 }
 
-export async function dispatchWorkflow(workflow: GhWorkflow, fields: Readonly<Record<string, string>>): Promise<number> {
+export async function dispatchWorkflow(workflow: GhWorkflow, fields: Readonly<Record<string, string>>, ref?: string): Promise<number> {
   const baselineId = (await listRecentRuns(workflow, 1))[0]?.databaseId ?? 0;
   let output: string;
   try {
     output = await gh(
-      ["workflow", "run", workflow.workflow, "--repo", workflow.repo, ...Object.entries(fields).flatMap(([key, value]) => ["--raw-field", `${key}=${value}`])],
+      ["workflow", "run", workflow.workflow, "--repo", workflow.repo, ...(ref ? ["--ref", ref] : []), ...Object.entries(fields).flatMap(([key, value]) => ["--raw-field", `${key}=${value}`])],
       { quiet: false },
     );
   } catch (err) {
