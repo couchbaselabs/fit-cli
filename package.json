@@ -17,6 +17,7 @@
     "definition": "bun src/fit/definition/definition.ts",
     "cloud-instances": "bun src/cloud/cloud-instances/cloud-instances.ts",
     "performer": "bun src/fit/performer/performer.ts",
+    "sandbox": "bun src/fit/sandbox/sandbox.ts",
     "secrets": "bun src/cloud/util/aws/secrets-cli.ts",
     "slack": "bun src/fit/slack/slack-cli.ts",
     "archive": "bun src/fit/archive/archive.ts",

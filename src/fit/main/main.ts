@@ -28,6 +28,8 @@ import { runEditWorkflow } from "../config/edit.js";
 import { defaultFitCliConfigPath } from "../util/config.js";
 import { runCloudInstancesMain } from "../../cloud/cloud-instances/cloud-instances.js";
 import { runPerformerMain } from "../performer/performer.js";
+import { runSandboxMain } from "../sandbox/sandbox.js";
+import { runSandboxDeploy } from "../sandbox/deploy/deploy-sandbox.js";
 import { runSecretsMain } from "../../cloud/util/aws/secrets-cli.js";
 import { runSlackMain } from "../slack/slack-cli.js";
 import { printVersion } from "../version/version.js";
@@ -46,6 +48,7 @@ const WORKFLOW_CHOICES = [
   { name: "Build a FIT definition file", value: "create-definition" },
   { name: "Run or share a recently generated definition file", value: "recent-definitions" },
   { name: "Run a FIT definition file", value: "run-definition" },
+  { name: "Deploy a Capella sandbox control plane", value: "sandbox-deploy" },
   { name: "Configure fit-cli", value: "configure" },
 ] as const;
 
@@ -91,6 +94,7 @@ export async function chooseWorkflow(
         { name: "Build a FIT definition file", value: "create-definition" },
         { name: "Run or share a recently generated definition file", value: "recent-definitions" },
         { name: "Run a FIT definition file", value: "run-definition" },
+        { name: "Deploy a Capella sandbox control plane", value: "sandbox-deploy" },
         { name: "Configure fit-cli (recommended)", value: "configure" },
       ] as const)
     : WORKFLOW_CHOICES;
@@ -135,6 +139,8 @@ export async function runWorkflow(choice: WorkflowChoice, definitionPath?: strin
       return runFromDefinition(definitionPath ?? await askDefinitionPath());
     case "preset":
       return runPresetWizard({ format, pushGistVisibility });
+    case "sandbox-deploy":
+      return runSandboxDeploy();
     case "configure":
       await runEditWorkflow();
       return { artifacts: [], details: [] };
@@ -227,6 +233,7 @@ const COMMANDS: Record<string, { fn: () => void; description: string; hidden?: b
   "config":          { fn: runConfigMain,           description: "Manage fit-cli configuration" },
   "cloud-instances": { fn: runCloudInstancesMain,  description: "Manage cloud (EC2) instances" },
   "performer":       { fn: runPerformerMain,        description: "Build FIT performer images from an SDK repo ref" },
+  "sandbox":         { fn: runSandboxMain,          description: "Deploy a Capella sandbox control plane" },
   "caps":            { fn: runCapsMain,             description: "Show the FIT capabilities each SDK's performer reports" },
   "external-services": { fn: runExternalServicesMain, description: "Manage fit-cli's per-box ephemeral external services (otel: collector, Jaeger, Prometheus)" },
   "secrets":         { fn: runSecretsMain,          description: "Manage AWS secrets", hidden: true },
