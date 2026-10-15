@@ -13,6 +13,7 @@ import {
   cbdinoclusterSetupFailed,
   finalizeRunFromDefinition,
   runLabelParts,
+  runStamp,
   runTests,
   scopedPromptId,
   setupCluster,
@@ -22,6 +23,10 @@ import {
 } from "../run-from-definition.js";
 import { formatRunLabel } from "../../../shared/util/run-labels.js";
 import { loadEnvironments } from "../../../util/environments.js";
+import type { ResumeClusterState, RunState } from "../resume-state.js";
+import { removeClusterArgs, removeRunCapellaClustersArgs } from "../../../../cluster/cluster-create/setup-declarative-cluster.js";
+
+const STAMP = "fitcli-20260101-000000-0123abcd";
 
 function functionalCycle(): ResolvedFunctionalExecutionGroup {
   const sdk = sdkByValue("java");
@@ -167,7 +172,7 @@ test("setupCluster applies the allocated cbdinocluster to every functional itera
   const execution = executor();
   let receivedExecution: ClusterCommandExecutor | undefined;
 
-  const result = await setupCluster(cycle, execution, (_plan, passedExecution) => {
+  const result = await setupCluster(cycle, STAMP, execution, (_plan, passedExecution) => {
     receivedExecution = passedExecution;
     return Promise.resolve({
       allocated: true,
@@ -184,7 +189,7 @@ test("setupCluster applies the allocated cbdinocluster to every functional itera
 });
 
 test("setupCluster leaves the iterations unchanged when allocation fails", async () => {
-  const result = await setupCluster(functionalCycle(), executor(), () =>
+  const result = await setupCluster(functionalCycle(), STAMP, executor(), () =>
     Promise.resolve({
       allocated: false,
       artifacts: [],
@@ -193,6 +198,54 @@ test("setupCluster leaves the iterations unchanged when allocation fails", async
   );
 
   assert.deepEqual(result.group.sessions.flatMap((s) => s.runs.map((r) => r.cluster)), [undefined, undefined]);
+});
+
+test("setupCluster hands teardown the key pool when allocation fails after init created it", async () => {
+  const result = await setupCluster(functionalCycle(), STAMP, executor(), () =>
+    Promise.resolve({
+      allocated: false,
+      cbdinocluster: "cbdinocluster",
+      capellaKeyPool: true,
+      artifacts: [],
+      details: [],
+    }),
+  );
+
+  assert.equal(result.clusterState, undefined);
+  assert.deepEqual(result.cleanup, { cbdinoclusterCommand: "cbdinocluster", capellaKeyPool: true });
+});
+
+test("setupCluster hands teardown the id of an allocated cluster it could not resolve", async () => {
+  const result = await setupCluster(functionalCycle(), STAMP, executor(), () =>
+    Promise.resolve({
+      allocated: true,
+      clusterId: "cluster-1",
+      cbdinocluster: "cbdinocluster",
+      capellaCredentials: true,
+      artifacts: [],
+      details: [],
+    }),
+  );
+
+  assert.equal(result.clusterState, undefined);
+  assert.deepEqual(result.cleanup, { cbdinoclusterCommand: "cbdinocluster", clusterId: "cluster-1", capellaCredentials: true });
+});
+
+test("setupCluster keeps the Capella credentials fact on the cluster state", async () => {
+  const result = await setupCluster(functionalCycle(), STAMP, executor(), () =>
+    Promise.resolve({
+      allocated: true,
+      clusterId: "cluster-1",
+      cbdinocluster: "cbdinocluster",
+      cluster: capellaCluster(),
+      capellaCredentials: true,
+      artifacts: [],
+      details: [],
+    }),
+  );
+
+  assert.equal(result.clusterState?.capellaCredentials, true);
+  assert.equal(result.cleanup, undefined);
 });
 
 test("cbdinoclusterSetupFailed flags a missing cycle cluster after the cluster phase ran", () => {
@@ -245,6 +298,7 @@ test("runTests stops before later steps when the cluster REST sanity check fails
           ranDriver = true;
           return Promise.resolve({ ok: true, logFile: "/tmp/driver.log", artifacts: [], details: [] });
         },
+        purpose: STAMP,
       }),
     { message: "Cluster sanity test failed; this execution group cannot continue." },
   );
@@ -263,6 +317,7 @@ test("runTests throws FatalToSession when the test driver reports failure", asyn
         generateFitConfigurationFn: () => ({ path: "/tmp/fit.json", artifacts: [], details: [] }),
         runPerformerClusterSanityCheckFn: () => Promise.resolve({ ok: true, artifacts: [], details: [] }),
         runTestDriverFn: () => Promise.resolve({ ok: false, logFile: "/tmp/driver.log", artifacts: [], details: [] }),
+        purpose: STAMP,
       }),
     { message: "FIT tests failed — check the test-driver log for details." },
   );
@@ -276,6 +331,7 @@ test("runTests throws FatalToSession when performer sanity fails", async () => {
         generateFitConfigurationFn: () => ({ path: "/tmp/fit.json", artifacts: [], details: [] }),
         runPerformerClusterSanityCheckFn: () => Promise.resolve({ ok: false, artifacts: [], details: [] }),
         runTestDriverFn: () => Promise.resolve({ ok: true, logFile: "/tmp/driver.log", artifacts: [], details: [] }),
+        purpose: STAMP,
       }),
     { message: "Performer cluster sanity check failed; stopping this iteration." },
   );
@@ -291,10 +347,42 @@ test("runTests enables resourceCreation for a self-managed cbdinocluster run", a
     },
     runPerformerClusterSanityCheckFn: () => Promise.resolve({ ok: true, artifacts: [], details: [] }),
     runTestDriverFn: () => Promise.resolve({ ok: true, logFile: "/tmp/driver.log", artifacts: [], details: [] }),
+    purpose: STAMP,
   }, "7.6.0");
 
   assert.ok(receivedFitConfig?.config?.resourceCreation, "expected resourceCreation for a self-managed run");
 });
+
+test("runTests gives FIT the run stamp in resourceCreation.cluster.cbdinocluster.purpose", async () => {
+  let receivedFitConfig: { config?: Record<string, unknown> } | undefined;
+  await runTests(fitExecutionContext(), "cbdinocluster", iteration(), undefined, {
+    runClusterDiagFn: () => Promise.resolve(true),
+    generateFitConfigurationFn: (_cluster, _dir, _path, _port, fitConfig) => {
+      receivedFitConfig = fitConfig;
+      return { path: "/tmp/fit.json", artifacts: [], details: [] };
+    },
+    runPerformerClusterSanityCheckFn: () => Promise.resolve({ ok: true, artifacts: [], details: [] }),
+    runTestDriverFn: () => Promise.resolve({ ok: true, logFile: "/tmp/driver.log", artifacts: [], details: [] }),
+    purpose: STAMP,
+  }, "7.6.0");
+
+  const resourceCreation = receivedFitConfig?.config?.resourceCreation as { cluster: { cbdinocluster: Record<string, unknown> } };
+  assert.equal(resourceCreation.cluster.cbdinocluster.purpose, STAMP);
+});
+
+test("runStamp prefers the stamp saved by the original run", () => {
+  assert.equal(runStamp({ ...savedRunState(), purpose: STAMP }), STAMP);
+});
+
+test("runStamp makes a fresh stamp when there is none to reuse", () => {
+  assert.match(runStamp(undefined), /^fitcli-\d{8}-\d{6}-[0-9a-f]{8}$/);
+  assert.match(runStamp(savedRunState()), /^fitcli-\d{8}-\d{6}-[0-9a-f]{8}$/);
+  assert.notEqual(runStamp(undefined), runStamp(undefined));
+});
+
+function savedRunState(): RunState {
+  return { version: 1, executionGroupIndex: 0, target: { kind: "local" }, performers: [] };
+}
 
 test("runTests leaves resourceCreation off for a Capella cbdinocluster run (no Docker deployer)", async () => {
   let receivedFitConfig: { config?: Record<string, unknown> } | undefined;
@@ -306,6 +394,7 @@ test("runTests leaves resourceCreation off for a Capella cbdinocluster run (no D
     },
     runPerformerClusterSanityCheckFn: () => Promise.resolve({ ok: true, artifacts: [], details: [] }),
     runTestDriverFn: () => Promise.resolve({ ok: true, logFile: "/tmp/driver.log", artifacts: [], details: [] }),
+    purpose: STAMP,
   }, "7.6.0");
 
   assert.equal(receivedFitConfig?.config?.resourceCreation, undefined);
@@ -321,6 +410,7 @@ test("runTests leaves resourceCreation off for a CNG cbdinocluster run (no Docke
     },
     runPerformerClusterSanityCheckFn: () => Promise.resolve({ ok: true, artifacts: [], details: [] }),
     runTestDriverFn: () => Promise.resolve({ ok: true, logFile: "/tmp/driver.log", artifacts: [], details: [] }),
+    purpose: STAMP,
   }, "7.6.0");
 
   assert.equal(receivedFitConfig?.config?.resourceCreation, undefined);
@@ -442,6 +532,7 @@ function teardownInputs(overrides: Partial<Parameters<typeof teardownRun>[0]> = 
     teardown: { kind: "local" },
     forceLocalhost: false,
     forceAws: false,
+    purpose: STAMP,
     performers: [],
     performerStates: [],
     externalServices: [],
@@ -513,4 +604,99 @@ test("teardownRun has nothing to stop when the run never started an external ser
   assert.equal(stopped, 0);
   assert.equal(leftUp, false);
   assert.deepEqual(output, { artifacts: [], details: [] });
+});
+
+/** A local execution context that records, in order, each command teardown runs through it. */
+function recordingExecutionContext(): FitExecutionContext & { calls: string[] } {
+  const calls: string[] = [];
+  const record = (command: string, args: string[]): Promise<void> => {
+    calls.push([command, ...args].join(" "));
+    return Promise.resolve();
+  };
+  return { ...fitExecutionContext(), calls, run: record, runHiddenUntilFailure: record, streamToTerminalAndFile: record };
+}
+
+const RM = `cbdinocluster ${removeClusterArgs("cluster-1").join(" ")}`;
+const SWEEP = `cbdinocluster ${removeRunCapellaClustersArgs(STAMP).join(" ")}`;
+const POOL_REMOVAL = "cbdinocluster cloud apikeys remove";
+const LEAVE_NOTHING_UP = { confirmLeaveUpFn: () => Promise.resolve(false) };
+
+function allocatedClusterState(capellaCredentials: boolean): ResumeClusterState {
+  return {
+    cluster: capellaCredentials ? capellaCluster() : cluster(),
+    allocated: true,
+    clusterId: "cluster-1",
+    cbdinoclusterCommand: "cbdinocluster",
+    ...(capellaCredentials ? { capellaCredentials: true } : {}),
+  };
+}
+
+test("teardownRun removes a cloud cluster it allocated, then sweeps the run's Capella clusters", async () => {
+  const execution = recordingExecutionContext();
+  await teardownRun(teardownInputs({ execution, clusterState: allocatedClusterState(true) }), LEAVE_NOTHING_UP);
+  assert.deepEqual(execution.calls, [RM, SWEEP]);
+});
+
+test("teardownRun sweeps before it removes a handed-over key pool, also when there is nothing to leave up", async () => {
+  const execution = recordingExecutionContext();
+  const { leftUp } = await teardownRun(
+    teardownInputs({
+      execution,
+      cleanup: { cbdinoclusterCommand: "cbdinocluster", capellaKeyPool: true, capellaCredentials: true },
+    }),
+  );
+  assert.equal(leftUp, false);
+  assert.deepEqual(execution.calls, [SWEEP, POOL_REMOVAL]);
+});
+
+test("teardownRun removes an unresolved cluster and sweeps when there is nothing to leave up", async () => {
+  const execution = recordingExecutionContext();
+  await teardownRun(
+    teardownInputs({
+      execution,
+      cleanup: { cbdinoclusterCommand: "cbdinocluster", clusterId: "cluster-1", capellaCredentials: true },
+    }),
+  );
+  assert.deepEqual(execution.calls, [RM, SWEEP]);
+});
+
+test("teardownRun sweeps after a failed allocate on a box with Capella credentials, before terminating the box", async () => {
+  const execution = recordingExecutionContext();
+  await teardownRun(
+    teardownInputs({
+      execution,
+      teardown: {
+        kind: "remote",
+        instanceId: "i-0123456789abcdef0",
+        owned: true,
+        terminate: () => {
+          execution.calls.push("terminate");
+          return Promise.resolve();
+        },
+      },
+      cleanup: { cbdinoclusterCommand: "cbdinocluster", capellaCredentials: true },
+    }),
+    LEAVE_NOTHING_UP,
+  );
+  assert.deepEqual(execution.calls, [SWEEP, "terminate"]);
+});
+
+test("teardownRun does not sweep a box without Capella credentials", async () => {
+  const withCluster = recordingExecutionContext();
+  await teardownRun(teardownInputs({ execution: withCluster, clusterState: allocatedClusterState(false) }), LEAVE_NOTHING_UP);
+  assert.deepEqual(withCluster.calls, [RM]);
+
+  const withoutCluster = recordingExecutionContext();
+  await teardownRun(teardownInputs({ execution: withoutCluster, cleanup: { cbdinoclusterCommand: "cbdinocluster" } }));
+  assert.deepEqual(withoutCluster.calls, []);
+});
+
+test("teardownRun leaves the run's Capella clusters alone when everything is left up", async () => {
+  const execution = recordingExecutionContext();
+  const { leftUp } = await teardownRun(
+    teardownInputs({ execution, clusterState: allocatedClusterState(true) }),
+    { confirmLeaveUpFn: () => Promise.resolve(true) },
+  );
+  assert.equal(leftUp, true);
+  assert.deepEqual(execution.calls, []);
 });
