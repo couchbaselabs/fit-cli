@@ -9,7 +9,9 @@ import { test } from "node:test";
 import type { GhJobSummary, WorkflowDispatchInput } from "../../../../util/non-fit/gh-workflow.js";
 import {
   applyFitCliDefaults,
-  failedJobs,
+  commandArgs,
+  failed,
+  isYes,
   parseDeployArgs,
   parseFollowArgs,
   parseOutputSummaryUiUrl,
@@ -17,7 +19,6 @@ import {
   renderReportSummary,
   selectedSandboxId,
   validateInput,
-  withoutPromptSessionFlags,
 } from "../deploy-sandbox.js";
 
 const choice = (name: string, options: string[], declared?: string): WorkflowDispatchInput => ({
@@ -74,7 +75,7 @@ test("selectedSandboxId reads the sandbox from the summary job's step name", () 
   assert.equal(selectedSandboxId([job("select-sbx", "in_progress")]), undefined);
 });
 
-test("failedJobs keeps only jobs that failed, not ones skipped or still running", () => {
+test("failed keeps only jobs or steps that failed, not ones skipped or still running", () => {
   const jobs = [
     job("dd-metrics-gate", "skipped"),
     job("deploy-vpc", "success"),
@@ -82,7 +83,7 @@ test("failedJobs keeps only jobs that failed, not ones skipped or still running"
     job("deploy-kubernetes", "cancelled"),
     job("deploy-crds", ""),
   ];
-  assert.deepEqual(failedJobs(jobs).map((j) => j.name), ["deploy-eks", "deploy-kubernetes"]);
+  assert.deepEqual(failed(jobs).map((j) => j.name), ["deploy-eks", "deploy-kubernetes"]);
 });
 
 test("renderReportSummary matches the workflow-summary action's layout", () => {
@@ -121,11 +122,11 @@ test("applyFitCliDefaults gives an input named like an Object.prototype member n
   assert.deepEqual(unapplied, ["type"]);
 });
 
-test("withoutPromptSessionFlags drops the flags the prompt session reads, keeping the rest", () => {
-  assert.deepEqual(withoutPromptSessionFlags(["--replay", "/tmp/fit-cli/x/prompts.json", "deploy"]), ["deploy"]);
-  assert.deepEqual(withoutPromptSessionFlags(["deploy", "--defaults", "/tmp/fit-cli/x/prompts.json"]), ["deploy"]);
-  assert.deepEqual(withoutPromptSessionFlags(["deploy", "--interactive"]), ["deploy"]);
-  assert.deepEqual(withoutPromptSessionFlags(["deploy", "extra"]), ["deploy", "extra"]);
+test("commandArgs drops the flags the prompt session reads, and trims the rest", () => {
+  assert.deepEqual(commandArgs(["--replay", "/tmp/fit-cli/x/prompts.json", "deploy"]), ["deploy"]);
+  assert.deepEqual(commandArgs(["deploy", "--defaults", "/tmp/fit-cli/x/prompts.json"]), ["deploy"]);
+  assert.deepEqual(commandArgs(["deploy", "--interactive"]), ["deploy"]);
+  assert.deepEqual(commandArgs([" deploy ", "extra\t"]), ["deploy", "extra"]);
 });
 
 test("promptMessage asks for cloud-id as the sandbox, and anything else with the workflow's description", () => {
@@ -143,7 +144,7 @@ test("parseDeployArgs reads --auto, --gha-ref and --input among the prompt sessi
   };
   assert.deepEqual(parse([]), { auto: false, ref: undefined, inputs: {} });
   assert.deepEqual(parse(["--replay", "/tmp/fit-cli/x/prompts.json", "--auto"]), { auto: true, ref: undefined, inputs: {} });
-  assert.deepEqual(parse(["--auto", "--gha-ref", "AV-1", "--input", "reserved-hours=5", "--input", "branch=", "--input", "cidr=a=b"]), {
+  assert.deepEqual(parse(["--auto", "--gha-ref", " AV-1 ", "--input", " reserved-hours = 5 ", "--input", "branch=", "--input", "cidr=a=b"]), {
     auto: true, ref: "AV-1", inputs: { "reserved-hours": "5", branch: "", cidr: "a=b" },
   });
 });
@@ -152,13 +153,14 @@ test("parseDeployArgs rejects anything else, and a value flag with no value", ()
   assert.throws(() => parseDeployArgs(["--default"]), /Unexpected argument: --default/);
   assert.throws(() => parseDeployArgs(["--gha-ref", "--auto"]), /--gha-ref needs a value/);
   assert.throws(() => parseDeployArgs(["--gha-ref"]), /--gha-ref needs a value/);
+  assert.throws(() => parseDeployArgs(["--gha-ref", " "]), /--gha-ref needs a value/);
   assert.throws(() => parseDeployArgs(["--input"]), /--input needs a value/);
   assert.throws(() => parseDeployArgs(["--input", "no-equals"]), /key=value form, got: no-equals/);
 });
 
 test("parseFollowArgs takes one run id, or a run URL from the sandbox deploy repo", () => {
   const runUrl = "https://github.com/couchbasecloud/couchbase-cloud/actions/runs/38549561838";
-  assert.equal(parseFollowArgs(["38549561838"]), 38549561838);
+  assert.equal(parseFollowArgs([" 38549561838 "]), 38549561838);
   assert.equal(parseFollowArgs([runUrl]), 38549561838);
   assert.equal(parseFollowArgs([`${runUrl}/job/1?pr=2`]), 38549561838);
   assert.throws(() => parseFollowArgs(["https://github.com/couchbaselabs/fit-cli/actions/runs/38549561838"]), /Not a couchbasecloud\/couchbase-cloud run/);
@@ -171,6 +173,6 @@ test("validateInput takes only a full commit hash, or nothing, for branch", () =
   assert.equal(validateInput(text("branch"), "4a5b762c0e3f1d2a9b8c7d6e5f4a3b2c1d0e9f8a"), true);
   assert.match(String(validateInput(text("branch"), "4a5b762")), /full 40-character commit hash/);
   assert.match(String(validateInput(text("branch"), "main")), /full 40-character commit hash/);
-  assert.match(String(validateInput({ ...text("ticket"), required: true }, " ")), /ticket is required/);
+  assert.match(String(validateInput({ ...text("ticket"), required: true }, "")), /ticket is required/);
   assert.equal(validateInput(text("image-tag"), "feature/x"), true);
 });

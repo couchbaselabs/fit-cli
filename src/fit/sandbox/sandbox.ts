@@ -11,37 +11,36 @@
  * follow: waits for a deploy run already dispatched and reports it the same way.
  */
 import { isMain } from "../../util/non-fit/cli.js";
-import { runScriptPrefix } from "../../util/non-fit/fit-cli-log.js";
 import {
-  deployHelpText,
-  followHelpText,
+  commandArgs,
+  DEPLOY_SUMMARY,
+  deployUsage,
+  FOLLOW_SUMMARY,
+  followUsage,
   runSandboxDeployMain,
   runSandboxFollowMain,
-  withoutPromptSessionFlags,
+  sandboxCommand,
 } from "./deploy/deploy-sandbox.js";
 
-const SUBCOMMANDS: Readonly<Record<string, { help: () => string; main: (argv: string[]) => void }>> = {
-  deploy: { help: deployHelpText, main: runSandboxDeployMain },
-  follow: { help: followHelpText, main: runSandboxFollowMain },
+const SUBCOMMANDS: Readonly<Record<string, { usage: () => string; summary: string; main: (argv: string[]) => void }>> = {
+  deploy: { usage: deployUsage, summary: DEPLOY_SUMMARY, main: runSandboxDeployMain },
+  follow: { usage: followUsage, summary: FOLLOW_SUMMARY, main: runSandboxFollowMain },
 };
 
 function helpText(): string {
+  const subcommands = Object.entries(SUBCOMMANDS);
   return `Manage Capella sandbox control planes.
 
 Usage:
-  ${runScriptPrefix("sandbox")} deploy [--auto] [--gha-ref <branch-or-tag>] [--input <name>=<value>]...
-  ${runScriptPrefix("sandbox")} follow <run-id or run URL>
-  ${runScriptPrefix("sandbox")} --help
+${subcommands.map(([, { usage }]) => `  ${usage()}`).join("\n")}
+  ${sandboxCommand("<subcommand> --help")}
 
 Subcommands:
-  deploy    Deploy a sandbox control plane through couchbase-cloud's GitHub Actions
-            workflow, wait for it, and print its summaries.
-            Run "${runScriptPrefix("sandbox")} deploy --help" for details.
-  follow    Pick a deploy run up again (e.g. after Ctrl-C) and report it, without deploying.`;
+${subcommands.map(([name, { summary }]) => `  ${name.padEnd(10)}${summary}`).join("\n")}`;
 }
 
 export function runSandboxMain(): void {
-  const [subcommand, ...rest] = withoutPromptSessionFlags(process.argv.slice(2));
+  const [subcommand, ...rest] = commandArgs(process.argv.slice(2));
   const command = subcommand && Object.hasOwn(SUBCOMMANDS, subcommand) ? SUBCOMMANDS[subcommand] : undefined;
   if (!command) {
     const help = subcommand === "--help" || subcommand === "-h" || subcommand === "help";
@@ -49,8 +48,7 @@ export function runSandboxMain(): void {
     (help ? console.log : console.error)(helpText());
     process.exit(help ? 0 : 2);
   }
-  if (rest.includes("--help") || rest.includes("-h")) console.log(command.help());
-  else command.main(rest);
+  command.main(rest);
 }
 
 if (isMain(import.meta.url)) {

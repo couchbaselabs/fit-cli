@@ -29,24 +29,26 @@ import {
   fetchRunWorkflowPath,
   fetchWorkflowDispatchInputs,
   findRefs,
+  ghRunListCommand,
   ghRunUrl,
   jobLogLines,
   parseRunIdFromUrl,
   repoVisible,
   waitForRunCompletion,
+  workflowFilePath,
   type GhJobSummary,
   type GhWorkflow,
   type WorkflowDispatchInput,
 } from "../../../util/non-fit/gh-workflow.js";
 import { createLogFile } from "../../../util/non-fit/proc.js";
-import { confirm, input, qualifyPromptId, select } from "../../../util/non-fit/prompts.js";
-import { extractInteractiveFlag, extractReplayFlag, markNonInteractiveByDefault } from "../../../util/non-fit/replay.js";
+import { input, qualifyPromptId, select } from "../../../util/non-fit/prompts.js";
+import { defaultsToNonInteractive, extractInteractiveFlag, extractReplayFlag, markNonInteractiveByDefault } from "../../../util/non-fit/replay.js";
 
 export const SANDBOX_DEPLOY_WORKFLOW: GhWorkflow = {
   repo: "couchbasecloud/couchbase-cloud",
   workflow: "sandbox-deploy-control-plane.yml",
 };
-const SANDBOX_DEPLOY_ORG = SANDBOX_DEPLOY_WORKFLOW.repo.split("/")[0];
+const GH_AUTH = `gh authorised (SSO) for the ${SANDBOX_DEPLOY_WORKFLOW.repo.split("/")[0]} org`;
 
 export const FIT_CLI_INPUT_DEFAULTS: Readonly<Record<string, string>> = {
   type: "sbx",
@@ -54,6 +56,13 @@ export const FIT_CLI_INPUT_DEFAULTS: Readonly<Record<string, string>> = {
 };
 
 const DEFAULT_GHA_BRANCH = "main";
+const AUTO_FLAG = "--auto";
+
+export const sandboxCommand = (args: string): string => `${runScriptPrefix("sandbox")} ${args}`;
+export const deployUsage = (): string => sandboxCommand(`deploy [${AUTO_FLAG}] [--gha-ref <branch-or-tag>] [--input <name>=<value>]...`);
+export const followUsage = (): string => sandboxCommand("follow <run-id or run URL>");
+export const DEPLOY_SUMMARY = "Deploy a Capella sandbox control plane through GitHub Actions and print its summaries.";
+export const FOLLOW_SUMMARY = "Pick a deploy run up again (e.g. after Ctrl-C) and report it, without deploying.";
 
 export interface SandboxDeployRequest { ref: string; fullRef: string; values: Record<string, string> }
 
@@ -115,8 +124,8 @@ export function renderReportSummary(ref: string, inputs: Readonly<Record<string,
   return ["### Branch", `\`${ref}\``, "### Inputs", "```json", JSON.stringify(inputs, null, 2), "```"];
 }
 
-export function failedJobs(jobs: readonly GhJobSummary[]): GhJobSummary[] {
-  return jobs.filter((job) => FAILED_CONCLUSIONS.has(job.conclusion));
+export function failed<T extends { conclusion: string }>(items: readonly T[]): T[] {
+  return items.filter((item) => FAILED_CONCLUSIONS.has(item.conclusion));
 }
 
 function errorMessage(err: unknown): string {
@@ -138,9 +147,16 @@ export function promptMessage(workflowInput: WorkflowDispatchInput): string {
 }
 
 export function validateInput(workflowInput: WorkflowDispatchInput, value: string): true | string {
-  if (workflowInput.required && value.trim() === "") return `${workflowInput.name} is required.`;
-  if (workflowInput.name === "branch" && !/^([0-9a-f]{40})?$/i.test(value.trim())) return "Enter a full 40-character commit hash, or leave it empty.";
+  if (workflowInput.required && value === "") return `${workflowInput.name} is required.`;
+  if (workflowInput.name === "branch" && !/^([0-9a-f]{40})?$/i.test(value)) return "Enter a full 40-character commit hash, or leave it empty.";
   return true;
+}
+
+export const isYes = (answer: string): boolean => ["y", "yes"].includes(answer.trim().toLowerCase());
+
+async function askTrimmed(config: Parameters<typeof input>[0]): Promise<string> {
+  const { validate } = config;
+  return (await input({ ...config, validate: validate && ((value) => validate(value.trim())) })).trim();
 }
 
 async function askInputs(inputs: readonly WorkflowDispatchInput[], promptIdPrefix?: string): Promise<Record<string, string>> {
@@ -155,12 +171,12 @@ async function askInputs(inputs: readonly WorkflowDispatchInput[], promptIdPrefi
           choices: workflowInput.options.map((option) => ({ name: option, value: option })),
           default: workflowInput.default,
         })
-      : (await input({
+      : await askTrimmed({
           promptId,
           message,
           default: workflowInput.default,
           validate: (value) => validateInput(workflowInput, value),
-        })).trim();
+        });
   }
   return values;
 }
@@ -170,16 +186,16 @@ function printBlock(title: string, lines: readonly string[]): void {
 }
 
 async function reportFailedJobs(jobs: readonly GhJobSummary[]): Promise<void> {
-  const failed = failedJobs(jobs);
-  if (failed.length === 0) {
+  const failedJobs = failed(jobs);
+  if (failedJobs.length === 0) {
     fitCliError("No job reports a failure — the run may have been cancelled before any job started.");
     return;
   }
   const logs = await Promise.allSettled(
-    failed.map((job) => (job.steps.length > 0 ? fetchJobLog(SANDBOX_DEPLOY_WORKFLOW.repo, job.databaseId) : Promise.resolve(undefined))),
+    failedJobs.map((job) => (job.steps.length > 0 ? fetchJobLog(SANDBOX_DEPLOY_WORKFLOW.repo, job.databaseId) : Promise.resolve(undefined))),
   );
-  for (const [i, job] of failed.entries()) {
-    const failedSteps = job.steps.filter((step) => FAILED_CONCLUSIONS.has(step.conclusion)).map((step) => step.name);
+  for (const [i, job] of failedJobs.entries()) {
+    const failedSteps = failed(job.steps).map((step) => step.name);
     fitCliError(`✗ ${job.name} (${job.conclusion}) — ${job.url}`);
     const fetched = logs[i];
     let excerpt: string[];
@@ -220,7 +236,7 @@ async function findGhaRefs(workflow: GhWorkflow, name: string): Promise<GhaRef[]
   const refs = all.filter((fullRef) => name === shortName || fullRef === name);
   if (refs.length === 0) {
     if (!(await repoVisible(workflow.repo))) {
-      throw new Error(`gh can't see ${workflow.repo}: check gh auth status, and that its token is authorised (SSO) for the ${SANDBOX_DEPLOY_ORG} org.`);
+      throw new Error(`gh can't see ${workflow.repo}: check gh auth status; this needs ${GH_AUTH}.`);
     }
     return `${workflow.repo} has no branch or tag named ${name}`;
   }
@@ -239,23 +255,24 @@ export async function askSandboxDeployInputs(
   { ref: givenRef, inputs: given = {}, promptIdPrefix }: SandboxDeployOptions = {},
 ): Promise<SandboxDeployRequest | undefined> {
   const workflow = SANDBOX_DEPLOY_WORKFLOW;
+  const defaults = { ...FIT_CLI_INPUT_DEFAULTS, ...given };
   console.log(
     `\nThis deploys a Capella sandbox control plane by dispatching ${workflow.workflow} on ${workflow.repo}` +
-      ` (needs gh authorised for the ${SANDBOX_DEPLOY_ORG} org).\nThe inputs below are read from the` +
-      ` workflow itself, with its defaults except for ${Object.keys({ ...FIT_CLI_INPUT_DEFAULTS, ...given }).join(", ")}.\n`,
+      ` (needs ${GH_AUTH}).\nThe inputs below are read from the` +
+      ` workflow itself, with its defaults except for ${Object.keys(defaults).join(", ")}.\n`,
   );
   let lookup: { name: string; found: Promise<GhaRef[] | string> } | undefined;
   const lookUp = (name: string) => (lookup?.name === name ? lookup : (lookup = { name, found: findGhaRefs(workflow, name) })).found;
-  const name = (await input({
+  const name = await askTrimmed({
     promptId: qualifyPromptId("sandbox.deploy.gha-branch", promptIdPrefix),
     message: `GHA branch or tag — the ${workflow.repo} branch or tag to run ${workflow.workflow} from`,
     default: givenRef ?? DEFAULT_GHA_BRANCH,
     validate: async (value) => {
-      if (value.trim() === "") return "A branch or tag is required.";
-      const found = await lookUp(value.trim()).catch(() => true);
+      if (value === "") return "A branch or tag is required.";
+      const found = await lookUp(value).catch(() => true);
       return typeof found === "string" ? found : true;
     },
-  })).trim();
+  });
   const found = await lookUp(name);
   if (typeof found === "string") throw new Error(found);
   const fullRef = found.length === 1 ? found[0].fullRef : await select<string>({
@@ -275,7 +292,7 @@ export async function askSandboxDeployInputs(
     return problem === true ? [] : [`--input ${key}=${value} (${problem})`];
   });
   if (problems.length > 0) throw new Error(`${workflow.workflow} on ${ref} doesn't take ${problems.join("; ")}`);
-  const { inputs, unapplied } = applyFitCliDefaults(workflowInputs, { ...FIT_CLI_INPUT_DEFAULTS, ...given });
+  const { inputs, unapplied } = applyFitCliDefaults(workflowInputs, defaults);
   if (unapplied.length > 0) {
     fitCliWarn(
       `The workflow no longer takes fit-cli's default for ${unapplied.map((key) => `${key}=${FIT_CLI_INPUT_DEFAULTS[key]}`).join(", ")}` +
@@ -290,13 +307,13 @@ export async function askSandboxDeployInputs(
     ...(ref === DEFAULT_GHA_BRANCH ? [] : ["--gha-ref", ref]),
     ...changed.flatMap((workflowInput) => ["--input", `${workflowInput.name}=${values[workflowInput.name]}`]),
   ];
-  console.log(`The same deploy without questions: ${[`${runScriptPrefix("sandbox")} deploy ${AUTO_FLAG}`, ...repro.map(shellQuote)].join(" ")}\n`);
-  const proceed = await confirm({
+  console.log(`The same deploy without questions: ${[sandboxCommand(`deploy ${AUTO_FLAG}`), ...repro.map(shellQuote)].join(" ")}\n`);
+  const answer = await askTrimmed({
     promptId: qualifyPromptId("sandbox.deploy.confirm", promptIdPrefix),
-    message: "Deploy the sandbox with these inputs?",
-    default: true,
+    message: "Deploy the sandbox with these inputs? (y/N)",
+    default: defaultsToNonInteractive() ? "yes" : "",
   });
-  if (!proceed) {
+  if (!isYes(answer)) {
     console.log("Not deploying.");
     return undefined;
   }
@@ -305,12 +322,11 @@ export async function askSandboxDeployInputs(
 
 export async function followSandboxDeploy(runId: number, request?: SandboxDeployRequest): Promise<DeployedSandbox> {
   const runUrl = ghRunUrl(SANDBOX_DEPLOY_WORKFLOW.repo, runId);
-  const followCommand = `${runScriptPrefix("sandbox")} follow ${runUrl}`;
+  const pickUp = `the deploy carries on in GitHub Actions, and ${sandboxCommand(`follow ${runUrl}`)} picks it up again`;
   console.log(`\nFollowing run: ${runUrl}\n`);
   console.log(
     "Waiting for it to finish — it applies Terraform for the VPC, EKS, Kubernetes and every Capella service," +
-      ` so expect a long wait. Ctrl-C only stops fit-cli waiting; the deploy carries on in GitHub Actions,` +
-      ` and ${followCommand} picks it up again.`,
+      ` so expect a long wait. Ctrl-C only stops fit-cli waiting; ${pickUp}.`,
   );
 
   let sandboxId: string | undefined;
@@ -319,7 +335,7 @@ export async function followSandboxDeploy(runId: number, request?: SandboxDeploy
     sandboxId = selectedSandboxId(snapshot.jobs);
     if (sandboxId) console.log(`  Deploying to sandbox ${sandboxId}`);
   }).catch((err: unknown) => {
-    throw new Error(`Lost track of ${runUrl} (cause below); the deploy carries on in GitHub Actions, and ${followCommand} picks it up again.`, { cause: err });
+    throw new Error(`Lost track of ${runUrl} (cause below); ${pickUp}.`, { cause: err });
   });
 
   printBlock(
@@ -349,7 +365,14 @@ export async function followSandboxDeploy(runId: number, request?: SandboxDeploy
 }
 
 export async function deploySandbox(request: SandboxDeployRequest): Promise<DeployedSandbox> {
-  return followSandboxDeploy(await dispatchWorkflow(SANDBOX_DEPLOY_WORKFLOW, request.values, request.ref), request);
+  const runId = await dispatchWorkflow(SANDBOX_DEPLOY_WORKFLOW, request.values, request.ref);
+  if (runId === undefined) {
+    throw new Error(
+      `Dispatched the deploy, but gh didn't say which run it started (upgrade gh to fix this). Find it with` +
+        ` ${ghRunListCommand(SANDBOX_DEPLOY_WORKFLOW)}, then pick it up with ${followUsage()}.`,
+    );
+  }
+  return followSandboxDeploy(runId, request);
 }
 
 function sandboxDetails({ runUrl, sandboxId, uiUrl }: DeployedSandbox): RunOutput {
@@ -364,14 +387,12 @@ export async function runSandboxDeploy(options: SandboxDeployOptions = {}): Prom
   return request ? sandboxDetails(await deploySandbox(request)) : { artifacts: [], details: [] };
 }
 
-export function withoutPromptSessionFlags(argv: string[]): string[] {
-  return extractInteractiveFlag(extractReplayFlag(argv).positionals).positionals;
+export function commandArgs(argv: string[]): string[] {
+  return extractInteractiveFlag(extractReplayFlag(argv).positionals).positionals.map((arg) => arg.trim());
 }
 
-const AUTO_FLAG = "--auto";
-
 export function parseDeployArgs(argv: string[]): { auto: boolean; ref?: string; inputs: Record<string, string> } {
-  const args = withoutPromptSessionFlags(argv);
+  const args = commandArgs(argv);
   const parsed = { auto: false, ref: undefined as string | undefined, inputs: Object.create(null) as Record<string, string> };
   for (let i = 0; i < args.length; i++) {
     const next = args[i + 1];
@@ -379,14 +400,14 @@ export function parseDeployArgs(argv: string[]): { auto: boolean; ref?: string; 
     else if (args[i] === "--gha-ref" && next && !next.startsWith("-")) parsed.ref = args[++i];
     else if (args[i] === "--input" && next !== undefined) {
       const [key, value] = parseKeyValueFlag("--input", args[++i]);
-      parsed.inputs[key] = value;
+      parsed.inputs[key.trim()] = value.trim();
     } else throw new Error(args[i] === "--gha-ref" || args[i] === "--input" ? `${args[i]} needs a value.` : `Unexpected argument: ${args[i]}`);
   }
   return parsed;
 }
 
 export function parseFollowArgs(argv: string[]): number {
-  const [runRef, ...extra] = withoutPromptSessionFlags(argv);
+  const [runRef, ...extra] = commandArgs(argv);
   if (runRef === undefined || extra.length > 0) throw new Error("Expected one run id or run URL.");
   if (/^\d+$/.test(runRef)) return Number(runRef);
   const runId = parseRunIdFromUrl(runRef);
@@ -396,21 +417,25 @@ export function parseFollowArgs(argv: string[]): number {
   return runId;
 }
 
-function parseOrExit<T>(parse: () => T, helpText: () => string): T {
+function parseArgsOrExit<T>(argv: string[], parse: (argv: string[]) => T, helpText: () => string): T | undefined {
+  if (argv.includes("--help") || argv.includes("-h")) {
+    console.log(helpText());
+    return undefined;
+  }
   try {
-    return parse();
+    return parse(argv);
   } catch (err) {
     console.error(`${errorMessage(err)}\n\n${helpText()}`);
     process.exit(2);
   }
 }
 
-export function deployHelpText(): string {
-  return `Deploy a Capella sandbox control plane through couchbase-cloud's GitHub Actions workflow.
+function deployHelpText(): string {
+  return `${DEPLOY_SUMMARY}
 
 Usage:
-  ${runScriptPrefix("sandbox")} deploy [${AUTO_FLAG}] [--gha-ref <branch-or-tag>] [--input <name>=<value>]...
-  ${runScriptPrefix("sandbox")} deploy --help
+  ${deployUsage()}
+  ${sandboxCommand("deploy --help")}
 
   ${AUTO_FLAG}                     Ask nothing: deploy straight away with the defaults.
   --gha-ref <branch-or-tag>  Default for the GHA branch or tag (otherwise ${DEFAULT_GHA_BRANCH}).
@@ -418,14 +443,14 @@ Usage:
                              the Inputs list shown before the deploy is confirmed.
 
 Examples:
-  ${runScriptPrefix("sandbox")} deploy
+  ${sandboxCommand("deploy")}
       Ask for everything, with the defaults pre-filled.
-  ${runScriptPrefix("sandbox")} deploy --auto
-      Deploy from main with every default, without asking.
-  ${runScriptPrefix("sandbox")} deploy --auto --gha-ref my-branch --input reserved-hours=5 --input image-tag=my-branch
+  ${sandboxCommand(`deploy ${AUTO_FLAG}`)}
+      Deploy from ${DEFAULT_GHA_BRANCH} with every default, without asking.
+  ${sandboxCommand(`deploy ${AUTO_FLAG} --gha-ref my-branch --input reserved-hours=5 --input image-tag=my-branch`)}
       Deploy my-branch's workflow and service images for 5 hours, without asking.
-  ${runScriptPrefix("sandbox")} follow <run-id or run URL>
-      Pick a deploy run up again (e.g. after Ctrl-C) and report it, without deploying.
+  ${followUsage()}
+      ${FOLLOW_SUMMARY}
 
 Asks for the GHA branch or tag to run ${SANDBOX_DEPLOY_WORKFLOW.workflow} from (default ${DEFAULT_GHA_BRANCH}),
 then for each of its inputs (read live from that ref, so the options always match), dispatches
@@ -438,38 +463,37 @@ ${Object.entries(FIT_CLI_INPUT_DEFAULTS).map(([name, value]) => `  ${name.padEnd
 
 On CI (CI=true) it asks nothing even without ${AUTO_FLAG}.
 
-Requires gh, authorised (SSO) for the ${SANDBOX_DEPLOY_ORG} org.`;
+Requires ${GH_AUTH}.`;
 }
 
 export function runSandboxDeployMain(argv: string[]): void {
-  const { auto, ref, inputs } = parseOrExit(() => parseDeployArgs(argv), deployHelpText);
-  if (auto) markNonInteractiveByDefault();
-  runCli(() => runSandboxDeploy({ ref, inputs }));
+  const args = parseArgsOrExit(argv, parseDeployArgs, deployHelpText);
+  if (!args) return;
+  if (args.auto) markNonInteractiveByDefault();
+  runCli(() => runSandboxDeploy(args));
 }
 
-export function followHelpText(): string {
-  return `Wait for a sandbox deploy run that was already dispatched (e.g. after Ctrl-C), then print its
-Output Summary, or the failed jobs' errors. Nothing is deployed.
+function followHelpText(): string {
+  return `${FOLLOW_SUMMARY}
+It waits for the run, then prints its Output Summary, or the failed jobs' errors.
 
 Usage:
-  ${runScriptPrefix("sandbox")} follow <run-id or run URL>`;
+  ${followUsage()}`;
 }
 
 export function runSandboxFollowMain(argv: string[]): void {
-  const runId = parseOrExit(() => parseFollowArgs(argv), followHelpText);
+  const runId = parseArgsOrExit(argv, parseFollowArgs, followHelpText);
+  if (runId === undefined) return;
   runCli(async () => {
-    const { repo, workflow } = SANDBOX_DEPLOY_WORKFLOW;
-    const path = await fetchRunWorkflowPath(repo, runId);
-    if (path === undefined) throw new Error(`gh can't find run ${runId} in ${repo}.`);
-    if (path !== `.github/workflows/${workflow}`) throw new Error(`Run ${runId} is a ${path} run, not a sandbox deploy.`);
+    const path = await fetchRunWorkflowPath(SANDBOX_DEPLOY_WORKFLOW.repo, runId);
+    if (path === undefined) throw new Error(`gh can't find run ${runId} in ${SANDBOX_DEPLOY_WORKFLOW.repo}.`);
+    if (path !== workflowFilePath(SANDBOX_DEPLOY_WORKFLOW)) throw new Error(`Run ${runId} is a ${path} run, not a sandbox deploy.`);
     return sandboxDetails(await followSandboxDeploy(runId));
   });
 }
 
 if (isMain(import.meta.url)) {
-  const argv = process.argv.slice(2);
-  const [subcommand, ...rest] = withoutPromptSessionFlags(argv);
-  if (argv.includes("--help") || argv.includes("-h")) console.log(subcommand === "follow" ? followHelpText() : deployHelpText());
-  else if (subcommand === "follow") runSandboxFollowMain(rest);
-  else runSandboxDeployMain(argv);
+  const [subcommand, ...rest] = commandArgs(process.argv.slice(2));
+  if (subcommand === "follow") runSandboxFollowMain(rest);
+  else runSandboxDeployMain(process.argv.slice(2));
 }

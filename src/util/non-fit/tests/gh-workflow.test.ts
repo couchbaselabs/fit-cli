@@ -12,7 +12,6 @@ import {
   formatRunHeartbeat,
   parseRunIdFromUrl,
   parseWorkflowDispatchInputs,
-  pickDispatchedRun,
 } from "../gh-workflow.js";
 
 const WORKFLOW_YAML = `
@@ -74,12 +73,6 @@ test("parseWorkflowDispatchInputs starts a boolean with no default unchecked, li
 test("parseWorkflowDispatchInputs takes a description YAML reads as a number or boolean", () => {
   const inputs = parseWorkflowDispatchInputs("on:\n  workflow_dispatch:\n    inputs:\n      a:\n        description: 2.0\n      b:\n        description: true\n");
   assert.deepEqual(inputs.map((i) => i.description), ["2", "true"]);
-});
-
-test("pickDispatchedRun takes the newest run above the baseline", () => {
-  const runs = [{ databaseId: 100 }, { databaseId: 103 }, { databaseId: 102 }];
-  assert.equal(pickDispatchedRun(runs, 100)?.databaseId, 103);
-  assert.equal(pickDispatchedRun(runs, 103), undefined);
 });
 
 test("parseRunIdFromUrl reads the run id from the run URL gh prints after a dispatch", () => {

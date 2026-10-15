@@ -31,6 +31,14 @@ function gh(args: string[], { timeoutMs = GH_CALL_TIMEOUT_MS, quiet = true } = {
   return capture("gh", args, process.cwd(), { quiet, timeoutMs });
 }
 
+export function workflowFilePath(workflow: GhWorkflow): string {
+  return `.github/workflows/${workflow.workflow}`;
+}
+
+export function ghRunListCommand(workflow: GhWorkflow): string {
+  return `gh run list --repo ${workflow.repo} --workflow ${workflow.workflow}`;
+}
+
 const isNotFound = (err: unknown): boolean => err instanceof Error && err.message.includes("HTTP 404");
 
 function undefinedIfNotFound(err: unknown): undefined {
@@ -87,13 +95,13 @@ export async function repoVisible(repo: string): Promise<boolean> {
 
 export async function fetchWorkflowDispatchInputs(workflow: GhWorkflow, ref?: string): Promise<WorkflowDispatchInput[] | undefined> {
   const query = ref ? `?ref=${encodeURIComponent(ref)}` : "";
-  const yamlText = await gh(["api", `repos/${workflow.repo}/contents/.github/workflows/${workflow.workflow}${query}`, "-H", "Accept: application/vnd.github.raw+json"])
+  const yamlText = await gh(["api", `repos/${workflow.repo}/contents/${workflowFilePath(workflow)}${query}`, "-H", "Accept: application/vnd.github.raw+json"])
     .catch(undefinedIfNotFound);
   return yamlText === undefined ? undefined : parseWorkflowDispatchInputs(yamlText);
 }
 
 export async function fetchRunWorkflowPath(repo: string, runId: number): Promise<string | undefined> {
-  return (await gh(["api", `repos/${repo}/actions/runs/${runId}`, "--jq", ".path"]).catch(undefinedIfNotFound))?.trim();
+  return (await gh(["api", `repos/${repo}/actions/runs/${runId}`, "--jq", ".path"]).catch(undefinedIfNotFound))?.trim().replace(/@.*$/, "");
 }
 
 export function parseRunIdFromUrl(text: string): number | undefined {
@@ -101,48 +109,16 @@ export function parseRunIdFromUrl(text: string): number | undefined {
   return runId === undefined ? undefined : Number(runId);
 }
 
-export interface GhWorkflowRunSummary {
-  databaseId: number;
-}
-
-export function pickDispatchedRun(runs: readonly GhWorkflowRunSummary[], baselineId: number): GhWorkflowRunSummary | undefined {
-  return runs.filter((r) => r.databaseId > baselineId).sort((a, b) => b.databaseId - a.databaseId)[0];
-}
-
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-const RUN_LOOKUP_TIMEOUT_MS = 90_000;
-const RUN_LOOKUP_ATTEMPT_TIMEOUT_MS = 15_000;
-const RUN_LOOKUP_INTERVAL_MS = 3_000;
 const RUN_STATUS_RETRY_DELAYS_MS = exponentialDelays({ attempts: 6, baseMs: 5_000, maxMs: 60_000 });
 const JOB_LOG_RETRY_DELAYS_MS = exponentialDelays({ attempts: 3, baseMs: 5_000, maxMs: 10_000 });
 
-async function listRecentRuns(workflow: GhWorkflow, limit: number, user?: string, timeoutMs?: number): Promise<GhWorkflowRunSummary[]> {
-  const stdout = await gh([
-    "run", "list", "--repo", workflow.repo, "--workflow", workflow.workflow, "--event", "workflow_dispatch",
-    ...(user ? ["--user", user] : []),
-    "--limit", String(limit), "--json", "databaseId",
-  ], { timeoutMs });
-  return JSON.parse(stdout) as GhWorkflowRunSummary[];
-}
-
-async function findDispatchedRun(workflow: GhWorkflow, baselineId: number): Promise<number> {
-  const user = (await gh(["api", "user", "--jq", ".login"])).trim();
-  const deadline = Date.now() + RUN_LOOKUP_TIMEOUT_MS;
-  for (;;) {
-    const runs = await listRecentRuns(workflow, 5, user, RUN_LOOKUP_ATTEMPT_TIMEOUT_MS).catch((err: unknown) => {
-      fitCliWarn(`Couldn't list ${workflow.workflow} runs: ${err instanceof Error ? err.message : String(err)}`);
-      return [];
-    });
-    const found = pickDispatchedRun(runs, baselineId);
-    if (found) return found.databaseId;
-    if (Date.now() >= deadline) throw new Error(`no new run by ${user} showed up within ${RUN_LOOKUP_TIMEOUT_MS / 1000}s`);
-    await sleep(RUN_LOOKUP_INTERVAL_MS);
-  }
-}
-
-export async function dispatchWorkflow(workflow: GhWorkflow, fields: Readonly<Record<string, string>>, ref?: string): Promise<number> {
-  const baselineId = (await listRecentRuns(workflow, 1))[0]?.databaseId ?? 0;
+export async function dispatchWorkflow(
+  workflow: GhWorkflow,
+  fields: Readonly<Record<string, string>>,
+  ref?: string,
+): Promise<number | undefined> {
   let output: string;
   try {
     output = await gh(
@@ -152,20 +128,11 @@ export async function dispatchWorkflow(workflow: GhWorkflow, fields: Readonly<Re
   } catch (err) {
     throw new Error(
       `Dispatching ${workflow.workflow} failed (cause below). If it timed out, GitHub may still have accepted it, so check` +
-        ` gh run list --repo ${workflow.repo} --workflow ${workflow.workflow} before dispatching again.`,
+        ` ${ghRunListCommand(workflow)} before dispatching again.`,
       { cause: err },
     );
   }
-  const runId = parseRunIdFromUrl(output);
-  if (runId !== undefined) return runId;
-  console.log(`\ngh didn't report the run it created (an older gh, or GitHub Enterprise Server); looking it up...`);
-  return findDispatchedRun(workflow, baselineId).catch((err: unknown) => {
-    throw new Error(
-      `Dispatched ${workflow.workflow}, but couldn't find the run it created (cause below); it may still be running, so check` +
-        ` gh run list --repo ${workflow.repo} --workflow ${workflow.workflow} before dispatching again.`,
-      { cause: err },
-    );
-  });
+  return parseRunIdFromUrl(output);
 }
 
 export interface GhStepSummary {
