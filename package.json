@@ -57,7 +57,7 @@
     "json5": "^2.2.3",
     "postgres": "^3.4.9",
     "xunit-viewer": "^10.6.1",
-    "yaml": "^2.9.0"
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
