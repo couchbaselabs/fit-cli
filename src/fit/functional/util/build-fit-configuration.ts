@@ -79,6 +79,9 @@ export function firstHostname(defaultHostname: string): string {
  *
  * The REST field uses the management UI hostname (bare, no port) + explicit port 443 so the
  * test-driver's HTTP client reaches the management API on the correct port.
+ *
+ * The FIT proxy supports couchbase2 from transactions-fit-performer SDKQE-2945. Older
+ * test-drivers ignore the proxy block for couchbase2 performers, so it's safe to always emit.
  */
 function cngClusterAccess(cluster: SelectedCluster & { cng: NonNullable<SelectedCluster["cng"]> }): PieceData {
   const firstHost = firstHostname(cluster.defaultHostname);
@@ -96,8 +99,11 @@ function cngClusterAccess(cluster: SelectedCluster & { cng: NonNullable<Selected
     password: cluster.credentials.password,
     rest: { hostname: restHostname, resolveDnsSrv: false, ...(restPort !== undefined ? { port: restPort } : {}) },
     ssh: null,
-    "//": "The FIT proxy does not yet support couchbase2.",
-    proxy: null,
+    proxy: {
+      "//":
+        "The performer is running in Docker and needs to be able to connect to the FIT proxy (the test-driver) running on the host machine",
+      hostname: "host.docker.internal",
+    },
   };
 }
 
