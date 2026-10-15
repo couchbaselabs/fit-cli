@@ -162,7 +162,7 @@ export function printCredentialsDiagnostic(env: NodeJS.ProcessEnv = process.env)
 }
 
 /** Guidance printed on any failure — how to get from "broken" to "working". */
-function printAwsFailureGuidance(profiles: AwsProfilesInfo, _environments: EnvironmentsFile): void {
+function printAwsFailureGuidance(): void {
   console.log("");
   console.log("To fix this, you will need AWS access and to be on the 'cb-sdk' AWS account.  Step-by-step:");
   console.log(`  1. Create an IT ticket asking for access to the 'cb-sdk' tenant.`);
@@ -261,7 +261,7 @@ async function runCheckAwsCredentials(options: CheckAwsCredentialsOptions): Prom
   if (!pre.ok) {
     const message = `Could not find working AWS credentials: ${pre.message}`;
     console.error(`\n✗ ${message}`);
-    printAwsFailureGuidance(profiles, environments);
+    printAwsFailureGuidance();
     return { ok: false, message };
   }
   console.log(`\nAWS identity: ${pre.identity.arn}`);
@@ -271,7 +271,7 @@ async function runCheckAwsCredentials(options: CheckAwsCredentialsOptions): Prom
     const supported = Object.keys(environments.awsTenants).join("/");
     const message = `AWS account ${pre.identity.account} is not a supported fit-cli tenant (need ${supported}).`;
     console.error(`✗ ${message}`);
-    printAwsFailureGuidance(profiles, environments);
+    printAwsFailureGuidance();
     return { ok: false, message };
   }
   console.log(`AWS tenant/account: ${tenant}`);
@@ -280,14 +280,14 @@ async function runCheckAwsCredentials(options: CheckAwsCredentialsOptions): Prom
   if (!assumed.ok) {
     const message = `Could not assume AWS fit-cli-role: ${assumed.message}`;
     console.error(`✗ ${message}`);
-    printAwsFailureGuidance(profiles, environments);
+    printAwsFailureGuidance();
     return { ok: false, message };
   }
 
   const credentials = await extractRawCredentials(env);
   if (typeof credentials === "string") {
     console.error(`✗ ${credentials}`);
-    printAwsFailureGuidance(profiles, environments);
+    printAwsFailureGuidance();
     return { ok: false, message: credentials };
   }
 
