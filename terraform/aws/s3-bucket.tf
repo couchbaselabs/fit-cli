@@ -33,3 +33,14 @@ resource "aws_s3_bucket_lifecycle_configuration" "fit_cli" {
     }
   }
 }
+
+# Nothing in fit-cli needs public access: everything goes through IAM, and the
+# SSM relay's presigned URLs are unaffected by these blocks.
+resource "aws_s3_bucket_public_access_block" "fit_cli" {
+  bucket = aws_s3_bucket.fit_cli.id
+
+  block_public_acls       = true
+  ignore_public_acls      = true
+  block_public_policy     = true
+  restrict_public_buckets = true
+}

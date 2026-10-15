@@ -14,14 +14,15 @@ concurrency:
   group: refresh-fit-tests-cache
   cancel-in-progress: true
 
-permissions:
-  id-token: write   # required for GitHub OIDC
-  contents: write
-  pull-requests: write
+permissions: {}
 
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # required for GitHub OIDC
+      contents: write
+      pull-requests: write
     steps:
       - name: Checkout fit-cli
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

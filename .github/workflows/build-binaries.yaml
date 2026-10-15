@@ -9,12 +9,13 @@ on:
         description: Name of the uploaded artifact containing the linux-x64 binary
         value: ${{ jobs.build.outputs.artifact-name }}
 
-permissions:
-  contents: write   # needed to upload release assets
+permissions: {}
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to upload release assets
     outputs:
       artifact-name: ${{ steps.upload.outputs.artifact-name }}
     steps:
