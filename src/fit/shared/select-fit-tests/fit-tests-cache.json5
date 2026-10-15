@@ -100,6 +100,8 @@
   "java/com/couchbase/client/query/QueryTest.java",
   "java/com/couchbase/client/search/DisconnectTest.java",
   "java/com/couchbase/client/search/ScopedSearchUnsupportedTest.java",
+  "java/com/couchbase/client/search/SearchCustomScriptQueryTest.java",
+  "java/com/couchbase/client/search/SearchCustomScriptQueryUnsupportedTest.java",
   "java/com/couchbase/client/search/SearchTest.java",
   "java/com/couchbase/client/search/SearchXattrsTest.java",
   "java/com/couchbase/client/search/SearchXattrsUnsupportedTest.java",
