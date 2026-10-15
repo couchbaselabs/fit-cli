@@ -11,7 +11,6 @@ import {
   applyFitCliDefaults,
   commandArgs,
   failed,
-  isYes,
   parseDeployArgs,
   parseFollowArgs,
   parseOutputSummaryUiUrl,
