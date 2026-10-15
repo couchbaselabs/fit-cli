@@ -4,9 +4,6 @@ This is a CLI tool to help make FIT easier to use.  It lets you:
 * Run a definition file locally.
 * Run a definition file on a clean AWS EC2 instance you can SSH onto.  This is the exactly same command CI will ultimately execute, so you can reproduce (and debug!) CI locally.
 
-
-If you're new to FIT in general see https://github.com/couchbaselabs/transactions-fit-performer/blob/master/README.md for an intro.
-
 Currently not supported (but we want to get working):
 
 * CNG testing.
