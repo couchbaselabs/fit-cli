@@ -8,14 +8,19 @@
  */
 import type { SlackMessage } from "./slack-parse.js";
 
-/** POST to a Slack Web API method with the bot token; throw on HTTP or `ok:false`. */
+/**
+ * POST to a Slack Web API method with the bot token; throw on HTTP or `ok:false`. `signal`
+ * lets a caller bound the request: without one, a hung connection waits indefinitely.
+ */
 export async function slackApi<T>(
   method: string,
   token: string,
   params: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<T> {
   const response = await fetch(`https://slack.com/api/${method}`, {
     method: "POST",
+    signal,
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
@@ -59,6 +64,7 @@ export async function postMessage(
   text: string,
   threadTs?: string,
   blocks?: unknown[],
+  signal?: AbortSignal,
 ): Promise<string> {
   const params: Record<string, string> = { channel, text };
   if (threadTs) {
@@ -67,7 +73,7 @@ export async function postMessage(
   if (blocks && blocks.length > 0) {
     params.blocks = JSON.stringify(blocks);
   }
-  const data = await slackApi<{ ts: string }>("chat.postMessage", token, params);
+  const data = await slackApi<{ ts: string }>("chat.postMessage", token, params, signal);
   return data.ts;
 }
 

@@ -17,6 +17,7 @@ import { StringDecoder } from "node:string_decoder";
 import { basename, extname, join } from "node:path";
 import { isMain } from "../../../util/non-fit/cli.js";
 import { run } from "../../../util/non-fit/proc.js";
+import { getXmlAttr } from "../../../util/non-fit/xml.js";
 
 interface TestIssue {
   tag: "failure" | "error";
@@ -97,23 +98,6 @@ const OVERSIZED_HEAD_BYTES = 64 * 1024;
  */
 const STREAM_CLIP_SENTINEL = "@@fit-cli-omitted-lines:";
 
-function getAttr(attrs: string, name: string): string {
-  const m = attrs.match(new RegExp(`\\b${name}="([^"]*)"`, "i"));
-  return m ? decodeXmlEntities(m[1]) : "";
-}
-
-/** Decode the five predefined XML entities and numeric character references (e.g. &#10;). */
-function decodeXmlEntities(s: string): string {
-  return s
-    .replace(/&#(\d+);/g, (_: string, n: string) => String.fromCharCode(parseInt(n, 10)))
-    .replace(/&#x([0-9a-fA-F]+);/g, (_: string, h: string) => String.fromCharCode(parseInt(h, 16)))
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'");
-}
-
 /** Strip CDATA section wrappers, returning the unwrapped content. */
 function unwrapCdata(s: string): string {
   return s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1");
@@ -159,14 +143,14 @@ export function parseFailingTestCases(xml: string): FailingTestCase[] {
       const tag = (cm[1] ?? cm[4]) as "failure" | "error";
       const childAttrs = cm[2] ?? cm[5] ?? "";
       const body = unwrapCdata((cm[3] ?? "").trim()).trim();
-      const message = getAttr(childAttrs, "message") || body.split("\n")[0]?.trim() || "";
+      const message = getXmlAttr(childAttrs, "message") || body.split("\n")[0]?.trim() || "";
       issues.push({ tag, message, body });
     }
     if (issues.length > 0) {
       const attrs = m[1];
-      const classname = getAttr(attrs, "classname");
-      const name = getAttr(attrs, "name");
-      const timeMs = Math.round(parseFloat(getAttr(attrs, "time") || "0") * 1000);
+      const classname = getXmlAttr(attrs, "classname");
+      const name = getXmlAttr(attrs, "name");
+      const timeMs = Math.round(parseFloat(getXmlAttr(attrs, "time") || "0") * 1000);
       const stdout = extractTagContent(inner, "system-out");
       const stderr = extractTagContent(inner, "system-err");
       cases.push({
@@ -196,12 +180,12 @@ export function parseJunitData(files: Iterable<{ filename: string; xml: string; 
     const suiteMatch = xml.match(/<testsuite\b([^>]*)>/);
     if (!suiteMatch) continue;
     const attrs = suiteMatch[1];
-    const suiteName = getAttr(attrs, "name") || filename.replace(/^TEST-/, "").replace(/\.xml$/, "");
-    const timeMs = Math.round(parseFloat(getAttr(attrs, "time") || "0") * 1000);
-    const tests = parseInt(getAttr(attrs, "tests") || "0", 10);
-    const failures = parseInt(getAttr(attrs, "failures") || "0", 10);
-    const errors = parseInt(getAttr(attrs, "errors") || "0", 10);
-    const skipped = parseInt(getAttr(attrs, "skipped") || "0", 10);
+    const suiteName = getXmlAttr(attrs, "name") || filename.replace(/^TEST-/, "").replace(/\.xml$/, "");
+    const timeMs = Math.round(parseFloat(getXmlAttr(attrs, "time") || "0") * 1000);
+    const tests = parseInt(getXmlAttr(attrs, "tests") || "0", 10);
+    const failures = parseInt(getXmlAttr(attrs, "failures") || "0", 10);
+    const errors = parseInt(getXmlAttr(attrs, "errors") || "0", 10);
+    const skipped = parseInt(getXmlAttr(attrs, "skipped") || "0", 10);
     const passed = Math.max(0, tests - failures - errors - skipped);
 
     const dotIdx = suiteName.lastIndexOf(".");

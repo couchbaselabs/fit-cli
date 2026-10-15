@@ -164,18 +164,13 @@ export function printCredentialsDiagnostic(env: NodeJS.ProcessEnv = process.env)
 /** Guidance printed on any failure — how to get from "broken" to "working". */
 function printAwsFailureGuidance(profiles: AwsProfilesInfo, _environments: EnvironmentsFile): void {
   console.log("");
-  console.log("To fix this:");
-  console.log(`  1. You will need AWS access if you don't have it already, and be on the "cb-sdk" account:
-      Install aws cli (https://aws.amazon.com/cli/).
-      Create an IT ticket asking for access to the "cb-sdk" tenant.`);
-  console.log(`  2. Make sure you've logged into AWS recently so your cached credentials are up-to-date:`);
-  console.log(`       aws configure --profile cb-sdk`);
-  console.log(`       aws sso login    (if you use AWS SSO)`);
-  if (profiles.profiles.length > 1) {
-    console.log(`  3. You have multiple AWS profiles configured (note you have ${profiles.profiles.map((p) => p.name).join(", ")}).`);
-    console.log(`     Then run with the right one with (note that only "cb-sdk" is supported):`);
-    console.log(`       AWS_PROFILE="cb-sdk" fit ...`);
-  }
+  console.log("To fix this, you will need AWS access and to be on the 'cb-sdk' AWS account.  Step-by-step:");
+  console.log(`  1. Create an IT ticket asking for access to the 'cb-sdk' tenant.`);
+  console.log(`  2. Login on AWS console (https://us-east-1.console.aws.amazon.com)`);
+  console.log(`  3. Create a long-lived access key on https://us-east-1.console.aws.amazon.com/iam/home?region=us-west-2#/security_credentials?section=IAM_credentials`);
+  console.log("  4. Run `aws configure --profile cb-sdk` and provide your new access key");
+  console.log("  5. Sanity check: Run `AWS_PROFILE=cb-sdk aws ec2 describe-instances` - if that fails, you have an AWS issue to fix");
+  console.log('  6. Run fit-cli using that profile: `AWS_PROFILE="cb-sdk" fit ...`');
 }
 
 /** Raw credential values for `env`: explicit env vars first, then the SDK provider chain. */

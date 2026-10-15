@@ -1,0 +1,8 @@
+run-dotnet-fit / run-fit-preset	UNKNOWN STEP	2026-07-31T00:28:28.6641363Z ^[[36;1mfit run preset "op-multi-lite" --performer-image-name "dotnet-fit-performer:main"^[[0m
+run-dotnet-fit / run-fit-preset	UNKNOWN STEP	2026-07-31T00:28:33.4029119Z [00:28:33] Ran with: fit run preset op-multi-lite --performer-image-name dotnet-fit-performer:main
+run-dotnet-fit / run-fit-preset	UNKNOWN STEP	2026-07-31T00:28:33.4086179Z [00:28:33] === Running preset 1/5: op-onprem-func-lite ===
+run-dotnet-fit / run-fit-preset	UNKNOWN STEP	2026-07-31T00:30:10.5104892Z [00:30:10^[[90m·^[[0maws1] FitCliError/FatalToCluster: ^[[31mCannot reach the observability collector at performance-sdk.couchbase.com:10003 from the remote instance. Functional observability tests will hang until they time out if it's unreachable.^[[0m
+run-dotnet-fit / run-fit-preset	UNKNOWN STEP	2026-07-31T00:30:11.5153973Z [00:30:11] === Running preset 2/5: op-cng-func-lite ===
+run-dotnet-fit / run-fit-preset	UNKNOWN STEP	2026-07-31T00:31:43.0492732Z [00:31:43^[[90m·^[[0maws1] FitCliError/FatalToCluster: ^[[31mCannot reach the observability collector at performance-sdk.couchbase.com:10003 from the remote instance. Functional observability tests will hang until they time out if it's unreachable.^[[0m
+run-dotnet-fit / run-fit-preset	UNKNOWN STEP	2026-07-31T00:31:43.9413880Z [00:31:43] === Running preset 3/5: op-cng-sit-lite ===
+run-dotnet-fit / run-fit-preset	UNKNOWN STEP	2026-07-31T00:32:20.3647107Z [00:32:20] FitCliError: ^[[31mssh exited with code 255^[[0m

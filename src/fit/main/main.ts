@@ -21,6 +21,7 @@ import { runRunMain } from "../run/run.js";
 import { runPresetWizard } from "../definition/preset-wizard/preset-wizard.js";
 import { runArchiveMain } from "../archive/archive.js";
 import { runCapsMain } from "../caps/caps.js";
+import { runHealthMain } from "../health/health.js";
 import { runIngestMain } from "../ingest/ingest.js";
 import { runExternalServicesMain } from "../external-services/external-services-cli.js";
 import { runConfigMain } from "../config/config.js";
@@ -95,7 +96,7 @@ export async function chooseWorkflow(
         { name: "Run or share a recently generated definition file", value: "recent-definitions" },
         { name: "Run a FIT definition file", value: "run-definition" },
         { name: "Deploy a Capella sandbox control plane", value: "sandbox-deploy" },
-        { name: "Configure fit-cli (recommended)", value: "configure" },
+        { name: "Configure fit-cli (not needed for simple workflows)", value: "configure" },
       ] as const)
     : WORKFLOW_CHOICES;
 
@@ -235,6 +236,7 @@ const COMMANDS: Record<string, { fn: () => void; description: string; hidden?: b
   "performer":       { fn: runPerformerMain,        description: "Build FIT performer images from an SDK repo ref" },
   "sandbox":         { fn: runSandboxMain,          description: "Deploy a Capella sandbox control plane" },
   "caps":            { fn: runCapsMain,             description: "Show the FIT capabilities each SDK's performer reports" },
+  "health":          { fn: runHealthMain,           description: "Which FIT tests fail consistently or intermittently, per SDK", machineOutput: (args) => args[0] === "opt-ins" && args.includes("--json") },
   "external-services": { fn: runExternalServicesMain, description: "Manage fit-cli's per-box ephemeral external services (otel: collector, Jaeger, Prometheus)" },
   "secrets":         { fn: runSecretsMain,          description: "Manage AWS secrets", hidden: true },
   "slack":           { fn: runSlackMain,             description: "Post a combined Slack summary", hidden: true },

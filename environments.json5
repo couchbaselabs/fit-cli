@@ -60,13 +60,13 @@
     cngPreviousClusterVersion: "8.0.2-5503",
 
     // Default self-managed Enterprise Analytics build passed to cbdinocluster.
-    enterpriseAnalyticsVersion: "2.2.0-1166",
+    enterpriseAnalyticsVersion: "2.3.0-1237",
 
     // Default self-managed Operational Insights build passed to cbdinocluster, used by the
     // insights-func-* presets. Operational Insights is the renamed Enterprise Analytics:
     // cbdinocluster pulls 3.x+ from ghcr.io/cb-vanilla/operational-insights (2.x from
-    // enterprise-analytics). 3.0.0-1084 is RC1.
-    operationalInsightsVersion: "3.0.0-1084",
+    // enterprise-analytics).
+    operationalInsightsVersion: "3.0.0-1092",
 
     // Default Couchbase Autonomous Operator version for CNG/Protostellar support
     // (the ROSA/cao deployer). No build number, so cbdinocluster resolves this to the
