@@ -252,7 +252,9 @@ function drawAt(s, link) {
 function panel(s) {
   const p = document.createElement("section");
   p.className = "panel";
-  const title = `<h4><a href="${encodeURIComponent(s.sdk)}/" aria-label="${esc(s.name)}">${esc(s.product)}</a></h4>`;
+  // The accessible name must contain the visible label (WCAG 2.5.3): "Java SDK", "Java Operational Insights".
+  const label = s.product === "SDK" ? `${s.name} SDK` : s.name;
+  const title = `<h4><a href="${encodeURIComponent(s.sdk)}/" aria-label="${esc(label)}">${esc(s.product)}</a></h4>`;
   if (s.missing) {
     p.innerHTML = `<div class="panel-head">${title}</div><p class="missing">No report data to chart. Open the SDK's page.</p>`;
     return p;
