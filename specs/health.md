@@ -13,7 +13,7 @@ Records come from two sources, recorded on each record as `source`:
 - `run-archive-junit` - rebuilt from the JUnit reports in each run's S3 archive (`s3://fit-cli/runs/`, kept 180 days). Almost every record comes from here.
 - `run-log-scrape` - read from the run's GitHub Actions log (kept 90 days), only when there is no usable archive. Logs name only failing tests, and at most 3 per Java package, so these records undercount failures.
 
-A situational test passes in JUnit whatever its scenario scored, but a score below zero is a failure (the driver's Scorer gives -100 or -50 for errors, too few successes, or a slow or weak rebound; fit-cli fails the job on it). So a situational record also reads the run's `results.tar` from the archive (kept since 9 Sep 2026): each scenario's `scores.json5`, matched to its test through the `runUuid=` the test logs. A test whose scenario scored below zero is failed, and the record's `scoreFailures` gives the score and the Scorer's reasons, with `was` (`passed` or `skipped`) when the score is what failed it; a test JUnit had already failed keeps its outcome and has no `was`. `check` expects only the tests with a `was` to be missing from the log, which prints no failure line for a score. A score that can't be read, or isn't a finite number, is a warning, never a failure. Older archives keep JUnit's outcomes.
+A situational record also reads the scenario scores in the run's `results.tar`, and a test whose score fails it is recorded as failed, in `scoreFailures`.
 
 Nothing here changes how a test run behaves: records are built afterwards, by reading each nightly's log and archive. (A third source, `fit-cli`, is reserved for records `fit run` may one day write itself at the end of a run.)
 
@@ -62,7 +62,7 @@ Each entry in `tests[]` is one test:
 - `cls` is the class (see "Classification"), with `since` (when the current failure run started; `sinceFirstNight` is set when that is the series' first night, so the real start is not known), `streak`, `episodes`, `windowFails` and `windowRuns`, `lastFail`, `lastPass`, `lastRan`, and, for a test that stopped running, `lastResult` and `notRunSince`.
 - `lastEpisode` (`from`, `to`, `nights`) is the most recent unbroken run of failures. `lastGood` is the last night it passed before that run. If it never passed before, `previousNight` is the night before the run. Use these dates to look up `series[].nights`.
 - `fix` is a known fix, from the SDK's notes.
-- `scores`, for a situational test: each night it failed on a score below zero, with the `score` and `reasons`.
+- `scores`, for a situational test: each night its score failed it, with the `score` and `reasons`.
 - `sdkChange`, `driverChanges` and `changeAnalysis` tell what changed between the baseline night (`lastGood`, else `previousNight`) and `lastEpisode.from` (see below). `crossSdk` tells how the other SDKs do with the same test (see "Across SDKs"). These fields are only on tests that are not dormant, in series that are active.
 
 ### What changed
