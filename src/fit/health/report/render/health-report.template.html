@@ -95,6 +95,9 @@ code, .mono { font-family: var(--mono); font-size: .92em; }
 a { color: var(--series-1); }
 
 header { padding-top: 40px; display: flex; flex-direction: column; gap: 14px; }
+.crumbs { font-size: 13px; color: var(--muted); }
+.crumbs a { text-decoration: none; }
+.crumbs a:hover { text-decoration: underline; }
 .lede { font-size: 17px; max-width: 64ch; color: var(--ink-2); }
 .meta { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--muted); font-size: 13px; }
 
@@ -204,6 +207,8 @@ details.dormant summary:focus-visible { outline: 2px solid var(--series-1); outl
 .night-series { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 1px solid var(--rule); }
 .night-series:first-of-type { border-top: 0; padding-top: 0; }
 .night-series .counts { font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.night-series .series-head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+.night-series .series-head a { font-size: 13px; }
 .night-series .items li { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 6px 0; }
 .strip i.sel { outline: 2px solid var(--ink); outline-offset: 1px; }
 .chart-box #hit { cursor: pointer; }
@@ -248,6 +253,7 @@ footer { color: var(--muted); font-size: 12.5px; border-top: 1px solid var(--rul
 
 <div class="wrap">
   <header>
+    <nav class="crumbs" aria-label="Breadcrumb"><a href="../">FIT Health</a> / __SDK_NAME__</nav>
     <div class="eyebrow">Couchbase __SDK_NAME__ SDK · FIT nightly</div>
     <h1>__SDK_NAME__ FIT Health</h1>
     <p class="lede" id="lede"></p>
@@ -413,6 +419,8 @@ const groups = DG.startedGroups;
 const TESTS = new Map(D.series.map((s) => [s.id, new Map(s.tests.map((t) => [t.test, t]))]));
 const testOf = (seriesId, test) => (TESTS.get(seriesId) || new Map()).get(test);
 // The SDK commit a night tested, from the first series that ran then.
+// A night's CI run on GitHub Actions (the night names its repo when it isn't the report's).
+const runUrl = (n) => `https://github.com/${esc(n.repo || D.repo)}/actions/runs/${n.runId}/attempts/${n.attempt}`;
 const commitOn = (d) => { for (const s of D.series) { const n = s.nights[d]; if (n && n.sdkCommit) return n.sdkCommit.slice(0, 9); } return null; };
 // No change to this SDK's code between a test's last good night and the night it started
 // failing (path-aware: changes.ts), when that was looked up.
@@ -432,7 +440,7 @@ function changeLine(t) {
   if (drv && (drv.from.gerritRef || drv.to.gerritRef) && a.category === 'unknown') parts.push(`the driver's pinned Gerrit patchset changed`);
   return parts.length ? `<div class="sub">${parts.join(' · ')}</div>` : '';
 }
-// The same test on the other SDKs (fit health cross), when the reports were compared.
+// The same test on the other SDKs (fit health site), when the reports were compared.
 const sdkNames = (xs) => xs.map((x) => esc(D.sdkNames[x] || x)).join(', ');
 function crossLine(t) {
   const x = t && t.crossSdk;
@@ -451,7 +459,7 @@ $('new').innerHTML = groups.map((g) => {
   const commit = sdkUnchanged(t) ? `<span>no SDK change since ${fmt(t.lastGood || t.previousNight)}${sc.from === sc.to ? ` (<code>${short(sc.from)}</code> both nights)` : ''}</span>` : '';
   const change = changeLine(t);
   const cross = crossLine(t);
-  return `<li>${names}<div class="sub"><span class="num">since ${fmt(g.since)} · ${g.nights} nights</span><span>${esc(g.where)}</span>${commit}</div>${change}${cross ? `<div class="sub">${cross}</div>` : ''}</li>`;
+  return `<li>${names}<div class="sub"><span class="num">since <a href="#night-${g.since}">${fmt(g.since)}</a> · ${g.nights} nights</span><span>${esc(g.where)}</span>${commit}</div>${change}${cross ? `<div class="sub">${cross}</div>` : ''}</li>`;
 }).join('') || `<li class="sub">Nothing started failing in the last ${RECENT} days.</li>`;
 const unchanged = groups.filter((g) => sdkUnchanged(testOf(g.series, g.tests[0]))).length;
 $('new-callout').innerHTML = unchanged ? `${unchanged} of these groups began with no change to the SDK since the test last passed.` : '';
@@ -666,7 +674,9 @@ document.addEventListener('mouseover', (e) => {
 // ----- one night: what ran and which tests failed, per series
 function nightSeries(s, d) {
   const t = s.testCounts && s.testCounts[d];
-  const label = `<h3>${esc(s.label)}</h3>`;
+  const n = s.nights[d];
+  const run = n ? `<a href="${runUrl(n)}"${n.job ? ` title="${esc(n.job)}"` : ''}>GitHub Actions run</a>` : '';
+  const label = `<div class="series-head"><h3>${esc(s.label)}</h3>${run}</div>`;
   if (!t) return `<div class="night-series">${label}<p class="counts">${d < (s.ran[0] || '') ? 'Not running yet.' : 'No results this night: the run aborted, or this preset did not run.'}</p></div>`;
   const i = s.ran.indexOf(d);
   const failed = i < 0 ? [] : s.tests.filter((x) => x.seq[i] === 'f' || x.seq[i] === 'e');
@@ -710,6 +720,6 @@ $('footer').innerHTML = [
   D.blackout.length ? `<span>Nights with no usable functional results: ${D.blackout.map(fmt).join(', ')}.</span>` : '',
   (() => { const n = FUNC.reduce((a, s) => a + (s.stoppedRunningEarlier || 0), 0); return n ? `<span>${n} test${n > 1 ? 's' : ''} that failed and then stopped running more than ${RECENT} days ago ${n > 1 ? 'are' : 'is'} no longer shown.</span>` : ''; })(),
   OLD.length ? `<span>Older series not shown (no runs in the last ${WIN} days): ${OLD.map((s) => `${esc(s.label)} (${s.ran.length ? `${fmt(s.ran[0])}–${fmt(s.ran[s.ran.length - 1])}` : 'no results'})`).join('; ')}.</span>` : '',
-  D.source.unreadableRuns.length ? `<span>Runs with no usable log: ${D.source.unreadableRuns.map((r) => `${fmt(r.date)} (${esc(r.status)})`).join(', ')}.</span>` : '',
+  D.source.unreadableRuns.length ? `<span>Runs with no usable log: ${D.source.unreadableRuns.map((r) => `${D.repo ? `<a href="https://github.com/${esc(D.repo)}/actions/runs/${r.runId}">${fmt(r.date)}</a>` : fmt(r.date)} (${esc(r.status)})`).join(', ')}.</span>` : '',
 ].filter(Boolean).join('');
 </script>

@@ -3,6 +3,7 @@ This is a CLI tool to help make FIT easier to use.  It lets you:
 * Generate a YAML/JSON5 definition file that will let you run functional FIT tests against any SDK.  (And later: FIT/SIT and FIT/PERF)
 * Run a definition file locally.
 * Run a definition file on a clean AWS EC2 instance you can SSH onto.  This is the exactly same command CI will ultimately execute, so you can reproduce (and debug!) CI locally.
+* See which FIT tests each SDK fails, night by night (`fit health`; see [FIT health](#fit-health)).
 
 Currently not supported (but we want to get working):
 
@@ -121,7 +122,7 @@ User-facing (using the installed binary):
 - `fit sandbox deploy [--auto] | follow <run>` — deploy a Capella sandbox control plane through GitHub Actions (or pick up a deploy run already started), wait for it, and print its summaries.
 - `fit caps table | sync` — show which FIT capabilities each SDK's performer reports (see Capabilities).
 - `fit health report | backfill | check | reparse | import-logs | notes | settings <sdk>` — which FIT tests an opted-in SDK fails consistently or intermittently, and what started or stopped failing, from its nightly runs; `notes` and `settings` show or set its hand-written notes and where its output goes (see `specs/health.md`).
-- `fit health cross` — compare every SDK's report: how the other SDKs fare on each failing test. `fit health overview` writes the site's top page: each SDK's last 30 nights, one chart each. `fit health opt-ins` lists the opted-in SDKs.
+- `fit health site` — build the health Pages site from one run's reports: how the other SDKs fare on each failing test, each SDK's page, and the top page (each SDK's last 30 nights, one chart each). `fit health opt-ins` lists the opted-in SDKs.
 - `fit ingest situational` drains the situational results uploaded to `s3://fit-cli/incoming/` into the perf Postgres database, moving each run to `processed/` or `failed/`. A run is only taken once it holds a `.done` marker, which the uploader writes as the last object of the run, so a half-uploaded run is never read. Meant for the cron on the database host, which connects as the `results_ingester` role and reads its password from the AWS Secrets Manager secret `performance-sdk/results-ingester` using its own IAM role (see `--help`).
 - `fit external-services otel start | stop` — start or stop the local otel stack (an OTel collector, Jaeger and Prometheus) for manual testing. A functional `fit run` already does this automatically.
 - `fit external-services otel replay <dump-dir>` — bring the Jaeger and Prometheus UIs back up over a finished run's traces and metrics.
@@ -162,6 +163,16 @@ go unnoticed.
 
 Note the Analytics performers don't implement this call (they use the separate columnar-test-driver), so
 they aren't queried by default.
+
+## FIT health
+Which FIT tests each SDK fails, from its nightly runs: what fails every night, what fails some nights, and what started or stopped failing recently. A workflow here (`.github/workflows/health.yaml`) builds it daily for each opted-in SDK.
+
+- **Reports:** https://performance-sdk.couchbase.com/fit-health - one page per SDK, and a top page with each SDK's last 30 nights. The site is private: sign in to GitHub with an account that can read `couchbaselabs/fit-health` (any member of the Couchbase GitHub enterprise).
+- **Slack:** an SDK can get a daily digest in its own channel: `fit health settings <sdk> --slack-channel <id>`.
+- **Opting an SDK in:** one entry in `src/fit/health/registry/health-opt-ins.ts`.
+- **Locally:** `fit health report <sdk> --store s3://fit-cli/health-dev/` builds the same report from the shared store (needs AWS access), prints a summary, and writes the page to the run's artifact directory.
+
+See `specs/health.md` for how it works.
 
 ## General rules
 Everyone - AI and human - please follow these as best you can.

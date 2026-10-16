@@ -21,6 +21,12 @@ export interface RecordComparison {
    * undercounts failures on such nights.
    */
   hiddenByCap: string[];
+  /**
+   * Situational tests JUnit-built records fail on a score below zero (see situational-scores.ts).
+   * The log prints no failure line for a score, so these are expected too, and left out of the
+   * counts compared.
+   */
+  scoredBelowZero: string[];
   onlyLog: string[];
   countsJunit?: RunRecord["counts"];
   countsLog?: RunRecord["counts"];
@@ -44,7 +50,12 @@ export const asLogged = (id: string) => id.replace(/^[^.]*\//, "");
 export function compareRecords(junit: RunRecord, scraped: RunRecord): RecordComparison {
   const j = new Set(failingTests(junit).map(asLogged));
   const l = new Set(failingTests(scraped));
-  const missing = [...j].filter((t) => !l.has(t)).sort();
+  // Only a test its score moved to failed (`was`) is expected to be missing from the log: one
+  // JUnit had already failed or errored is a failure the log should name like any other.
+  const scored = new Map<string, "passed" | "skipped">();
+  for (const [t, f] of Object.entries(junit.scoreFailures ?? {})) if (f.was) scored.set(asLogged(t), f.was);
+  const scoredBelowZero = [...scored.keys()].filter((t) => j.has(t) && !l.has(t)).sort();
+  const missing = [...j].filter((t) => !l.has(t) && !scored.has(t)).sort();
   // Class-level errors, by the name the log prints (a reused class name is one name there).
   const cj = [...new Set(classErrors(junit).map(asLogged))].sort();
   const clog = classErrors(scraped);
@@ -79,7 +90,14 @@ export function compareRecords(junit: RunRecord, scraped: RunRecord): RecordComp
   const onlyLog = [...l].filter((t) => !j.has(t)).sort();
   const classErrorsOnlyJunit = missingClasses.filter((c) => !hiddenByCap.includes(c));
   const classErrorsOnlyLog = clog.filter((c) => !cj.includes(c));
-  const ce = junit.counts;
+  // A scored-below-zero test is one test case the log's table counted where JUnit had it.
+  const ce = junit.counts && { ...junit.counts };
+  if (ce) {
+    for (const t of scoredBelowZero) {
+      ce[scored.get(t)!]++;
+      ce.failed--;
+    }
+  }
   const cl = scraped.counts;
   const countsAgree = !!ce && !!cl && ce.passed === cl.passed && ce.failed === cl.failed && ce.errored === cl.errored && ce.skipped === cl.skipped;
   return {
@@ -87,6 +105,7 @@ export function compareRecords(junit: RunRecord, scraped: RunRecord): RecordComp
     agree: onlyJunit.length === 0 && onlyLog.length === 0 && countsAgree && classErrorsOnlyJunit.length === 0 && classErrorsOnlyLog.length === 0,
     onlyJunit,
     hiddenByCap,
+    scoredBelowZero,
     onlyLog,
     countsJunit: ce,
     countsLog: cl,

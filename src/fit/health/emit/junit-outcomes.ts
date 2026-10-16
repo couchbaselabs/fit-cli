@@ -11,7 +11,10 @@
  */
 import { classKey, splitVariant } from "./test-identity.js";
 import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { StringDecoder } from "node:string_decoder";
 import { createGunzip } from "node:zlib";
+import tar from "tar-stream";
 import { addOutcome, addVariant, type ClassOutcomes, type ResultCounts } from "../record/run-record.js";
 import { getXmlAttr } from "../../../util/non-fit/xml.js";
 export { decodeXmlEntities } from "../../../util/non-fit/xml.js";
@@ -23,6 +26,11 @@ export interface JunitOutcomes {
   counts: ResultCounts;
   /** TEST-*.xml files read. */
   files: number;
+  /**
+   * Test id -> the situational run UUIDs its captured output names (see StreamSectionStripper).
+   * How a situational scenario's score is tied to its test; empty for functional runs.
+   */
+  runUuids: Record<string, string[]>;
 }
 
 /**
@@ -44,6 +52,7 @@ export function junitOutcomes(xmls: Iterable<string>): JunitOutcomes {
   const failedAs = new Map<string, Set<string>>();
   const packages: Record<string, string> = {};
   const counts: ResultCounts = { passed: 0, failed: 0, errored: 0, skipped: 0 };
+  const runUuids: Record<string, string[]> = {};
   let files = 0;
   const caseRe = /<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g;
   for (const xml of xmls) {
@@ -67,23 +76,44 @@ export function junitOutcomes(xmls: Iterable<string>): JunitOutcomes {
       if (!prev || RANK[outcome] > RANK[prev]) worst.set(id, outcome);
       const { variant } = splitVariant(name);
       if (variant && (outcome === "f" || outcome === "e")) (failedAs.get(id) ?? failedAs.set(id, new Set()).get(id)!).add(variant);
+      for (const u of inner.matchAll(RUN_UUID)) {
+        const list = (runUuids[id] ??= []);
+        if (!list.includes(u[1])) list.push(u[1]);
+      }
     }
   }
   const tests: Record<string, ClassOutcomes> = {};
   for (const [id, outcome] of [...worst.entries()].sort(([a], [b]) => a.localeCompare(b))) addOutcome(tests, id, outcome);
   for (const [id, variants] of failedAs) for (const v of [...variants].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))) addVariant(tests, id, v);
-  return { tests, packages, counts, files };
+  return { tests, packages, counts, files, runUuids };
 }
+
+/**
+ * A situational run's UUID, as the driver logs it ("... for situationalRunUuid <uuid> and
+ * runUuid=<uuid>") and as StreamSectionStripper keeps it (`<!--runUuid=<uuid>-->`).
+ */
+const RUN_UUID = /runUuid=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/g;
 
 /**
  * Drops <system-out>/<system-err> bodies from XML arriving in chunks. Those sections are
  * captured test output, can run to gigabytes (a single night's reports once expanded past
- * 4 GB), and say nothing about outcomes.
+ * 4 GB), and say nothing about outcomes - except, for a situational test, which scenario run
+ * it was. So a `runUuid=` the output names is kept, as a `<!--runUuid=…-->` comment where the
+ * section was: the testcase it sits in is the test that run's score belongs to.
  */
 export class StreamSectionStripper {
   private kept: string[] = [];
   private carry = "";
   private closeTag: string | undefined;
+  /** The run UUIDs the open section has named so far, and its last few characters, so a match split across chunks is still seen. */
+  private uuids = new Set<string>();
+  private scanTail = "";
+
+  private scan(dropped: string): void {
+    const text = this.scanTail + dropped;
+    for (const m of text.matchAll(RUN_UUID)) this.uuids.add(m[1]);
+    this.scanTail = text.slice(-64);
+  }
 
   push(chunk: string): void {
     let s = this.carry + chunk;
@@ -93,9 +123,15 @@ export class StreamSectionStripper {
         const end = s.indexOf(this.closeTag);
         if (end < 0) {
           // Keep enough of the tail to spot a close tag split across chunks.
-          this.carry = s.slice(-this.closeTag.length);
+          const cut = Math.max(0, s.length - this.closeTag.length);
+          this.scan(s.slice(0, cut));
+          this.carry = s.slice(cut);
           return;
         }
+        this.scan(s.slice(0, end));
+        for (const u of this.uuids) this.kept.push(`<!--runUuid=${u}-->`);
+        this.uuids.clear();
+        this.scanTail = "";
         s = s.slice(end + this.closeTag.length);
         this.closeTag = undefined;
         continue;
@@ -120,89 +156,53 @@ export class StreamSectionStripper {
     this.kept = [];
     this.carry = "";
     this.closeTag = undefined;
+    this.uuids.clear();
+    this.scanTail = "";
     return out;
   }
 }
 
 /**
+ * The regular files in a tar archive (gzipped or not), streamed: each file whose name `want`
+ * accepts is handed to `read` as it arrives, the rest are skipped, and the archive is never
+ * held expanded. tar-stream resolves long names (GNU `L` entries, pax `path=`), which test
+ * classes with long names need: ignoring them once silently dropped 11 of a night's 288 reports.
+ */
+export async function forEachTarFile(
+  archive: Buffer,
+  opts: { gzip: boolean },
+  want: (name: string) => boolean,
+  read: (name: string, data: AsyncIterable<Buffer>) => Promise<void>,
+): Promise<void> {
+  const extract = tar.extract();
+  const source = Readable.from([archive]);
+  // pipeline, not pipe(): pipe() doesn't pass a gunzip error on, so a truncated or corrupt
+  // archive raised an unhandled 'error' event and took the whole process down. pipeline
+  // destroys extract with the error, which ends the loop below with it. Marked handled here,
+  // since the loop may be the one to fail first; it's awaited at the end either way.
+  const piped = opts.gzip ? pipeline(source, createGunzip(), extract) : pipeline(source, extract);
+  piped.catch(() => {});
+  for await (const entry of extract) {
+    const { name, type } = entry.header;
+    if (type === "file" && want(name)) await read(name, entry);
+    else entry.resume();
+  }
+  await piped;
+}
+
+/**
  * The TEST-*.xml files inside a `.tar.gz`, as fit-cli writes surefire-reports.tar.gz, with
- * captured test output removed. Streams: the archive is decompressed a chunk at a time and
- * never held whole.
- *
- * A minimal tar reader for regular files, plus the two ways tar records a name longer than
- * the header's 100 bytes: GNU tar (which makes fit-cli's archives) writes an `L` entry whose
- * data is the next entry's name, and POSIX/bsdtar writes a pax `x` header with `path=`.
- * Test classes with long names are common enough that ignoring these silently dropped 11 of
- * one night's 288 reports.
+ * captured test output removed as it streams (see StreamSectionStripper).
  */
 export async function junitXmlFromTarGz(archive: Buffer): Promise<string[]> {
   const out: string[] = [];
-  let buf: Buffer = Buffer.alloc(0);
-  // State for the entry being read.
-  let remaining = 0;
-  let padding = 0;
-  let entry: { kind: "xml"; stripper: StreamSectionStripper } | { kind: "meta"; type: string; parts: Buffer[] } | { kind: "skip" } | undefined;
-  let longName: string | undefined;
-  let ended = false;
-
-  const finishEntry = () => {
-    if (!entry) return;
-    if (entry.kind === "xml") out.push(entry.stripper.finish());
-    else if (entry.kind === "meta") {
-      const text = Buffer.concat(entry.parts).toString("utf8");
-      longName = entry.type === "L" ? text.replace(/\0.*$/s, "") : (/(?:^|\n)\d+ path=([^\n]*)\n/.exec(text)?.[1] ?? longName);
-    }
-    entry = undefined;
-  };
-
-  const consume = () => {
-    for (;;) {
-      if (entry) {
-        const n = Math.min(remaining, buf.length);
-        const piece = buf.subarray(0, n);
-        if (entry.kind === "xml") entry.stripper.push(piece.toString("utf8"));
-        else if (entry.kind === "meta") entry.parts.push(Buffer.from(piece));
-        buf = buf.subarray(n);
-        remaining -= n;
-        if (remaining > 0) return;
-        finishEntry();
-        continue;
-      }
-      if (padding) {
-        const n = Math.min(padding, buf.length);
-        buf = buf.subarray(n);
-        padding -= n;
-        if (padding) return;
-      }
-      if (ended || buf.length < 512) return;
-      const header = buf.subarray(0, 512);
-      buf = buf.subarray(512);
-      if (header.every((b) => b === 0)) {
-        ended = true;
-        return;
-      }
-      const field = (start: number, len: number) => header.subarray(start, start + len).toString("utf8").replace(/\0.*$/s, "");
-      const size = parseInt(field(124, 12).trim() || "0", 8);
-      const type = field(156, 1);
-      remaining = size;
-      padding = (512 - (size % 512)) % 512;
-      if (type === "L" || type === "x") {
-        entry = { kind: "meta", type, parts: [] };
-      } else {
-        const name = longName ?? (field(345, 155) ? `${field(345, 155)}/` : "") + field(0, 100);
-        longName = undefined;
-        const base = name.slice(name.lastIndexOf("/") + 1);
-        entry = (type === "0" || type === "") && /^TEST-.*\.xml$/.test(base) ? { kind: "xml", stripper: new StreamSectionStripper() } : { kind: "skip" };
-      }
-      if (remaining === 0) finishEntry();
-    }
-  };
-
-  for await (const chunk of Readable.from([archive]).pipe(createGunzip())) {
-    buf = buf.length ? Buffer.concat([buf, chunk as Buffer]) : (chunk as Buffer);
-    consume();
-    if (ended) break;
-  }
-  consume();
+  const isReport = (name: string) => /^TEST-.*\.xml$/.test(name.slice(name.lastIndexOf("/") + 1));
+  await forEachTarFile(archive, { gzip: true }, isReport, async (_name, data) => {
+    const stripper = new StreamSectionStripper();
+    const decoder = new StringDecoder("utf8");
+    for await (const chunk of data) stripper.push(decoder.write(chunk));
+    stripper.push(decoder.end());
+    out.push(stripper.finish());
+  });
   return out;
 }

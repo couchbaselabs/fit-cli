@@ -72,6 +72,8 @@ export interface ArchiveUpgrade {
   attempts: number;
   /** The JUnit reader that built `upgraded` (see JUNIT_READER_VERSION); absent means junit-1. */
   reader?: string;
+  /** What the read noticed but didn't stop for, e.g. a situational score no test claims. */
+  warnings?: string[];
 }
 
 /**
@@ -79,8 +81,9 @@ export interface ArchiveUpgrade {
  * then re-reads every archive still in S3. junit-2: package-qualified class names where the
  * driver reuses one (kv/GetTest), and no class-level error for a skipped nested class.
  * junit-3: a parameterised test's variants are one test, with the failing variants kept (v).
+ * junit-4: a situational test whose scenario scored below zero is failed.
  */
-export const JUNIT_READER_VERSION = "junit-3";
+export const JUNIT_READER_VERSION = "junit-4";
 
 export const MAX_FETCH_ATTEMPTS = 5;
 

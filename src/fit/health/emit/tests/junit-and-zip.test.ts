@@ -11,12 +11,13 @@
  *   node --import tsx --test src/fit/health/emit/tests/junit-and-zip.test.ts
  */
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { gzipSync } from "node:zlib";
-import { StreamSectionStripper, canonicalTestName, decodeXmlEntities, junitOutcomes, junitXmlFromTarGz } from "../junit-outcomes.js";
+import { StreamSectionStripper, canonicalTestName, decodeXmlEntities, forEachTarFile, junitOutcomes, junitXmlFromTarGz } from "../junit-outcomes.js";
 import { extractMember, findCentralDirectory, parseCentralDirectory } from "../s3-zip.js";
+import { tar, tarGz } from "./tar-fixture.js";
 
 const FIXTURES = join(import.meta.dirname, "fixtures");
 
@@ -74,22 +75,6 @@ for (const fixture of ["run.zip", "run-zip64.zip"]) {
   });
 }
 
-/** A tar archive built by hand: `entries` are [header name, type, data]. */
-function tarGz(entries: [string, string, string][]): Buffer {
-  const blocks: Buffer[] = [];
-  for (const [name, type, data] of entries) {
-    const h = Buffer.alloc(512);
-    h.write(name.slice(0, 100), 0, "utf8");
-    h.write(Buffer.byteLength(data).toString(8).padStart(11, "0") + "\0", 124, "utf8");
-    h.write(type, 156, "utf8");
-    const body = Buffer.alloc(Math.ceil(Buffer.byteLength(data) / 512) * 512);
-    body.write(data, 0, "utf8");
-    blocks.push(h, body);
-  }
-  blocks.push(Buffer.alloc(1024));
-  return gzipSync(Buffer.concat(blocks));
-}
-
 test("tar entries with names over 100 bytes are read, in both GNU and pax form", async () => {
   const long = `./TEST-com.couchbase.client.kv.zone_aware_replica.${"VeryLong".repeat(10)}Test.xml`;
   const suite = (n: string) => `<testsuite><testcase name="${n}" classname="c.X"/></testsuite>`;
@@ -131,6 +116,22 @@ test("XML entities are decoded exactly once, never twice", () => {
   assert.equal(decodeXmlEntities("&bogus; & plain"), "&bogus; & plain");
 });
 
+test("a truncated or corrupt archive is a rejected read, never a crash or a hang", async () => {
+  // Incompressible reports, so the cuts below land inside the gzip stream, not after it.
+  const entries = Array.from({ length: 20 }, (_, i): [string, string, string] => [`./TEST-${i}.xml`, "0", randomBytes(8000).toString("base64")]);
+  const good = tarGz(entries);
+  assert.equal((await junitXmlFromTarGz(good)).length, 20);
+  const corrupt = Buffer.from(good).fill(7, 2000, 2100);
+  for (const [what, archive] of [["truncated", good.subarray(0, good.length >> 1)], ["corrupt", corrupt], ["not gzip", Buffer.from("not an archive")]] as const) {
+    await assert.rejects(junitXmlFromTarGz(archive), Error, what);
+  }
+  // A plain tar cut short is refused the same way.
+  const plain = tar(entries);
+  await assert.rejects(forEachTarFile(plain.subarray(0, plain.length >> 1), { gzip: false }, () => true, async (_n, data) => {
+    for await (const _ of data);
+  }));
+});
+
 test("a tarball with no JUnit results is refused, never turned into a clean record", async () => {
   const { upgradeRecord } = await import("../archive-junit.js");
   const { RUN_RECORD_SCHEMA } = await import("../../record/run-record.js");
@@ -144,7 +145,7 @@ test("a tarball with no JUnit results is refused, never turned into a clean reco
     assert.ok("reason" in r && /holds no JUnit results/.test(r.reason), JSON.stringify(r));
   }
   const ok = await upgradeRecord(scraped, tarGz([["./TEST-a.xml", "0", `<testsuite><testcase name="x" classname="c.A"><failure/></testcase></testsuite>`]]), "s3://fit-cli/runs/x.zip", "a/surefire-reports.tar.gz");
-  assert.ok(!("reason" in ok) && ok.source === "run-archive-junit");
+  assert.ok(!("reason" in ok) && ok.record.source === "run-archive-junit");
 });
 
 test("a nameless test case is a class-level error only when it failed or errored", () => {

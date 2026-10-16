@@ -101,7 +101,7 @@ export function renderChecks(c: CheckReport): string {
     `  identity   ${c.identity.mismatches.length === 0 ? "✓" : "✗"} ${c.identity.runs} run logs; performers seen: ${Object.entries(c.identity.performers).map(([p, n]) => `${p} (${n})`).join(", ") || "none"}`,
     ...c.identity.mismatches.slice(0, 5).map((m) => `             ✗ ${m.performer} in ${m.run} - this workflow runs another SDK`),
     `  coverage   ${c.coverage.junit}/${c.coverage.withResults} records with results from full JUnit (${pct(c.coverage.junit, c.coverage.withResults)}), ${c.coverage.logOnly} from the CI log only; ${c.coverage.runsWithArchive}/${c.coverage.runs} runs had a usable archive; ${c.coverage.aborted} aborted`,
-    `  agreement  ${c.agreement.every((a) => a.agree) && !c.unmatched.length ? "✓" : "✗"} ${c.agreement.filter((a) => a.agree).length}/${c.agreement.length + c.unmatched.length} recent runs: JUnit and log name the same failures${c.agreement.some((a) => a.hiddenByCap.length) ? " (after failures hidden by fit-cli's 3-per-package cap)" : ""}`,
+    `  agreement  ${c.agreement.every((a) => a.agree) && !c.unmatched.length ? "✓" : "✗"} ${c.agreement.filter((a) => a.agree).length}/${c.agreement.length + c.unmatched.length} recent runs: JUnit and log name the same failures${c.agreement.some((a) => a.hiddenByCap.length) ? " (after failures hidden by fit-cli's 3-per-package cap)" : ""}${c.agreement.some((a) => a.scoredBelowZero.length) ? " (and situational scores below zero, which the log doesn't name)" : ""}`,
   ];
   for (const u of c.unmatched) lines.push(`             ✗ ${u}: has JUnit results, but the log parser no longer finds this run in its log`);
   for (const a of c.agreement.filter((x) => !x.agree)) {

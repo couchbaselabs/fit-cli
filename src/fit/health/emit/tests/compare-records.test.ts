@@ -123,3 +123,43 @@ test("a record built from JUnit keeps the scraped record's variant, so both have
   const rec = recordFromJunit(junitOutcomes([xml(tc("getAndLock"))]), { ...scraped, variant: "rebalance" }, ARCHIVE);
   assert.equal(rec.variant, "rebalance");
 });
+
+test("a situational test failed on its score is expected to be missing from the log, and from its counts", () => {
+  const sit = { ...scraped, preset: "op-capella-pe-sit-lite", kind: "situational" as const, counts: { passed: 2, failed: 0, errored: 0, skipped: 0 }, tests: {} };
+  const rec = recordFromJunit(junitOutcomes([xml(tc("vertical") + tc("horizontal"))]), sit, ARCHIVE);
+  rec.tests.LockTest = { p: ["horizontal"], f: ["vertical"] };
+  rec.counts = { passed: 1, failed: 1, errored: 0, skipped: 0 };
+  rec.scoreFailures = { "LockTest.vertical": { score: -100, reasons: ["-100 for ramp"], was: "passed" } };
+  const c = compareRecords(rec, sit);
+  assert.ok(c.agree, JSON.stringify(c));
+  assert.deepEqual(c.scoredBelowZero, ["LockTest.vertical"]);
+  assert.deepEqual(c.onlyJunit, []);
+});
+
+test("a score moves a skipped test back to the log's skipped count, not its passed one", () => {
+  const sit = { ...scraped, preset: "op-capella-pe-sit-lite", kind: "situational" as const, counts: { passed: 1, failed: 0, errored: 0, skipped: 1 }, tests: {} };
+  const rec = recordFromJunit(junitOutcomes([xml(tc("vertical") + tc("horizontal"))]), sit, ARCHIVE);
+  rec.tests.LockTest = { p: ["horizontal"], f: ["vertical"] };
+  rec.counts = { passed: 1, failed: 1, errored: 0, skipped: 0 };
+  rec.scoreFailures = { "LockTest.vertical": { score: -50, reasons: ["-50 for rebound"], was: "skipped" } };
+  const c = compareRecords(rec, sit);
+  assert.ok(c.agree, JSON.stringify(c));
+  assert.deepEqual(c.countsJunit, { passed: 1, failed: 0, errored: 0, skipped: 1 });
+});
+
+test("a test JUnit had already failed is still a failure the log must name, whatever its score", () => {
+  // The log names neither failure: horizontal's is a disagreement, not a score.
+  const sit = { ...scraped, preset: "op-capella-pe-sit-lite", kind: "situational" as const, counts: { passed: 2, failed: 0, errored: 0, skipped: 0 }, tests: {} };
+  const rec = recordFromJunit(junitOutcomes([xml(tc("vertical") + tc("horizontal", "<failure/>"))]), sit, ARCHIVE);
+  rec.tests.LockTest = { f: ["horizontal", "vertical"] };
+  rec.counts = { passed: 0, failed: 2, errored: 0, skipped: 0 };
+  rec.scoreFailures = {
+    "LockTest.vertical": { score: -100, reasons: ["-100 for ramp"], was: "passed" },
+    "LockTest.horizontal": { score: -50, reasons: ["-50 for rebound"] },
+  };
+  const c = compareRecords(rec, sit);
+  assert.ok(!c.agree);
+  assert.deepEqual(c.scoredBelowZero, ["LockTest.vertical"]);
+  assert.deepEqual(c.onlyJunit, ["LockTest.horizontal"]);
+  assert.deepEqual(c.countsJunit, { passed: 1, failed: 1, errored: 0, skipped: 0 }, "only vertical goes back to passed");
+});

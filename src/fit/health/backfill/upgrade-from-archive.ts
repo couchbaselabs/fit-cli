@@ -6,6 +6,7 @@
  */
 import { matchTarball, upgradeRecord, uploadedArchivesByJob } from "../emit/archive-junit.js";
 import { S3Zip } from "../emit/s3-zip.js";
+import { resultsMember } from "../emit/situational-scores.js";
 import { type ArchiveUpgrade, type RunManifest, JUNIT_READER_VERSION } from "../record/run-manifest.js";
 import type { RunRecord } from "../record/run-record.js";
 import type { LocalHealthStore } from "../store/health-store.js";
@@ -60,6 +61,7 @@ export async function upgradeFromArchive(store: LocalHealthStore, manifest: RunM
 
   const upgraded: string[] = [];
   const skipped: string[] = [];
+  const warnings: string[] = [];
   const byArchive = new Map<string, { key: string; rec: RunRecord }[]>();
   for (const x of records) {
     const uri = x.rec.ci.job ? archives[x.rec.ci.job] : undefined;
@@ -95,12 +97,16 @@ export async function upgradeFromArchive(store: LocalHealthStore, manifest: RunM
           continue;
         }
         const entry = zip.entries.find((e) => e.name === m.path)!;
-        const rec = await upgradeRecord(x.rec, await zip.read(entry), uri, m.path);
-        if ("reason" in rec) {
-          skipped.push(`${x.key}: ${rec.reason}`);
+        // A situational run's scores sit beside its JUnit (see situational-scores.ts).
+        const res = x.rec.kind === "situational" ? resultsMember(zip.entries.map((e) => e.name), m.path) : undefined;
+        const results = res ? { tar: await zip.read(zip.entries.find((e) => e.name === res.member)!), gzip: res.gzip } : undefined;
+        const up = await upgradeRecord(x.rec, await zip.read(entry), uri, m.path, results);
+        if ("reason" in up) {
+          skipped.push(`${x.key}: ${up.reason}`);
           continue;
         }
-        store.write(x.key, JSON.stringify(rec) + "\n");
+        warnings.push(...up.warnings.map((w) => `${x.key}: ${w}`));
+        store.write(x.key, JSON.stringify(up.record) + "\n");
         upgraded.push(x.key);
       }
     } catch (err) {
@@ -109,7 +115,8 @@ export async function upgradeFromArchive(store: LocalHealthStore, manifest: RunM
     }
   }
   // A read error is worth retrying (see needsArchiveUpgrade); everything upgraded so far is kept.
-  if (errors.length) return done({ status: "error", upgraded, skipped, reason: errors.join("; ") });
+  const warned = warnings.length ? { warnings } : {};
+  if (errors.length) return done({ status: "error", upgraded, skipped, reason: errors.join("; "), ...warned });
   const status = upgraded.length === 0 ? "none" : skipped.length ? "partial" : "ok";
-  return done({ status, upgraded, skipped, ...(missing ? { reason: `${missing} archive(s) expired` } : {}) });
+  return done({ status, upgraded, skipped, ...(missing ? { reason: `${missing} archive(s) expired` } : {}), ...warned });
 }
