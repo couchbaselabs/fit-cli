@@ -76,15 +76,28 @@ export interface ReportTest extends Classification {
 }
 
 /**
- * One night a series ran: the CI run, and the SDK commit it tested. The run's page is
- * `https://github.com/<repo>/actions/runs/<runId>/attempts/<attempt>`, with the report's
- * `repo` unless the night names another.
+ * A CI run. Its page is `https://github.com/<repo>/actions/runs/<runId>/attempts/<attempt>`,
+ * with the report's `repo` unless the run names another.
  */
-export interface ReportNight {
+export interface ReportRun {
   repo?: string;
   runId: number;
   attempt: number;
   job?: string;
+}
+
+/** A night a series' run started but produced no results: fit-cli's reason, and the run. */
+export interface ReportAbort extends ReportRun {
+  date: string;
+  /** fit-cli's failure classification, e.g. FatalToInstance. */
+  level?: string;
+  reason?: string;
+}
+
+/**
+ * One night a series ran: the CI run, and the SDK commit it tested.
+ */
+export interface ReportNight extends ReportRun {
   /**
    * The SDK commit under test: the performer image's revision when the log shows it (then
    * `sdkCommitFrom: "performer-image"`), else the commit the nightly workflow checked out.
@@ -142,7 +155,7 @@ export interface ReportSeries {
   clusters: { cluster: string; from: string; to: string }[];
   passesKnown: boolean;
   ran: string[];
-  aborted: Series["aborted"];
+  aborted: ReportAbort[];
   degraded: string[];
   /** Each night in `ran`: its CI run and SDK commit. */
   nights: Record<string, ReportNight>;
@@ -219,14 +232,20 @@ export function presetWhere(preset: string, params: Record<string, unknown>): st
 
 type Manifests = ReadonlyMap<string, RunManifest>;
 
+function reportRun(ci: RunRecord["ci"], repo: string | undefined): ReportRun {
+  return {
+    ...(ci.repo !== repo ? { repo: ci.repo } : {}),
+    runId: ci.runId,
+    attempt: ci.runAttempt,
+    ...(ci.job ? { job: ci.job } : {}),
+  };
+}
+
 function reportNight(r: RunRecord, manifest: RunManifest | undefined, repo: string | undefined): ReportNight {
   const sdk = sdkCommitOf(r, manifest);
   const driver = manifest?.driver && ((r.ci.job ? manifest.driver[r.ci.job] : undefined) ?? Object.values(manifest.driver)[0]);
   return {
-    ...(r.ci.repo !== repo ? { repo: r.ci.repo } : {}),
-    runId: r.ci.runId,
-    attempt: r.ci.runAttempt,
-    ...(r.ci.job ? { job: r.ci.job } : {}),
+    ...reportRun(r.ci, repo),
     ...(sdk.sha ? { sdkCommit: sdk.sha, sdkCommitFrom: sdk.fromImage ? ("performer-image" as const) : ("workflow" as const) } : {}),
     ...(sdk.fromImage && r.ci.sha && r.ci.sha !== sdk.sha ? { workflowCommit: r.ci.sha } : {}),
     ...(r.archive ? { archive: r.archive } : {}),
@@ -310,7 +329,7 @@ function reportSeries(s: Series, end: string, notes: ReportNotes, manifests: Man
     clusters,
     passesKnown: s.passesKnown,
     ran: s.ran,
-    aborted: s.aborted,
+    aborted: s.aborted.map(({ ci, ...a }) => ({ ...a, ...reportRun(ci, repo) })),
     degraded: s.degraded,
     nights,
     perNight,

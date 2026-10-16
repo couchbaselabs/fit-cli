@@ -18,7 +18,8 @@ import { WINDOW_DAYS } from "./classify.js";
 
 /** The parts of a report the overview reads. */
 export type OverviewInput = Pick<HealthReport, "sdk" | "start" | "end"> & {
-  series: Pick<ReportSeries, "testCounts">[];
+  series: (Pick<ReportSeries, "testCounts"> & Partial<Pick<ReportSeries, "aborted">>)[];
+  source?: Pick<HealthReport["source"], "unreadableRuns">;
 };
 
 /**
@@ -38,11 +39,13 @@ export interface OverviewNight {
 }
 
 /**
- * A night in the window: the night's counts, "none" when no nightly ran, or "unreported" when
- * the night is outside the SDK's report (before its data starts, or after a report that was
- * carried over from an earlier run) - a night we know nothing about, not one that didn't run.
+ * A night in the window: the night's counts, or why there are none - "aborted" when the nightly
+ * ran but every run aborted before it had results, "unreadable" when a run's log could not be
+ * read, "none" when no nightly ran, or "unreported" when the night is outside the SDK's report
+ * (before its data starts, or after a report that was carried over from an earlier run) - a
+ * night we know nothing about, not one that didn't run.
  */
-export type OverviewDay = OverviewNight | "none" | "unreported";
+export type OverviewDay = OverviewNight | "aborted" | "unreadable" | "none" | "unreported";
 
 export interface OverviewSdk {
   sdk: string;
@@ -189,7 +192,12 @@ export function buildOverview(
   const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, "en");
   const sdks = reports.map(({ input, name, carried }): OverviewSdk => {
     const nights = nightTotals(input.series);
-    const days = dates.map((d): OverviewDay => (d < input.start || d > input.end ? "unreported" : nights.get(d) ?? "none"));
+    const aborted = new Set(input.series.flatMap((s) => (s.aborted ?? []).map((a) => a.date)));
+    const unreadable = new Set((input.source?.unreadableRuns ?? []).map((r) => r.date));
+    const days = dates.map((d): OverviewDay => {
+      if (d < input.start || d > input.end) return "unreported";
+      return nights.get(d) ?? (aborted.has(d) ? "aborted" : unreadable.has(d) ? "unreadable" : "none");
+    });
     const latestDate = [...nights.keys()].filter((d) => d <= input.end).sort().at(-1);
     return {
       sdk: input.sdk,

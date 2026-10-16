@@ -38,8 +38,8 @@ export interface Series {
   passesKnown: boolean;
   /** Nights with a results table, oldest first. */
   ran: string[];
-  /** Nights the run started but produced no results, with fit-cli's reason. */
-  aborted: { date: string; level?: string; reason?: string }[];
+  /** Nights the run started but produced no results, with fit-cli's reason and the CI run. */
+  aborted: { date: string; level?: string; reason?: string; ci: RunRecord["ci"] }[];
   /** Nights whose silences can't be read as passes (errored bursts), and truncated ones. */
   degraded: string[];
   truncated: string[];
@@ -127,7 +127,7 @@ export function buildSeries(allRecords: RunRecord[]): Series[] {
       clusters: Object.fromEntries(dated.map(([d, r]) => [d, r.cluster])),
       passesKnown: rs.every((r) => r.passesKnown),
       ran,
-      aborted: dated.filter(([, r]) => !r.counts).map(([d, r]) => ({ date: d, level: r.abortedAt, reason: r.abortReason })),
+      aborted: dated.filter(([, r]) => !r.counts).map(([d, r]) => ({ date: d, level: r.abortedAt, reason: r.abortReason, ci: r.ci })),
       degraded: [...new Set([...degraded, ...truncated])].sort(),
       truncated,
       nights: withResults.map(([d, r]) => ({ date: d, record: r, failing: failingTests(r) })),

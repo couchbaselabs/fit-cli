@@ -77,6 +77,19 @@ test("a night with no run is 'none'; a night outside the report is 'unreported'"
   assert.equal(java.latest, undefined);
 });
 
+test("a night that ran but gave no results is 'aborted' or 'unreadable', not 'none'", () => {
+  const go = input("go", "2026-09-28", "2026-10-02", [{ "2026-09-28": full(10, 1, 0), "2026-09-30": full(10, 0, 0) }, { "2026-09-30": full(5, 0, 0) }]);
+  // An abort on a night another series has results for leaves the night's counts.
+  go.series[0].aborted = [{ date: "2026-09-29", runId: 1, attempt: 1 }];
+  go.series[1].aborted = [{ date: "2026-09-30", runId: 2, attempt: 1 }, { date: "2026-10-01", runId: 3, attempt: 1 }];
+  go.source = { unreadableRuns: [{ date: "2026-10-01", runId: 4, status: "parse_error" }, { date: "2026-10-02", runId: 5, status: "fetch_failed" }] };
+  const o = buildOverview([{ input: go, name: "Go" }], [], new Date(), 5);
+  assert.deepEqual(
+    o.sdks[0].days.map((d) => (typeof d === "object" ? d.failing : d)),
+    [1, "aborted", 0, "aborted", "unreadable"],
+  );
+});
+
 test("latest is the newest night even when it is before the window", () => {
   const o = buildOverview([{ input: input("kotlin", "2026-08-01", "2026-10-02", [{ "2026-08-15": full(5, 1, 2) }]), name: "Kotlin" }], [], new Date(), 3);
   assert.equal(o.sdks[0].latest?.date, "2026-08-15");

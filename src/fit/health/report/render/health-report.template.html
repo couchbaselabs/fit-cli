@@ -674,10 +674,18 @@ document.addEventListener('mouseover', (e) => {
 // ----- one night: what ran and which tests failed, per series
 function nightSeries(s, d) {
   const t = s.testCounts && s.testCounts[d];
-  const n = s.nights[d];
+  const ab = (s.aborted || []).find((a) => a.date === d);
+  // An aborted night has its run too (reports from before that change don't).
+  const n = s.nights[d] || (ab && ab.runId ? ab : null);
   const run = n ? `<a href="${runUrl(n)}"${n.job ? ` title="${esc(n.job)}"` : ''}>GitHub Actions run</a>` : '';
   const label = `<div class="series-head"><h3>${esc(s.label)}</h3>${run}</div>`;
-  if (!t) return `<div class="night-series">${label}<p class="counts">${d < (s.ran[0] || '') ? 'Not running yet.' : 'No results this night: the run aborted, or this preset did not run.'}</p></div>`;
+  if (!t) {
+    const first = [s.ran[0], ...(s.aborted || []).map((a) => a.date)].filter(Boolean).sort()[0] || '';
+    const why = ab
+      ? `The run aborted before it had results${ab.level ? ` (${esc(ab.level)})` : ''}${ab.reason ? `: ${esc(ab.reason)}` : '.'}`
+      : d < first ? 'Not running yet.' : 'This preset did not run this night.';
+    return `<div class="night-series">${label}<p class="counts">${why}</p></div>`;
+  }
   const i = s.ran.indexOf(d);
   const failed = i < 0 ? [] : s.tests.filter((x) => x.seq[i] === 'f' || x.seq[i] === 'e');
   // A test that stopped running more than RECENT days ago is no longer in the report, so it can't
@@ -687,6 +695,16 @@ function nightSeries(s, d) {
   return `<div class="night-series">${label}<p class="counts">${testsLine(t)}</p>
     ${items ? `<ul class="items">${items}</ul>` : t.failing ? '' : '<p class="sub">No failures.</p>'}
     ${unnamed > 0 ? `<p class="sub">${unnamed} more failing test${unnamed > 1 ? 's are' : ' is'} not named: the report no longer follows tests that stopped running more than ${RECENT} days ago.</p>` : ''}</div>`;
+}
+// Runs whose CI log could not be read leave no record, so no series can show them.
+function unreadableRunsOn(d) {
+  const runs = D.source.unreadableRuns.filter((r) => r.date === d);
+  if (!runs.length) return '';
+  const items = runs.map((r) => {
+    const run = D.repo ? ` <a href="https://github.com/${esc(D.repo)}/actions/runs/${r.runId}">GitHub Actions run</a>` : '';
+    return `<p class="counts">No usable log (${esc(r.status)})${r.reason ? `: ${esc(r.reason)}` : ''}.${run}</p>`;
+  }).join('');
+  return `<div class="night-series"><div class="series-head"><h3>Runs with no usable log</h3></div>${items}</div>`;
 }
 function showNight(d) {
   document.querySelectorAll('.strip i.sel').forEach((c) => c.classList.remove('sel'));
@@ -700,7 +718,7 @@ function showNight(d) {
     : 'SDK commit not known';
   const body = i < 0
     ? `<p class="sub">This report covers ${fmtY(D.start)} to ${fmtY(D.end)}, so it has nothing for this night.</p>`
-    : [...FUNC, ...SIT].map((s) => nightSeries(s, d)).join('');
+    : [...FUNC, ...SIT].map((s) => nightSeries(s, d)).join('') + unreadableRunsOn(d);
   $('night-body').innerHTML = `<div class="night-head"><h2 id="h-night">The night of ${esc(fmtY(d))}</h2><a href="#">Close</a></div>
     ${i < 0 ? '' : `<p class="sub">${commit}${D.blackout.includes(d) ? ' · no usable functional results this night' : ''}</p>`}${body}`;
   $('night').hidden = false;
