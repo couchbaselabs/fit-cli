@@ -20,7 +20,7 @@ import type { RunOutput } from "../../../util/non-fit/artifacts.js";
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { fitCliInfo, fitCliWarn } from "../../../util/non-fit/fit-cli-log.js";
 import { sdkByValue } from "../../../util/sdk/sdks.js";
-import { loadOptIns } from "../registry/health-opt-ins.js";
+import { loadOptIns, type HealthOptIn } from "../registry/health-opt-ins.js";
 import type { HealthReport } from "./build-report.js";
 import { crossCompare } from "./cross.js";
 import { buildOverview, type OverviewInput } from "./overview.js";
@@ -113,8 +113,8 @@ function carryOver(previous: string, health: string, have: ReadonlySet<string>):
  * The top page, from every SDK page under <site>/health: its report.json when it has one, else
  * a link only.
  */
-async function writeOverview(health: string, sdks: readonly string[]): Promise<void> {
-  const reports: { input: OverviewInput; name: string }[] = [];
+async function writeOverview(health: string, sdks: readonly string[], optIns: Record<string, HealthOptIn>, carried: readonly string[]): Promise<void> {
+  const reports: { input: OverviewInput; name: string; carried: boolean }[] = [];
   const missing: { sdk: string; name: string }[] = [];
   for (const sdk of sdks) {
     const name = sdkByValue(sdk)?.name ?? sdk;
@@ -124,13 +124,13 @@ async function writeOverview(health: string, sdks: readonly string[]): Promise<v
       continue;
     }
     try {
-      reports.push({ input: JSON.parse(readFileSync(path, "utf8")) as HealthReport, name });
+      reports.push({ input: JSON.parse(readFileSync(path, "utf8")) as HealthReport, name, carried: carried.includes(sdk) });
     } catch (e) {
       fitCliWarn(`${sdk}: report.json could not be read (${(e as Error).message}); listed with a link only.`);
       missing.push({ sdk, name });
     }
   }
-  const overview = buildOverview(reports, missing);
+  const overview = buildOverview(reports, missing, new Date(), undefined, optIns);
   writeFileSync(join(health, "index.html"), await renderOverviewHtml(overview));
   fitCliInfo(`Overview of ${overview.sdks.length + overview.missing.length} SDKs, ${overview.dates[0] ?? "-"} to ${overview.dates.at(-1) ?? "-"}.`);
 }
@@ -157,7 +157,7 @@ export async function buildSite(reportsDir: string, siteDir: string, previous?: 
   if (!sdks.length) throw new Error("no SDK reports to publish");
 
   writeFileSync(join(health, "sdks.json"), JSON.stringify(sdks) + "\n");
-  await writeOverview(health, sdks);
+  await writeOverview(health, sdks, optIns, carried);
   writeFileSync(join(siteDir, "index.html"), REDIRECT);
   writeFileSync(join(siteDir, ".nojekyll"), "");
   fitCliInfo(`Site: ${sdks.join(" ")}`);

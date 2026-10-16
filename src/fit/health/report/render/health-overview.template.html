@@ -8,7 +8,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
 <style>
-/* One panel per SDK, stacked, each its own chart on the same 30-night axis. Tokens match the SDK pages. */
+/* One panel per SDK, each its own chart on the same 30-night axis, grouped into a row per language and a
+   section per shared core. Tokens match the SDK pages. */
 :root {
   --bg: #f5f6f8;
   --surface: #ffffff;
@@ -61,7 +62,7 @@ body {
   padding-inline: 16px;
   padding-block: 0 64px;
 }
-.wrap { max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; }
+.wrap { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; }
 h1, h2 { text-wrap: balance; margin: 0; }
 h1 { font-size: 34px; line-height: 1.15; font-weight: 700; letter-spacing: -.015em; }
 h2 { font-size: 18px; font-weight: 600; }
@@ -76,17 +77,25 @@ header { padding-top: 40px; display: flex; flex-direction: column; gap: 12px; }
 .sw { display: inline-block; width: 11px; height: 11px; border-radius: 2px; }
 .sw.line { height: 3px; border-radius: 2px; }
 
-.panels { display: flex; flex-direction: column; gap: 16px; }
+.panels { display: flex; flex-direction: column; gap: 28px; }
+.section { display: flex; flex-direction: column; gap: 14px; }
+.section > .about { font-size: 14px; color: var(--ink-2); max-width: 80ch; margin-top: -8px; }
+.section.core { border-left: 3px solid var(--rule); padding-left: 14px; }
+.row { display: flex; flex-direction: column; gap: 8px; }
+h3 { font-size: 16px; font-weight: 600; margin: 0; }
+.row-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; }
+@media (max-width: 420px) { .row-charts { grid-template-columns: minmax(0, 1fr); } }
 .panel { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 16px 18px 10px; display: flex; flex-direction: column; gap: 6px; box-shadow: var(--shadow); min-width: 0; }
 .panel-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; }
-.panel h2 a { color: var(--ink); text-decoration: none; }
-.panel h2 a:hover, .panel h2 a:focus-visible { color: var(--total); text-decoration: underline; }
+.panel h4 { font-size: 15px; font-weight: 600; margin: 0; }
+.panel h4 a { color: var(--ink); text-decoration: none; }
+.panel h4 a:hover, .panel h4 a:focus-visible { color: var(--total); text-decoration: underline; }
 .latest { font: 13px var(--mono); color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .latest b { font-weight: 500; color: var(--ink); }
 .latest b.f { color: var(--fail); }
 .asof { margin-left: auto; font-size: 12px; color: var(--muted); }
 .asof.stale { color: var(--ink); font-weight: 500; }
-.chart-link { display: block; border-radius: 6px; cursor: pointer; }
+.chart-link { display: block; border-radius: 6px; cursor: pointer; margin-top: 12px; }
 .chart-link:focus-visible { outline: 2px solid var(--total); outline-offset: 4px; }
 svg { display: block; width: 100%; height: auto; overflow: visible; }
 svg text { font: 10px var(--mono); fill: var(--muted); }
@@ -102,7 +111,7 @@ svg text { font: 10px var(--mono); fill: var(--muted); }
 <div class="wrap">
   <header>
     <h1>FIT Health</h1>
-    <p class="lede">Each SDK's nightly FIT runs over the last <span id="win">30</span> days, every environment added together, counted in tests (<code>Class.method</code>) rather than test cases. Each SDK's chart has its own scales. Select an SDK's name to open its report, or a night on its chart to open the report at that night.</p>
+    <p class="lede">Each SDK's nightly FIT runs over the last <span id="win">30</span> days, every environment added together, counted in tests (<code>Class.method</code>) rather than test cases. There is a row per language: its Couchbase SDK, then its Operational Insights and Columnar SDKs. Each chart has its own scales, so do not compare the heights of two charts. Select an SDK's name to open its report, or a night on its chart to open the report at that night.</p>
     <p class="meta" id="meta"></p>
   </header>
   <div class="key">
@@ -165,8 +174,8 @@ function showTip(e, s, i) {
   tip.style.top = `${y}px`;
 }
 
-function chart(s, link) {
-  const W = 960, L = 44, R = 44, H = 110, AX = 16;
+function chart(s, link, W) {
+  const L = 44, R = 44, H = 110, AX = 16;
   const step = (W - L - R) / D.dates.length, bw = Math.max(1, step - 2);
   const nights = s.days.filter((d) => typeof d === "object");
   const fMax = niceMax(Math.max(0, ...nights.map((n) => n.failing)));
@@ -204,7 +213,10 @@ function chart(s, link) {
   flush();
   D.dates.forEach((dt, i) => {
     if ((D.dates.length - 1 - i) % 7 === 0) {
-      el("text", { x: L + (i + 0.5) * step, y: H + 13, "text-anchor": "middle" }, g).textContent = longDate(dt, { month: "short", day: "numeric" });
+      // Narrow charts label every second week.
+      if (W >= 560 || (D.dates.length - 1 - i) % 14 === 0) {
+        el("text", { x: L + (i + 0.5) * step, y: H + 13, "text-anchor": "middle" }, g).textContent = longDate(dt, { month: "short", day: "numeric" });
+      }
     }
   });
   D.dates.forEach((_, i) => {
@@ -222,29 +234,84 @@ function chart(s, link) {
 }
 
 const host = document.getElementById("panels");
-for (const s of D.sdks) {
-  const panel = document.createElement("section");
-  panel.className = "panel";
+const bySdk = new Map([...D.sdks.map((s) => [s.sdk, s]), ...D.missing.map((m) => [m.sdk, { ...m, missing: true }])]);
+
+/** Draw the chart at the width it has, so its text stays the same size; again when that changes. */
+function drawAt(s, link) {
+  let width = 0;
+  const draw = () => {
+    const w = Math.round(link.clientWidth);
+    if (!w || w === width) return;
+    width = w;
+    link.replaceChildren(chart(s, link, Math.max(320, w)));
+  };
+  new ResizeObserver(draw).observe(link);
+  draw();
+}
+
+function panel(s) {
+  const p = document.createElement("section");
+  p.className = "panel";
+  const title = `<h4><a href="${encodeURIComponent(s.sdk)}/" aria-label="${esc(s.name)}">${esc(s.product)}</a></h4>`;
+  if (s.missing) {
+    p.innerHTML = `<div class="panel-head">${title}</div><p class="missing">No report data to chart. Open the SDK's page.</p>`;
+    return p;
+  }
   const l = s.latest;
   const latest = l
     ? `<span class="latest">${longDate(l.date, { month: "short", day: "numeric" })}: <b class="f">${fmt(l.failing)}</b> failing of <b>${fmt(l.passed + l.failing)}</b> run · ${fmt(l.skipped)} skipped${l.logOnly ? ` · ${l.logOnly} log only` : ""}</span>`
     : `<span class="latest">no nights</span>`;
-  const stale = s.end < end;
-  panel.innerHTML = `<div class="panel-head"><h2><a href="${encodeURIComponent(s.sdk)}/">${esc(s.name)}</a></h2>${latest}`
+  // An SDK whose nightly runs later in the day ends a night earlier than the rest: that's not stale.
+  const stale = !!s.carried;
+  p.innerHTML = `<div class="panel-head">${title}${latest}`
     + `<span class="asof${stale ? " stale" : ""}">${stale ? "report from an earlier run, to " : "to "}${s.end}</span></div>`;
   // The whole chart opens the SDK's page, like its name does; at the night under the pointer.
   const link = document.createElement("a");
   link.className = "chart-link";
   link.href = `${encodeURIComponent(s.sdk)}/`;
   link.setAttribute("aria-label", `Open the ${s.name} report`);
-  link.appendChild(chart(s, link));
-  panel.appendChild(link);
-  host.appendChild(panel);
+  p.appendChild(link);
+  return [p, () => drawAt(s, link)];
 }
-for (const m of D.missing) {
-  const panel = document.createElement("section");
-  panel.className = "panel";
-  panel.innerHTML = `<div class="panel-head"><h2><a href="${encodeURIComponent(m.sdk)}/">${esc(m.name)}</a></h2></div><p class="missing">No report data to chart. Open the SDK's page.</p>`;
-  host.appendChild(panel);
+
+const draws = [];
+function row(r, heading) {
+  const div = document.createElement("div");
+  div.className = "row";
+  const h = document.createElement(heading);
+  h.textContent = r.name;
+  const charts = document.createElement("div");
+  charts.className = "row-charts";
+  for (const sdk of r.sdks) {
+    const s = bySdk.get(sdk);
+    if (!s) continue;
+    const made = panel(s);
+    if (Array.isArray(made)) {
+      charts.appendChild(made[0]);
+      draws.push(made[1]);
+    } else charts.appendChild(made);
+  }
+  div.append(h, charts);
+  return div;
 }
+
+for (const sec of D.sections) {
+  const box = document.createElement("section");
+  box.className = sec.title ? "section core" : "section";
+  if (sec.title) {
+    const h = document.createElement("h2");
+    h.textContent = sec.title;
+    box.appendChild(h);
+    if (sec.description) {
+      const about = document.createElement("p");
+      about.className = "about";
+      about.textContent = sec.description;
+      box.appendChild(about);
+    }
+  }
+  for (const r of sec.rows) box.appendChild(row(r, sec.title ? "h3" : "h2"));
+  host.appendChild(box);
+}
+// Draw once every panel is in the page, so each chart knows its width.
+for (const d of draws) d();
 </script>
