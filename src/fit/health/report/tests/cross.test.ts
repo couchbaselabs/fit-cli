@@ -58,3 +58,16 @@ test("comparing reports fills every test each report follows up", () => {
   assert.equal(only.crossSdk?.category, "only-this-sdk");
   assert.deepEqual(java.series[0].tests[0].crossSdk?.peers.map((x) => [x.sdk, x.status]), [["dotnet", "failing"], ["go", "passing"]]);
 });
+
+test("SDKs on another test driver are not peers: the Analytics SDKs run their own tests", () => {
+  // The same test id on both drivers would be two different tests.
+  const dotnet = report("dotnet", [finding("QueryTest.x", "always")], ["QueryTest.x"]);
+  const go = report("go", [], ["QueryTest.x"]);
+  const oiDotnet = report("insights-dotnet", [finding("QueryTest.x", "always")], ["QueryTest.x"]);
+  const oiNode = report("insights-node", [finding("QueryTest.x", "intermittent")], ["QueryTest.x"]);
+  crossCompare([dotnet, go, oiDotnet, oiNode], {});
+  assert.deepEqual(dotnet.series[0].tests[0].crossSdk?.peers.map((x) => x.sdk), ["go"]);
+  assert.equal(dotnet.series[0].tests[0].crossSdk?.category, "only-this-sdk");
+  assert.deepEqual(oiDotnet.series[0].tests[0].crossSdk?.peers.map((x) => [x.sdk, x.status]), [["insights-node", "intermittent"]]);
+  assert.equal(oiDotnet.series[0].tests[0].crossSdk?.category, "every-sdk");
+});
