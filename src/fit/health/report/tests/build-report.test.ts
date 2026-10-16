@@ -353,6 +353,19 @@ test("a preset that ran two clusters a night stays split, and a whole-preset abo
   for (const s of series) assert.deepEqual(s.aborted.map((a) => a.date), ["2026-09-05"]);
 });
 
+test("an aborted night keeps its CI run and fit-cli's reason, so the night panel can link to it", () => {
+  const aborted = rec("2026-09-05", {
+    outcome: "aborted",
+    counts: undefined,
+    abortedAt: "Unclassified",
+    abortReason: "Unknown SDK",
+    ci: { repo: "r", runId: 900, runAttempt: 2, job: "fit / lite" },
+  });
+  const report = buildHealthReport("dotnet", [...days(1, 4).map((d) => rec(d)), aborted], [], { end: "2026-09-05" });
+  const { repo: _repo, ...a } = report.series[0].aborted[0];
+  assert.deepEqual(a, { date: "2026-09-05", level: "Unclassified", reason: "Unknown SDK", runId: 900, attempt: 2, job: "fit / lite" });
+});
+
 test("a test no longer followed still counts on the nights it failed", () => {
   // Failed on 1-3 Sep, then stopped running: by 28 Sep it's left out of the rows, but the
   // per-night counts (the trend chart, the night panel) still include those failures.

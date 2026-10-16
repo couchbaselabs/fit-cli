@@ -1,7 +1,9 @@
 /**
  * The same test on other SDKs. The driver's tests are shared, so a test id means the same test
- * for every SDK: for each finding, this says how every other SDK with a report fared on that
- * exact test, of the same test type, in the same 30-day window - and what that suggests:
+ * for every SDK on that driver: for each finding, this says how every other SDK with a report
+ * on the same driver fared on that exact test, of the same test type, in the same 30-day
+ * window - and what that suggests. (The Analytics SDKs run their own driver, columnar-test-
+ * driver, so they are compared only with each other.)
  *
  *   only-this-sdk     every other SDK that runs it passes it: likely this SDK
  *   every-sdk         every other SDK that runs it fails it too: likely the test, the driver,
@@ -17,6 +19,7 @@
  */
 import type { TestClass } from "./classify.js";
 import { reportFindings, type HealthReport } from "./build-report.js";
+import { driverModuleFor } from "./changes.js";
 import { daysBetween } from "./dates.js";
 
 export type PeerStatus = "failing" | "intermittent" | "recovered" | "stopped" | "passing" | "not_run" | "unknown";
@@ -100,7 +103,7 @@ export function categoriseCross(peers: CrossPeer[], family: string | undefined):
  */
 export function crossCompare(reports: HealthReport[], families: Record<string, string | undefined>): void {
   for (const r of reports) {
-    const peers = reports.filter((p) => p.sdk !== r.sdk);
+    const peers = reports.filter((p) => p.sdk !== r.sdk && driverModuleFor(p.sdk) === driverModuleFor(r.sdk));
     for (const { series, test } of reportFindings(r)) {
       const list = peers.map((p) => peerStatus(p, test.test, series.kind, test.lastEpisode?.from, families[p.sdk])).sort((a, b) => a.sdk.localeCompare(b.sdk));
       test.crossSdk = { peers: list, ...categoriseCross(list, families[r.sdk]) };

@@ -42,9 +42,35 @@ export interface HealthOptIn {
    * sibling SDK fail without being an SDK bug, so it is shown but never counted as an SDK change.
    */
   sharedHarnessPaths?: string[];
-  /** SDKs built on a common core share a family (e.g. "jvm"), for comparing across SDKs. */
+  /**
+   * SDKs built on a common core share a family (e.g. "jvm"), for comparing across SDKs. Give it
+   * only to SDKs that really are built on that core: the cross-SDK verdict "the jvm SDKs fail
+   * it; the others pass" counts every SDK in the family.
+   */
   family?: string;
+  /**
+   * For an SDK that is not a language's Couchbase SDK - an Operational Insights or Columnar
+   * SDK - the Couchbase SDK of the same language, e.g. "java" for insights-java. The overview
+   * shows them in one row (one team), in that SDK's family section. Not the same as family:
+   * insights-node is in the Node.js row, but it is not built on the C++ core.
+   */
+  language?: string;
 }
+
+/**
+ * The overview's sections: one per family, holding each language whose Couchbase SDK is in
+ * that family. A family with no entry here is shown under its own name.
+ */
+export const FAMILY_SECTIONS: Record<string, { title: string; description: string }> = {
+  cxx: {
+    title: "C++ core",
+    description: "The Couchbase SDKs here are built on the C++ SDK's core (couchbase-cxx-client). The Operational Insights SDKs beside them are not.",
+  },
+  jvm: {
+    title: "JVM",
+    description: "The Couchbase SDKs and the Columnar SDK here are built on core-io. The Operational Insights SDK is not.",
+  },
+};
 
 
 /** What every SDK in couchbase-jvm-clients shares: the repo, the core they're built on, and the FIT harness. */
@@ -87,6 +113,7 @@ export const HEALTH_OPT_INS: Partial<Record<SdkValue, HealthOptIn>> = {
     ...JVM,
     workflows: ["fit-testing-java-columnar.yml"],
     paths: ["columnar-java-client/", "columnar-java-fit-performer/", "columnar-fit-performer-shared/"],
+    language: "java",
   },
   // Python and Node.js are built on the C++ SDK's core (couchbase-cxx-client): a test failing on
   // all three, and passing elsewhere, points at the shared core.
@@ -104,6 +131,33 @@ export const HEALTH_OPT_INS: Partial<Record<SdkValue, HealthOptIn>> = {
     repo: "couchbase/couchnode",
     workflows: ["fit-test.yml"],
     family: "cxx",
+  },
+  // The Operational Insights SDKs. Each is its own client, built on no other SDK's core, so none
+  // has a family; language puts it in the row of its language's Couchbase SDK.
+  "insights-dotnet": {
+    repo: "couchbase/operational-insights-dotnet-client",
+    workflows: ["fit-testing-dotnet.yml"],
+    language: "dotnet",
+  },
+  "insights-go": {
+    repo: "couchbase/gocbinsights",
+    workflows: ["fit-test.yml"],
+    language: "go",
+  },
+  "insights-java": {
+    repo: "couchbase/couchbase-insights-jvm-clients",
+    workflows: ["fit-testing-java.yml"],
+    language: "java",
+  },
+  "insights-node": {
+    repo: "couchbase/operational-insights-nodejs-client",
+    workflows: ["fit-testing-node.yml"],
+    language: "node",
+  },
+  "insights-python": {
+    repo: "couchbase/operational-insights-python-client",
+    workflows: ["fit-testing-python.yml"],
+    language: "python",
   },
 };
 
@@ -127,6 +181,12 @@ export function validateOptIn(sdk: string, o: unknown): string[] {
   }
   if ((e.sharedCorePaths || e.sharedHarnessPaths) && !e.paths) problems.push("sharedCorePaths and sharedHarnessPaths need paths too");
   if (e.family !== undefined && (typeof e.family !== "string" || !/^[a-z][a-z0-9-]*$/.test(e.family))) problems.push("family, when given, must be a lower-case name like jvm");
+  if (e.language !== undefined) {
+    const own = sdkByValue(sdk);
+    const lang = typeof e.language === "string" ? sdkByValue(e.language) : undefined;
+    if (!lang || lang.family !== "operational") problems.push(`language, when given, must be a Couchbase SDK in src/util/sdk/sdks.ts, like java; got ${JSON.stringify(e.language)}`);
+    else if (own?.family === "operational") problems.push("language is only for SDKs that are not a Couchbase SDK: a Couchbase SDK is its own language");
+  }
   return problems;
 }
 

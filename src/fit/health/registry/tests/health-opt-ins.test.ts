@@ -57,3 +57,11 @@ test("SDKs sharing a repo each need their own workflow and their own paths; shar
   assert.match(validateOptIn("scala", { ...noPaths, paths: ["../escape/"] }).join(), /repo-relative paths/);
   assert.match(validateOptIn("scala", { ...noPaths, family: "JVM" }).join(), /lower-case/);
 });
+
+test("language names a Couchbase SDK, and only an SDK that isn't one may give it", () => {
+  const e = { repo: "couchbase/gocbinsights", workflows: ["fit-test.yml"] };
+  assert.deepEqual(validateOptIn("insights-go", { ...e, language: "go" }), []);
+  assert.match(validateOptIn("insights-go", { ...e, language: "insights-java" }).join(), /must be a Couchbase SDK/);
+  assert.match(validateOptIn("insights-go", { ...e, language: "klingon" }).join(), /must be a Couchbase SDK/);
+  assert.match(validateOptIn("go", { ...e, language: "go" }).join(), /a Couchbase SDK is its own language/);
+});

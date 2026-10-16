@@ -7,7 +7,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { NightTests } from "../build-report.js";
-import { buildOverview, nightTotals, type OverviewInput } from "../overview.js";
+import { buildOverview, layoutSections, nightTotals, placeSdk, productName, type OverviewInput } from "../overview.js";
+import { HEALTH_OPT_INS } from "../../registry/health-opt-ins.js";
 import { fillOverviewTemplate } from "../render/render-html.js";
 
 const full = (passed: number, failing: number, skipped: number): NightTests => ({
@@ -76,6 +77,19 @@ test("a night with no run is 'none'; a night outside the report is 'unreported'"
   assert.equal(java.latest, undefined);
 });
 
+test("a night that ran but gave no results is 'aborted' or 'unreadable', not 'none'", () => {
+  const go = input("go", "2026-09-28", "2026-10-02", [{ "2026-09-28": full(10, 1, 0), "2026-09-30": full(10, 0, 0) }, { "2026-09-30": full(5, 0, 0) }]);
+  // An abort on a night another series has results for leaves the night's counts.
+  go.series[0].aborted = [{ date: "2026-09-29", runId: 1, attempt: 1 }];
+  go.series[1].aborted = [{ date: "2026-09-30", runId: 2, attempt: 1 }, { date: "2026-10-01", runId: 3, attempt: 1 }];
+  go.source = { unreadableRuns: [{ date: "2026-10-01", runId: 4, status: "parse_error" }, { date: "2026-10-02", runId: 5, status: "fetch_failed" }] };
+  const o = buildOverview([{ input: go, name: "Go" }], [], new Date(), 5);
+  assert.deepEqual(
+    o.sdks[0].days.map((d) => (typeof d === "object" ? d.failing : d)),
+    [1, "aborted", 0, "aborted", "unreadable"],
+  );
+});
+
 test("latest is the newest night even when it is before the window", () => {
   const o = buildOverview([{ input: input("kotlin", "2026-08-01", "2026-10-02", [{ "2026-08-15": full(5, 1, 2) }]), name: "Kotlin" }], [], new Date(), 3);
   assert.equal(o.sdks[0].latest?.date, "2026-08-15");
@@ -94,7 +108,7 @@ test("SDKs are listed by name, not ranked; missing ones are kept for a link", ()
     o.sdks.map((s) => s.sdk),
     ["dotnet", "go", "scala"],
   );
-  assert.deepEqual(o.missing, [{ sdk: "python", name: "Python" }]);
+  assert.deepEqual(o.missing, [{ sdk: "python", name: "Python", product: "SDK" }]);
 });
 
 test("no reports: an empty window, nothing to chart", () => {
@@ -110,4 +124,53 @@ test("the page embeds the data safely inside its script element", () => {
   assert.ok(html.includes("\\u003c/script>"));
   const json = html.slice("<script>const D = ".length, html.lastIndexOf(";</script>"));
   assert.deepEqual(JSON.parse(json), JSON.parse(JSON.stringify(o)));
+});
+
+test("an SDK goes in its language's row, in the section of that language's Couchbase SDK", () => {
+  const optIns = { node: { family: "cxx" }, "insights-node": { language: "node" }, "columnar-java": { family: "jvm", language: "java" }, java: { family: "jvm" } };
+  assert.deepEqual(placeSdk("node", optIns), { language: "node", product: "SDK", family: "cxx" });
+  // insights-node is not built on the C++ core, but its row (Node.js) is in that section.
+  assert.deepEqual(placeSdk("insights-node", optIns), { language: "node", product: "Operational Insights", family: "cxx" });
+  assert.deepEqual(placeSdk("columnar-java", optIns), { language: "java", product: "Columnar", family: "jvm" });
+  assert.deepEqual(placeSdk("insights-dotnet", { "insights-dotnet": { language: "dotnet" } }), { language: "dotnet", product: "Operational Insights", family: undefined });
+  // Not opted in, or no language given: its own row, named after it.
+  assert.deepEqual(placeSdk("go", {}), { language: "go", product: "SDK", family: undefined });
+  assert.equal(productName("insights-go", "insights-go"), "Go Operational Insights");
+});
+
+test("the committed opt-ins lay out as core sections first, then the languages on their own", () => {
+  const sdks = Object.keys(HEALTH_OPT_INS);
+  const sections = layoutSections(sdks, (sdk) => placeSdk(sdk, HEALTH_OPT_INS));
+  assert.deepEqual(
+    sections.map((s) => [s.title ?? "", s.rows.map((r) => `${r.name}: ${r.sdks.join(" ")}`)]),
+    [
+      ["C++ core", ["C++: cpp", "Node.js: node insights-node", "Python: python insights-python"]],
+      ["JVM", ["Java: java insights-java columnar-java", "Kotlin: kotlin", "Scala: scala"]],
+      ["", [".NET: dotnet insights-dotnet"]],
+      ["", ["Go: go insights-go"]],
+    ],
+  );
+  assert.ok(sections[0].description);
+});
+
+test("an SDK with no report data keeps its place in its row", () => {
+  const o = buildOverview(
+    [{ input: input("dotnet", "2026-09-01", "2026-10-02", []), name: ".NET" }],
+    [{ sdk: "insights-dotnet", name: ".NET Operational Insights" }],
+    new Date(),
+    3,
+    { "insights-dotnet": { language: "dotnet" } },
+  );
+  assert.deepEqual(o.sections, [{ rows: [{ language: "dotnet", name: ".NET", sdks: ["dotnet", "insights-dotnet"] }] }]);
+  assert.equal(o.missing[0].product, "Operational Insights");
+  assert.equal(o.sdks[0].product, "SDK");
+});
+
+test("a report is marked carried over only when the site kept it, not when its nightly runs later", () => {
+  const o = buildOverview([
+    { input: input("dotnet", "2026-09-01", "2026-10-16", []), name: ".NET" },
+    { input: input("insights-node", "2026-09-01", "2026-10-15", []), name: "Node.js Operational Insights" },
+    { input: input("go", "2026-09-01", "2026-10-16", []), name: "Go", carried: true },
+  ]);
+  assert.deepEqual(o.sdks.map((s) => [s.sdk, s.carried ?? false]), [["dotnet", false], ["go", true], ["insights-node", false]]);
 });
