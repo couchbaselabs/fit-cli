@@ -149,7 +149,7 @@ export async function runReportCommand(argv: string[], prefix: string): Promise<
   if (decision.post) {
     // Posting is a side effect of the report, never a reason for it to fail.
     try {
-      await postDigest(decision.channel, digest);
+      await postDigest(decision.channel, digest, undefined, { unfurl: false });
       fitCliInfo(`Slack: posted the digest to ${decision.channel}.`);
       details.push({ label: "Slack", value: `posted to ${decision.channel}` });
     } catch (err) {

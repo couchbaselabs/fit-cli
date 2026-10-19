@@ -65,8 +65,14 @@ export async function postMessage(
   threadTs?: string,
   blocks?: unknown[],
   signal?: AbortSignal,
+  options: { unfurl?: boolean } = {},
 ): Promise<string> {
   const params: Record<string, string> = { channel, text };
+  // A link Slack can't read (a private site) unfurls as an empty preview: turn previews off.
+  if (options.unfurl === false) {
+    params.unfurl_links = "false";
+    params.unfurl_media = "false";
+  }
   if (threadTs) {
     params.thread_ts = threadTs;
   }

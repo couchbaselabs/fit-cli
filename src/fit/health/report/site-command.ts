@@ -13,8 +13,9 @@
  *   health/sdks.json         the SDKs on the site, for the next run
  *   health/<sdk>/index.html  the SDK's report page
  *   health/<sdk>/report.json the report data: what the page draws and tools read
+ *   health/weekly/           the weekly wrap-ups (weekly-command.ts), kept from --previous
  */
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RunOutput } from "../../../util/non-fit/artifacts.js";
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
@@ -53,6 +54,7 @@ Usage:
               publish replaces the whole site, so an SDK with no report this run (a failed
               job, or a dispatch for one SDK) keeps its published page instead of vanishing.
               The page shows its own date, so a carried-over report never passes for a new one.
+              Its weekly wrap-ups (health/weekly/) are kept as they are.
 
 The SDKs reporting this run are compared with each other first (the same test on the other
 SDKs: crossSdk on each test, and a line on its page).`;
@@ -155,6 +157,10 @@ export async function buildSite(reportsDir: string, siteDir: string, previous?: 
   const carried = previous ? carryOver(previous, health, have) : [];
   const sdks = [...new Set([...have, ...carried])].sort();
   if (!sdks.length) throw new Error("no SDK reports to publish");
+
+  // The weekly pages are frozen once built, and only a Monday run adds one: every publish keeps them.
+  const weekly = previous ? join(previous, "health", "weekly") : undefined;
+  if (weekly && existsSync(weekly)) cpSync(weekly, join(health, "weekly"), { recursive: true });
 
   writeFileSync(join(health, "sdks.json"), JSON.stringify(sdks) + "\n");
   await writeOverview(health, sdks, optIns, carried);

@@ -178,6 +178,16 @@ export function nightTotals(series: OverviewInput["series"]): Map<string, Overvi
   return nights;
 }
 
+/** Each of `dates` for one SDK: its night's counts, or why there are none. */
+export function overviewDays(input: OverviewInput, dates: readonly string[], nights = nightTotals(input.series)): OverviewDay[] {
+  const aborted = new Set(input.series.flatMap((s) => (s.aborted ?? []).map((a) => a.date)));
+  const unreadable = new Set((input.source?.unreadableRuns ?? []).map((r) => r.date));
+  return dates.map((d): OverviewDay => {
+    if (d < input.start || d > input.end) return "unreported";
+    return nights.get(d) ?? (aborted.has(d) ? "aborted" : unreadable.has(d) ? "unreadable" : "none");
+  });
+}
+
 export function buildOverview(
   reports: { input: OverviewInput; name: string; carried?: boolean }[],
   missing: { sdk: string; name: string }[] = [],
@@ -192,12 +202,7 @@ export function buildOverview(
   const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, "en");
   const sdks = reports.map(({ input, name, carried }): OverviewSdk => {
     const nights = nightTotals(input.series);
-    const aborted = new Set(input.series.flatMap((s) => (s.aborted ?? []).map((a) => a.date)));
-    const unreadable = new Set((input.source?.unreadableRuns ?? []).map((r) => r.date));
-    const days = dates.map((d): OverviewDay => {
-      if (d < input.start || d > input.end) return "unreported";
-      return nights.get(d) ?? (aborted.has(d) ? "aborted" : unreadable.has(d) ? "unreadable" : "none");
-    });
+    const days = overviewDays(input, dates, nights);
     const latestDate = [...nights.keys()].filter((d) => d <= input.end).sort().at(-1);
     return {
       sdk: input.sdk,

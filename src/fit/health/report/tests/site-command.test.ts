@@ -123,3 +123,16 @@ test("a directory that isn't an SDK report, or holds another SDK's, is skipped, 
   await assert.rejects(buildSite(dir, site), /no SDK reports to publish/);
   assert.ok(!existsSync(join(site, "x")));
 });
+
+test("the published site's weekly wrap-ups are kept as they are", async () => {
+  const site = join(tmp(), "site");
+  const previous = previousSite({
+    "health/sdks.json": '["go"]',
+    "health/go/index.html": "published go page",
+    "health/weekly/index.json": '{"weeks":[]}',
+    "health/weekly/2026-W42/index.html": "frozen week",
+  });
+  await buildSite(reportsDir(report("go", false)), site, previous);
+  assert.equal(readFileSync(join(site, "health", "weekly", "2026-W42", "index.html"), "utf8"), "frozen week");
+  assert.ok(existsSync(join(site, "health", "weekly", "index.json")));
+});

@@ -20,6 +20,7 @@ import { runReportCommand } from "./report/report.js";
 import { runNotesCommand } from "./report/notes.js";
 import { runSettingsCommand } from "./report/settings.js";
 import { runSiteCommand } from "./report/site-command.js";
+import { runWeeklyCommand } from "./report/weekly-command.js";
 import { HEALTH_OPT_INS } from "./registry/health-opt-ins.js";
 
 function helpText(): string {
@@ -34,6 +35,7 @@ Usage:
   ${p} notes <sdk> [--set <file>] [--store <dir>]
   ${p} settings <sdk> [--slack-channel <id> | --no-slack] [--report-url <url>] [--store <dir>]
   ${p} site --reports <dir> --out <site> [--previous <dir>]
+  ${p} weekly --out <site> [--week YYYY-Www] [--weeks N] [--store <dir>] [--slack-channel <id> | --slack-dry-run]
   ${p} check <sdk> [--store <dir>] [--nights N]
   ${p} reparse <sdk> [--all] [--store <dir>]
   ${p} --help
@@ -50,6 +52,8 @@ Subcommands:
   site          Build the health Pages site from one run's reports: compare the SDKs (the
                 same test on the other SDKs), then each SDK's page and the top page (each
                 SDK's last 30 nights, one chart each).
+  weekly        Add the weekly wrap-up to the site: each SDK's week (Monday to Sunday) against
+                the week before - what started and stopped failing - and post it to Slack.
   check         Check an SDK's records can be trusted: runs name the right SDK, how much
                 comes from full JUnit, and JUnit agrees with the log on recent nights.
                 Backfill runs this at the end.
@@ -81,6 +85,9 @@ export function runHealthMain(): void {
       return;
     case "report":
       runCli(() => runReportCommand(rest, `${p} report`));
+      return;
+    case "weekly":
+      runCli(() => runWeeklyCommand(rest, `${p} weekly`));
       return;
     case "backfill":
       runCli(() => runBackfillCommand(rest, `${p} backfill`));

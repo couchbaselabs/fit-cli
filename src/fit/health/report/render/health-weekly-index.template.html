@@ -1,0 +1,121 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="robots" content="noindex">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FIT Weekly</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+/* One card per SDK, laid out as on the top page: a row per language, a section per shared core.
+   Tokens match the other health pages. A number's color says which way its tests moved, never
+   whether that is good: red for tests that joined the failing set (started, new tests failing),
+   green for tests that left it by passing (stopped). Tests that left without passing (no longer
+   counted) and the total (failing at week end) are in ink: neither is good or bad news. A zero
+   is grey, whatever the tile. */
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --ink: #161a20;
+  --ink-2: #454d5a;
+  --muted: #6b7380;
+  --rule: #dde1e7;
+  --fail: #d03b3b;
+  --pass: #23864f;
+  --zero: #8b939f;
+  --total: #2a78d6;
+  --unknown: #b9c0ca;
+  --night: #8d95a2;
+  --shadow: 0 1px 2px rgba(22, 26, 32, .06);
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #101317;
+    --surface: #171b20;
+    --ink: #e9ecf0;
+    --ink-2: #b8bfca;
+    --muted: #8d95a2;
+    --rule: #2a3038;
+    --fail: #e66767;
+    --pass: #4cbf7a;
+    --zero: #6b7380;
+    --total: #3987e5;
+    --unknown: #4a525e;
+    --night: #6b7380;
+    --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #101317;
+  --surface: #171b20;
+  --ink: #e9ecf0;
+  --ink-2: #b8bfca;
+  --muted: #8d95a2;
+  --rule: #2a3038;
+  --fail: #e66767;
+  --pass: #4cbf7a;
+  --zero: #6b7380;
+  --total: #3987e5;
+  --unknown: #4a525e;
+  --night: #6b7380;
+  --shadow: none;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.55 var(--sans);
+  margin: 0;
+  padding-inline: 16px;
+  padding-block: 0 64px;
+}
+.wrap { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; }
+h1, h2 { text-wrap: balance; margin: 0; }
+h1 { font-size: 34px; line-height: 1.15; font-weight: 700; letter-spacing: -.015em; }
+h2 { font-size: 18px; font-weight: 600; }
+p { margin: 0; }
+a { color: var(--total); }
+header { padding-top: 40px; display: flex; flex-direction: column; gap: 12px; }
+.lede { font-size: 16px; max-width: 70ch; color: var(--ink-2); }
+.meta { color: var(--muted); font-size: 13px; }
+nav { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 14px; }
+nav .newer { font-weight: 600; }
+
+.terms { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 8px 24px; font-size: 13px; }
+.terms div { min-width: 0; }
+.terms dt { font-weight: 600; display: inline; }
+.terms dt.joined { color: var(--fail); }
+.terms dt.passed { color: var(--pass); }
+.terms dt::after { content: ": "; }
+.terms dd { display: inline; margin: 0; color: var(--ink-2); }
+.weeks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.weeks li { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 12px 18px; box-shadow: var(--shadow); display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; }
+.weeks a { font-weight: 600; }
+.weeks .when { color: var(--ink-2); font-size: 14px; }
+.weeks .what { margin-left: auto; color: var(--muted); font-size: 13px; }
+.quiet { font-size: 14px; color: var(--muted); }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>FIT weekly</h1>
+    <p class="lede">Every week's wrap-up, newest first: each SDK's nightly FIT runs that week, against the week before.</p>
+    <nav><a href="latest/">The latest week</a><a href="../">Today's health</a></nav>
+  </header>
+  <ul class="weeks" id="weeks"></ul>
+</div>
+
+<script>
+const D = /*__DATA__*/null;
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const day = (d, opts = { month: "short", day: "numeric" }) => new Date(d + "T00:00:00Z").toLocaleString("en-US", { timeZone: "UTC", ...opts });
+const list = document.getElementById("weeks");
+list.innerHTML = D.weeks.length
+  ? D.weeks.map((w) => `<li><a href="${esc(w.id)}/">${esc(w.id)}</a><span class="when">${day(w.start)} to ${day(w.end, { month: "short", day: "numeric", year: "numeric" })}</span><span class="what">${w.changed} of ${w.sdks} SDKs with something to report</span></li>`).join("")
+  : `<li class="quiet">No weeks yet.</li>`;
+</script>

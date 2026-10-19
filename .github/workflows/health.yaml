@@ -7,7 +7,9 @@
 #      a Slack digest if the SDK's settings in the store name a channel
 #      (`fit health settings <sdk> --slack-channel <id>`).
 # Then one job builds the site from every SDK's report and publishes it to the internal
-# couchbaselabs/fit-health repo, which serves it as a private Pages site.
+# couchbaselabs/fit-health repo, which serves it as a private Pages site. On Mondays it also
+# adds the weekly wrap-up of the week to Sunday (`fit health weekly`), and posts it to the
+# channel in the FIT_HEALTH_WEEKLY_SLACK_CHANNEL repository variable.
 #
 # The reports are private: they name commits from the private driver repo and tests from the
 # private run archives. This repo is public, so nothing from them may reach its Actions - no
@@ -44,6 +46,16 @@ on:
         required: false
         type: boolean
         default: false
+      weekly:
+        description: Build the weekly wrap-up of the last full week (a scheduled run does on Mondays). Posts it only with slack ticked.
+        required: false
+        type: boolean
+        default: false
+      weekly_weeks:
+        description: With weekly, also build the weeks before it, up to this many in all (to fill in the weeks the store covers).
+        required: false
+        type: string
+        default: "1"
 
 # Least privilege by default; the health and site jobs add id-token: write for OIDC.
 permissions:
@@ -234,6 +246,42 @@ jobs:
       # keeps its page from the published site.
       - name: Build the site
         run: .github/scripts/health-quiet.sh handoff/logs/site/build.log bun src/fit/main/main.ts health site --reports handoff --out site --previous previous
+
+      # Mondays (or when asked): the week to Sunday, against the week before, from the store.
+      # A week already on the site is frozen, so a rerun builds and posts nothing. It never
+      # holds up the daily site: a failure here still publishes it.
+      - name: Build the weekly wrap-up
+        id: weekly
+        continue-on-error: true
+        env:
+          SCHEDULED: ${{ github.event_name == 'schedule' }}
+          ASKED: ${{ inputs.weekly }}
+          WEEKS: ${{ inputs.weekly_weeks || '1' }}
+          # Only the scheduled run, or a dispatch with slack ticked, posts; and only once the
+          # channel is set.
+          CHANNEL: ${{ (github.event_name == 'schedule' || inputs.slack) && vars.FIT_HEALTH_WEEKLY_SLACK_CHANNEL || '' }}
+        run: |
+          if [ "$ASKED" != "true" ] && ! { [ "$SCHEDULED" = "true" ] && [ "$(date -u +%u)" = 1 ]; }; then
+            echo "Not Monday, and not asked for: no weekly wrap-up."
+            exit 0
+          fi
+          if ! printf '%s' "$WEEKS" | grep -Eq '^[0-9]{1,2}$'; then
+            echo "::error::weekly_weeks must be a number from 1 to 52, got: $WEEKS"
+            exit 1
+          fi
+          slack=()
+          if [ -n "$CHANNEL" ]; then
+            if ! printf '%s' "$CHANNEL" | grep -Eq '^[CG][A-Z0-9]{6,}$'; then
+              echo "::error::FIT_HEALTH_WEEKLY_SLACK_CHANNEL must be a Slack channel ID, got: $CHANNEL"
+              exit 1
+            fi
+            slack=(--slack-channel "$CHANNEL")
+          fi
+          .github/scripts/health-quiet.sh handoff/logs/site/weekly.log bun src/fit/main/main.ts health weekly --out site --weeks "$WEEKS" "${slack[@]}"
+
+      - name: Note a weekly wrap-up failure
+        if: ${{ steps.weekly.outcome == 'failure' }}
+        run: echo "::warning title=FIT health weekly::The weekly wrap-up failed; the daily site is still published. See logs/site/weekly.log on the health site."
 
       # This run's command output, kept with the site: the only place it can be read.
       - name: Add the logs
