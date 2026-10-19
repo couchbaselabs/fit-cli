@@ -177,14 +177,17 @@ export async function runWeeklyCommand(argv: string[], prefix: string): Promise<
     if (channel || values["slack-dry-run"]) fitCliInfo(`Slack: not posting - ${newest.id} was not built this run.`);
     return {};
   }
+  // The site's address comes from GitHub (private Pages gets a random hostname): without it,
+  // the message would have no link to the page.
   const site = await healthSiteUrl();
+  if (!site) fitCliWarn("Slack: could not find the health site's address (gh api repos/couchbaselabs/fit-health/pages): the message has no links.");
   const message = renderSlackWeekly(post, site ? `${site}weekly/${post.week.id}/` : undefined);
   if (values["slack-dry-run"]) {
-    printWithoutTimestamps(`\nSlack message (dry run, not posted${channel ? ` - would go to ${channel}` : ""}):\n\n${message.headline}\n\n--- thread ---\n${message.thread}`);
+    printWithoutTimestamps(`\nSlack message (dry run, not posted${channel ? ` - would go to ${channel}` : ""}):\n\n${message}`);
   } else if (channel) {
     // Posting is a side effect of the page, never a reason for it to fail.
     try {
-      await postDigest(channel, message, undefined, { unfurl: false });
+      await postDigest(channel, { headline: message }, undefined, { unfurl: false });
       fitCliInfo(`Slack: posted ${post.week.id} to ${channel}.`);
     } catch (err) {
       const text = `Slack: could not post ${post.week.id} to ${channel}: ${err instanceof Error ? err.message : String(err)}`;

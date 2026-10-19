@@ -10,7 +10,7 @@ import type { SlackDigest } from "./render/render-slack.js";
 /** The most the two posts may take together: a Slack outage must not hold up the report. */
 export const POST_TIMEOUT_MS = 30_000;
 
-export async function postDigest(channel: string, digest: SlackDigest, timeoutMs = POST_TIMEOUT_MS, options: { unfurl?: boolean } = {}): Promise<{ ts: string }> {
+export async function postDigest(channel: string, digest: Pick<SlackDigest, "headline"> & Partial<Pick<SlackDigest, "thread">>, timeoutMs = POST_TIMEOUT_MS, options: { unfurl?: boolean } = {}): Promise<{ ts: string }> {
   const token = await resolveSlackToken();
   if (!token) {
     throw new Error("No Slack token: set SLACK_BOT_TOKEN, or log in to AWS so fit-cli can read the fit-cli/slack/token secret.");
@@ -23,6 +23,8 @@ export async function postDigest(channel: string, digest: SlackDigest, timeoutMs
   } catch (err) {
     throw timedOut(err);
   }
+  // A message with no thread (the weekly post) is one message.
+  if (!digest.thread) return { ts };
   try {
     await postMessage(token, channel, digest.thread, ts, undefined, signal, options);
   } catch (err) {

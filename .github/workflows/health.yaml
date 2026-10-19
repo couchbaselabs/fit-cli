@@ -61,6 +61,11 @@ on:
         required: false
         type: boolean
         default: false
+      weekly_rebuild:
+        description: With weekly, rebuild weeks already on the site (they are frozen otherwise), and post the newest again with weekly_slack.
+        required: false
+        type: boolean
+        default: false
 
 # Least privilege by default; the health and site jobs add id-token: write for OIDC.
 permissions:
@@ -262,6 +267,9 @@ jobs:
           SCHEDULED: ${{ github.event_name == 'schedule' }}
           ASKED: ${{ inputs.weekly }}
           WEEKS: ${{ inputs.weekly_weeks || '1' }}
+          REBUILD: ${{ inputs.weekly_rebuild }}
+          # The Slack message links to the page: the command asks GitHub for the site's address.
+          GH_TOKEN: ${{ steps.gh-secret.outputs.token }}
           # Only the scheduled run, or a dispatch with weekly_slack ticked, posts; and only once
           # the channel is set. `slack` is the daily digests' input, never this one's.
           CHANNEL: ${{ (github.event_name == 'schedule' || inputs.weekly_slack) && vars.FIT_HEALTH_WEEKLY_SLACK_CHANNEL || '' }}
@@ -282,7 +290,9 @@ jobs:
             fi
             slack=(--slack-channel "$CHANNEL")
           fi
-          .github/scripts/health-quiet.sh handoff/logs/site/weekly.log bun src/fit/main/main.ts health weekly --out site --weeks "$WEEKS" "${slack[@]}"
+          rebuild=()
+          if [ "$REBUILD" = "true" ]; then rebuild=(--rebuild); fi
+          .github/scripts/health-quiet.sh handoff/logs/site/weekly.log bun src/fit/main/main.ts health weekly --out site --weeks "$WEEKS" "${rebuild[@]}" "${slack[@]}"
 
       - name: Note a weekly wrap-up failure
         if: ${{ steps.weekly.outcome == 'failure' }}
