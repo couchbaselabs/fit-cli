@@ -1,13 +1,14 @@
 # Scheduled cleanup of abandoned Capella clusters.
 # ----------------------------------------------------
 # A FIT run removes its own Capella cluster at teardown. A run that dies first
-# leaves the cluster and its project behind, and Capella removes neither, so they
-# bill until someone notices. This reaps them, in both the dev and prod Capella
+# leaves its cluster behind, and Capella does not remove it, so it bills until
+# someone notices. This reaps them, in both the dev and prod Capella
 # organizations.
 #
-# It runs `cbdinocluster cleanup cloud`, which removes every expired cbdinocluster
-# project in the organization, whoever made it. An expiry means the owner is done
-# with it. Live clusters are never touched, so this can run hourly.
+# It runs `cbdinocluster cleanup cloud`, which removes the expired clusters in the
+# fit-cli project, and the expired legacy cbdc2_ projects anywhere in the
+# organization with their clusters. An expiry means the owner is done with it.
+# Live clusters are never touched, so this can run hourly.
 #
 # Clusters Capella itself failed to destroy are left. They are flagged loudly in
 # the log and raised as a warning annotation on the run page. Only Capella support
@@ -30,7 +31,7 @@ on:
         default: false
 
 # Don't pile up overlapping sweeps. An in-flight one is left to finish, because a
-# Capella delete takes minutes and cancelling one strands the project it was on.
+# Capella delete takes minutes and cancelling one strands the cluster it was on.
 concurrency:
   group: cleanup-capella-clusters
   cancel-in-progress: false
