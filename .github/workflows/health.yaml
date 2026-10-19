@@ -37,7 +37,7 @@ on:
         type: string
         default: s3://fit-cli/health-dev/
       slack:
-        description: Post Slack digests for SDKs that configure a channel (the scheduled run always does).
+        description: Post the daily Slack digests, to each SDK's own channel (the scheduled run always does). Not the weekly post.
         required: false
         type: boolean
         default: false
@@ -47,7 +47,7 @@ on:
         type: boolean
         default: false
       weekly:
-        description: Build the weekly wrap-up of the last full week (a scheduled run does on Mondays). Posts it only with slack ticked.
+        description: Build the weekly wrap-up of the last full week (a scheduled run does on Mondays). Posts it only with weekly_slack ticked.
         required: false
         type: boolean
         default: false
@@ -56,6 +56,11 @@ on:
         required: false
         type: string
         default: "1"
+      weekly_slack:
+        description: With weekly, post the newest week to the weekly channel (FIT_HEALTH_WEEKLY_SLACK_CHANNEL). Posts nothing to the SDKs' channels.
+        required: false
+        type: boolean
+        default: false
 
 # Least privilege by default; the health and site jobs add id-token: write for OIDC.
 permissions:
@@ -257,9 +262,9 @@ jobs:
           SCHEDULED: ${{ github.event_name == 'schedule' }}
           ASKED: ${{ inputs.weekly }}
           WEEKS: ${{ inputs.weekly_weeks || '1' }}
-          # Only the scheduled run, or a dispatch with slack ticked, posts; and only once the
-          # channel is set.
-          CHANNEL: ${{ (github.event_name == 'schedule' || inputs.slack) && vars.FIT_HEALTH_WEEKLY_SLACK_CHANNEL || '' }}
+          # Only the scheduled run, or a dispatch with weekly_slack ticked, posts; and only once
+          # the channel is set. `slack` is the daily digests' input, never this one's.
+          CHANNEL: ${{ (github.event_name == 'schedule' || inputs.weekly_slack) && vars.FIT_HEALTH_WEEKLY_SLACK_CHANNEL || '' }}
         run: |
           if [ "$ASKED" != "true" ] && ! { [ "$SCHEDULED" = "true" ] && [ "$(date -u +%u)" = 1 ]; }; then
             echo "Not Monday, and not asked for: no weekly wrap-up."
