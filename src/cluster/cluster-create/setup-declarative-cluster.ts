@@ -30,6 +30,7 @@ import { parseClusterIds, type CbdinoCluster } from "../cluster-select/parse-clu
 import { parseConnstr } from "../cluster-select/parse-connstr.js";
 import {
   allocateCluster,
+  isRemoteExecution,
   localClusterCommandExecutor,
   type ClusterCommandExecutor,
 } from "./allocate-cluster.js";
@@ -90,11 +91,6 @@ async function resolveCbdinoclusterCommand(
 
 export function cbdinoclusterNeedsInit(message: string): boolean {
   return message.includes(CBDINOCLUSTER_INIT_REQUIRED);
-}
-
-/** Whether the executor runs on a remote box (vs. this machine). */
-function isRemoteExecution(execution: ClusterCommandExecutor): boolean {
-  return "kind" in execution && (execution as { kind?: string }).kind === "remote";
 }
 
 /**
@@ -207,7 +203,8 @@ export function dockerNetworkFromInitArgs(args: string): string | undefined {
  * they never live in the definition file — with creds we pass
  * `--github-user/--github-token` (which enables GitHub), without them
  * `--disable-github`. The run's own Capella API key pool flags are appended the
- * same way (see {@link capellaKeyPoolInitArgs}), and the returned
+ * same way, with the run stamp `purpose` as the pool name (see
+ * {@link capellaKeyPoolInitArgs}), and the returned
  * `capellaKeyPool` tells teardown whether there is a pool to remove. Afterwards
  * the docker network the args name is created if it isn't a built-in
  * (cbdinocluster init records the network but doesn't create it).
@@ -220,6 +217,7 @@ export async function runCbdinoclusterInit(
   execution: ClusterCommandExecutor,
   cbdinocluster: string,
   args: string,
+  purpose: string,
   githubCredentials?: { user: string; token: string },
   configPatch?: PieceData,
   cycleDir: string = ensureRunDir(),
@@ -231,7 +229,7 @@ export async function runCbdinoclusterInit(
   const credArgs = githubCredentials
     ? ["--github-user", githubCredentials.user, "--github-token", githubCredentials.token]
     : ["--disable-github"];
-  const poolArgs = capellaKeyPoolInitArgs(initArgs, allocatePurpose());
+  const poolArgs = capellaKeyPoolInitArgs(initArgs, purpose);
   console.log(
     `→ setup-cluster: initializing cbdinocluster on ${execution.description} with \`cbdinocluster init ${args}\``,
   );
@@ -339,9 +337,9 @@ export async function remoteCbdinoclusterCloudEnabled(
 }
 
 /**
- * Prepare `~/.cbdinocluster` from a definition's init setup, picking the right
- * path: the `args` path runs `cbdinocluster init <args>` (and merges any
- * `configPatch`); the legacy `config` path uploads a config object verbatim (CNG).
+ * Prepare `~/.cbdinocluster` from a definition's init setup. The `args` path runs
+ * `cbdinocluster init <args>` and merges any `configPatch`. The legacy `config`
+ * path uploads a config object (CNG).
  * Used by the situational flow, which sets up its own cluster outside
  * {@link setupDeclarativeCluster}. Reports whether init created the run's Capella
  * API key pool, so teardown knows there is one to remove, and the cbdinocluster
@@ -350,6 +348,7 @@ export async function remoteCbdinoclusterCloudEnabled(
 export async function prepareCbdinoclusterInit(
   execution: ClusterCommandExecutor,
   init: CbdinoclusterInitSetup | undefined,
+  purpose: string,
   githubCredentials?: { user: string; token: string },
   cycleDir: string = ensureRunDir(),
   source?: CbdinoclusterSource,
@@ -368,7 +367,7 @@ export async function prepareCbdinoclusterInit(
       );
       return { capellaKeyPool: false };
     }
-    const result = await runCbdinoclusterInit(execution, cbdinocluster, args, githubCredentials, init.configPatch, cycleDir);
+    const result = await runCbdinoclusterInit(execution, cbdinocluster, args, purpose, githubCredentials, init.configPatch, cycleDir);
     return { ...result, cbdinocluster };
   }
   return { capellaKeyPool: false };
@@ -383,9 +382,12 @@ export async function prepareCbdinoclusterConfig(
   if (!config || !("kind" in execution) || execution.kind !== "remote") {
     return;
   }
-  const configToUpload: PieceData = githubCredentials
-    ? { ...config, github: { enabled: "true", user: githubCredentials.user, token: githubCredentials.token } }
-    : config;
+  const configToUpload: PieceData = {
+    ...config,
+    ...(githubCredentials
+      ? { github: { enabled: "true", user: githubCredentials.user, token: githubCredentials.token } }
+      : {}),
+  };
   console.log(
     `→ setup-cluster: uploading cbdinocluster config to ${execution.description} as ${CBDINOCLUSTER_DEFAULT_REMOTE_CONFIG_PATH}`,
   );
@@ -410,12 +412,13 @@ async function listExistingClusters(
       return undefined;
     }
 
+    const initArgs = ["init", "--auto"];
     console.log(
       `→ setup-cluster: ${execution.description} has no cbdinocluster config yet — ` +
-        `initializing a default one with \`${cbdinocluster} init --auto\`.`,
+        `initializing a default one with \`${cbdinocluster} ${initArgs.join(" ")}\`.`,
     );
     try {
-      await execution.runHiddenUntilFailure(cbdinocluster, ["init", "--auto"]);
+      await execution.runHiddenUntilFailure(cbdinocluster, initArgs);
     } catch (initErr) {
       console.error(`\n✗ setup-cluster: couldn't initialize cbdinocluster: ${(initErr as Error).message}`);
       return undefined;
@@ -480,6 +483,12 @@ export interface SetupDeclarativeClusterResult extends RunOutput {
   clusterId?: string;
   /** The resolved cbdinocluster command, present when one was found — for teardown. */
   cbdinocluster?: string;
+  /**
+   * True when the box's cbdinocluster has Capella credentials, because the plan
+   * uses the cloud deployer or init created the run's key pool. Teardown then
+   * sweeps the run's leftover Capella clusters, whatever became of the cluster.
+   */
+  capellaCredentials?: boolean;
   /**
    * The Couchbase cluster's own UUID (distinct from cbdinocluster's own tracking
    * id, `clusterId`) — a generic concept that applies beyond Capella/PE. Populated
@@ -673,12 +682,22 @@ async function selectedClusterFor(
   };
 }
 
-/** Build the `cbdinocluster rm <id>` args. */
+// The bounds keep one cluster stuck in deletion from holding up teardown. The hourly
+// capella-clusters sweep removes what a timed out removal leaves, once it expires.
+export const CBDINOCLUSTER_RM_TIMEOUT = "30m";
+export const CBDINOCLUSTER_REMOVE_ALL_TIMEOUT = "45m";
+
+/**
+ * Build the `cbdinocluster rm --timeout <duration> --ignore-missing <id>` args.
+ * cbdinocluster exits 0 when it removed the cluster, or when every deployer
+ * listed its clusters and none has the id. Any other exit means the cluster can
+ * still exist.
+ */
 export function removeClusterArgs(id: string): string[] {
-  return ["remove", id];
+  return ["rm", "--timeout", CBDINOCLUSTER_RM_TIMEOUT, "--ignore-missing", id];
 }
 
-/** Remove a cbdinocluster cluster, streaming progress. Resolves whether it worked. */
+/** Remove a cbdinocluster cluster, streaming progress. Resolves whether it is gone. */
 export async function removeCluster(
   cbdinocluster: string,
   id: string,
@@ -687,7 +706,7 @@ export async function removeCluster(
   console.log(`\nRemoving cluster ${id}...`);
   try {
     await execution.run(cbdinocluster, removeClusterArgs(id));
-    console.log(`\n✓ Removed cluster ${id}`);
+    console.log(`\n✓ Cluster ${id} is removed or was already gone`);
     return true;
   } catch (err) {
     console.error(`\n✗ Failed to remove cluster ${id}: ${(err as Error).message}`);
@@ -715,6 +734,44 @@ export async function removeCapellaApiKeyPool(
     return true;
   } catch (err) {
     fitCliWarn(`\n⚠ Failed to remove this run's Capella API key pool: ${(err as Error).message}`);
+    return false;
+  }
+}
+
+/**
+ * Build the `cbdinocluster remove-all cloud --purpose <purpose>` args. A cluster
+ * matches when its purpose equals the stamp or starts with the stamp plus a dash.
+ */
+export function removeRunCapellaClustersArgs(purpose: string): string[] {
+  return ["remove-all", "cloud", "--purpose", purpose, "--timeout", CBDINOCLUSTER_REMOVE_ALL_TIMEOUT];
+}
+
+/**
+ * Remove every Capella cluster and project still carrying this run's purpose
+ * stamp. The per-group `rm` removes the cluster fit-cli knows the id of, but an
+ * allocate that failed part way, or a group whose `rm` failed, leaves projects
+ * fit-cli holds no id for. A cluster matches when its purpose equals the stamp or
+ * starts with the stamp plus a dash, so FIT's `<stamp>-FIT-SIT` matches too.
+ * Another run matches only if it drew the same second and the same 32 random bits.
+ * It removes expired and live clusters, because the run is over.
+ *
+ * Must run before the key pool is removed (it needs working keys) and before the
+ * box is terminated (the config lives on the box). Best effort like
+ * {@link removeCluster}. The hourly capella-clusters sweep catches what a
+ * failure here leaves behind.
+ */
+export async function removeRunCapellaClusters(
+  cbdinocluster: string,
+  purpose: string,
+  execution: ClusterCommandExecutor,
+): Promise<boolean> {
+  console.log(`\nRemoving any leftover Capella clusters stamped ${purpose}...`);
+  try {
+    await execution.run(cbdinocluster, removeRunCapellaClustersArgs(purpose));
+    console.log(`\n✓ Removed this run's leftover Capella clusters`);
+    return true;
+  } catch (err) {
+    fitCliWarn(`\n⚠ Failed to remove this run's leftover Capella clusters: ${(err as Error).message}`);
     return false;
   }
 }
@@ -992,6 +1049,7 @@ async function allocate(
   cycleDir: string,
   cng: boolean,
   loadBalanced: boolean,
+  purpose: string,
   privateEndpoint = false,
   capellaEnvironment?: string,
 ): Promise<SetupDeclarativeClusterResult> {
@@ -1010,6 +1068,7 @@ async function allocate(
     allocated = await allocateCluster(
       cbdinocluster,
       YAML.stringify(resolvedConfig),
+      purpose,
       deployer,
       execution,
       cycleDir,
@@ -1142,6 +1201,8 @@ export async function setupDeclarativeCluster(plan: {
    * Defaults to {@link DEFAULT_CAPELLA_ENV} so standalone/manual callers still get a best-effort link.
    */
   capellaEnvironment?: string;
+  /** The run stamp, see allocate-purpose.ts. */
+  purpose: string;
 }, execution: ClusterCommandExecutor = localClusterCommandExecutor(), cycleDir: string = ensureRunDir()): Promise<SetupDeclarativeClusterResult> {
   const cng = plan.cng ?? false;
   // A self-managed Enterprise Analytics cluster is fronted by an nginx load
@@ -1157,7 +1218,7 @@ export async function setupDeclarativeCluster(plan: {
     return FAILED();
   }
 
-  // CNG uploads a config object verbatim. For the docker path, run cbdinocluster init
+  // CNG uploads a config object. For the docker path, run cbdinocluster init
   // with explicit args from the definition if present, or generate the standard
   // functional defaults. An empty init block ({}) means "run default init".
   let capellaKeyPool = false;
@@ -1165,11 +1226,14 @@ export async function setupDeclarativeCluster(plan: {
     await prepareCbdinoclusterConfig(execution, plan.init.config, plan.githubCredentials, cycleDir);
   } else if (plan.init !== undefined) {
     const args = plan.init.args ?? defaultCbdinoclusterInitArgs();
-    ({ capellaKeyPool } = await runCbdinoclusterInit(execution, cbdinocluster, args, plan.githubCredentials, plan.init.configPatch, cycleDir));
+    ({ capellaKeyPool } = await runCbdinoclusterInit(execution, cbdinocluster, args, plan.purpose, plan.githubCredentials, plan.init.configPatch, cycleDir));
   }
   // Carried onto whichever result this call ends up returning, so teardown removes
-  // the pool even when the cluster itself never came up.
-  const poolResult = capellaKeyPool ? { capellaKeyPool: true } : {};
+  // the pool and sweeps Capella even when the cluster itself never came up.
+  const capellaResult = {
+    ...(capellaKeyPool ? { capellaKeyPool: true } : {}),
+    ...(capellaKeyPool || plan.deployer === "cloud" ? { capellaCredentials: true } : {}),
+  };
 
   // CNG on a clean k3d box: install the Couchbase CRDs + admission controller the cao
   // deployer needs — the steps cbdinocluster's interactive `init` would prompt for
@@ -1184,14 +1248,14 @@ export async function setupDeclarativeCluster(plan: {
   // `cbdinocluster ps` doubles as a sanity check and the list of what's running.
   const existing = await listExistingClusters(cbdinocluster, execution);
   if (!existing) {
-    return FAILED({ cbdinocluster, ...poolResult });
+    return FAILED({ cbdinocluster, ...capellaResult });
   }
 
   const decision = decideClusterExists(existing, plan.onClusterExists);
 
   if (decision.action === "abort") {
     console.error(`\n✗ setup-cluster: ${decision.reason}`);
-    return FAILED({ cbdinocluster, ...poolResult });
+    return FAILED({ cbdinocluster, ...capellaResult });
   }
 
   if (decision.action === "useExisting") {
@@ -1237,7 +1301,7 @@ export async function setupDeclarativeCluster(plan: {
       ...(cluster ? { cluster } : {}),
       allocated: false,
       cbdinocluster,
-      ...poolResult,
+      ...capellaResult,
       artifacts: [],
       details: [],
     };
@@ -1283,10 +1347,11 @@ export async function setupDeclarativeCluster(plan: {
     cycleDir,
     cng,
     loadBalanced,
+    plan.purpose,
     plan.capella?.privateEndpoint !== undefined,
     effectiveDeployer === "cloud" ? (plan.capellaEnvironment ?? DEFAULT_CAPELLA_ENV) : undefined,
   );
-  return { ...allocated, ...poolResult };
+  return { ...allocated, ...capellaResult };
 }
 
 if (isMain(import.meta.url)) {
@@ -1294,6 +1359,7 @@ if (isMain(import.meta.url)) {
     const result = await setupDeclarativeCluster({
       config: { nodes: [{ count: 1, version: loadEnvironments().defaults.clusterVersion, services: ["kv", "n1ql", "index"] }] },
       onClusterExists: "destroyAndRecreate",
+      purpose: allocatePurpose(),
     });
     console.log(JSON.stringify({ ...result, artifacts: result.artifacts.length }, null, 2));
     if (result.allocated && result.clusterId && result.cbdinocluster) {

@@ -63,6 +63,11 @@ export interface CbdinoSettings {
     operatorVersion: string;
     gatewayVersion: string;
   };
+  /**
+   * The run stamp. FIT puts it in front of the purpose of each cluster it
+   * allocates, so the run's teardown sweep also takes the Capella ones.
+   */
+  purpose?: string;
 }
 
 export const DEFAULT_CBDINO_SETTINGS: CbdinoSettings = {
@@ -114,6 +119,7 @@ export function situationalConfigPiece(cbdino: CbdinoSettings, situationalRunId?
           ...(cbdino.cao
             ? { deployer: "cao", operatorVersion: cbdino.cao.operatorVersion, gatewayVersion: cbdino.cao.gatewayVersion }
             : {}),
+          ...(cbdino.purpose !== undefined ? { purpose: cbdino.purpose } : {}),
         },
         files: { outputDirectory: SITUATIONAL_RESULTS_DIR_NAME },
         ...(situationalRunId !== undefined ? { situationalRunId } : {}),

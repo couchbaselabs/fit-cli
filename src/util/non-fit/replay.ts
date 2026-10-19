@@ -234,14 +234,18 @@ export function readPromptLog(logFile: string): PromptLogFile {
   };
 }
 
-function createRunDir(): string {
-  mkdirSync(RUN_ROOT_DIR, { recursive: true, mode: 0o700 });
-  const now = new Date();
-  const timestamp = [
+/** Local time as `YYYYMMDD-HHMMSS`, the timestamp that starts every run directory name. */
+export function runTimestamp(now: Date = new Date()): string {
+  return [
     now.getFullYear().toString(),
     String(now.getMonth() + 1).padStart(2, "0"),
     String(now.getDate()).padStart(2, "0"),
   ].join("") + `-${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
+}
+
+function createRunDir(): string {
+  mkdirSync(RUN_ROOT_DIR, { recursive: true, mode: 0o700 });
+  const timestamp = runTimestamp();
   // Random suffix (not just the EEXIST retry below) so concurrent `fit run` invocations on
   // different hosts — e.g. parallel CI matrix jobs — can't land on the same session id and
   // silently overwrite each other's S3 archive (both are keyed off this directory's basename).
