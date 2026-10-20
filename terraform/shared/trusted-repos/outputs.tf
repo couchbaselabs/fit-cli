@@ -31,6 +31,7 @@ locals {
     # Enterprise Analytics SDKs
     "couchbase/analytics-dotnet-client",
     "couchbase/couchbase-analytics-jvm-clients",
+    "couchbase/gocbanalytics",
 
   ]
 
