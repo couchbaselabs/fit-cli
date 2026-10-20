@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { NightTests, ReportTest } from "../build-report.js";
 import type { TestClass } from "../classify.js";
-import { buildWeekly, flakyIn, isoWeek, lastFullWeek, weekChanges, type WeeklyInput } from "../weekly.js";
+import { buildWeekly, flakyIn, isoWeek, lastFullWeek, typicalTestsRun, weekChanges, type WeeklyInput } from "../weekly.js";
 
 const W43 = isoWeek("2026-10-19");
 
@@ -108,6 +108,12 @@ test("situational and inactive series are left out", () => {
   assert.deepEqual(weekChanges(report("2026-10-25", broke, {}, { active: false }), report("2026-10-18", []), W43).newlyFailing, []);
 });
 
+test("tests run is the median night's, over JUnit nights only", () => {
+  const night = (date: string, passed: number, logOnly = 0) => ({ date, passed, failing: 1, skipped: 5, runs: 1, logOnly });
+  assert.equal(typicalTestsRun([night("a", 100), night("b", 300), night("c", 200), "none", night("d", 999, 1)]), 201);
+  assert.equal(typicalTestsRun(["none", "aborted"]), undefined);
+});
+
 test("flaky is the intermittent tests that failed during the week, apart from failing", () => {
   const now = report("2026-10-25", [
     t("A.flips", "intermittent", { lastFail: "2026-10-22" }),
@@ -141,6 +147,7 @@ test("a card: failing at both week ends, what joined and left, and the nights", 
   assert.deepEqual(names(c.newlyFailing), ["A.broke", "A.lastTwo", "A.added"]);
   assert.deepEqual(names(c.noLongerFailing), ["A.fixed", "A.gone"]);
   assert.equal(c.nightsWithResults, 5);
+  assert.equal(c.testsRun, 102);
   assert.deepEqual(c.days.slice(5), ["none", "none"]);
   assert.equal(c.noChange, false);
 });

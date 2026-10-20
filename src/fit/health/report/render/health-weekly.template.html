@@ -8,9 +8,11 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
 <style>
 /* One card per SDK, laid out as on the top page: a row per language, a section per shared core.
-   Tokens match the other health pages. The dot beside an SDK's name says where it stands at the
-   week's end: red with tests failing, amber with only flaky ones, green with neither, grey with
-   no results. The change since last week is red going up and green going down. */
+   Tokens match the other health pages. Color means one thing: where an SDK stands at the week's
+   end. Red with tests failing, amber with only flaky ones, green with neither, grey with no
+   results. It is never alone: each state also has a symbol and a word (the badge), and the
+   card's left edge carries it for a fast scroll. The change since last week is in words and an
+   arrow's shape, in ink, so it never reads as a second status. */
 :root {
   --bg: #f5f6f8;
   --surface: #ffffff;
@@ -21,6 +23,7 @@
   --fail: #d03b3b;
   --pass: #23864f;
   --flaky: #b7791f;
+  --flaky-ink: #8a5a0b;
   --zero: #8b939f;
   --total: #2a78d6;
   --unknown: #b9c0ca;
@@ -41,6 +44,7 @@
     --fail: #e66767;
     --pass: #4cbf7a;
     --flaky: #e0a43a;
+    --flaky-ink: #e0a43a;
     --zero: #6b7380;
     --total: #3987e5;
     --unknown: #4a525e;
@@ -59,6 +63,7 @@
   --fail: #e66767;
   --pass: #4cbf7a;
   --flaky: #e0a43a;
+  --flaky-ink: #e0a43a;
   --zero: #6b7380;
   --total: #3987e5;
   --unknown: #4a525e;
@@ -92,6 +97,20 @@ nav .newer { font-weight: 600; }
 .terms dt { font-weight: 600; display: inline; }
 .terms dt::after { content: ": "; }
 .terms dd { display: inline; margin: 0; color: var(--ink-2); }
+.summary { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 14px 18px; display: flex; flex-direction: column; gap: 8px; box-shadow: var(--shadow); }
+.summary div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; font-size: 14px; }
+.summary .badge { min-width: 9.5em; }
+.summary a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--rule); text-underline-offset: 3px; }
+.summary a:hover, .summary a:focus-visible { color: var(--total); text-decoration-color: currentColor; }
+.badge { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; padding: 1px 9px; border-radius: 999px; white-space: nowrap; color: var(--muted); background: color-mix(in srgb, var(--zero) 14%, transparent); }
+.badge::before { font-size: 12px; }
+.badge.fail { color: var(--fail); background: color-mix(in srgb, var(--fail) 12%, transparent); }
+.badge.fail::before { content: "✕"; }
+.badge.flaky { color: var(--flaky-ink); background: color-mix(in srgb, var(--flaky) 16%, transparent); }
+.badge.flaky::before { content: "≈"; font-size: 15px; }
+.badge.pass { color: var(--pass); background: color-mix(in srgb, var(--pass) 12%, transparent); }
+.badge.pass::before { content: "✓"; }
+.badge.none::before { content: "–"; }
 .key { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--ink-2); }
 .key span { display: inline-flex; align-items: center; gap: 7px; }
 .sw { display: inline-block; width: 11px; height: 11px; border-radius: 2px; }
@@ -101,31 +120,32 @@ nav .newer { font-weight: 600; }
 .section.core { border-left: 3px solid var(--rule); padding-left: 14px; }
 .row { display: flex; flex-direction: column; gap: 8px; }
 h3 { font-size: 16px; font-weight: 600; margin: 0; }
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; align-items: start; }
-@media (max-width: 420px) { .cards { grid-template-columns: minmax(0, 1fr); } }
-.card { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 14px 18px; display: flex; flex-direction: column; gap: 10px; box-shadow: var(--shadow); min-width: 0; }
-.card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
+/* Every card the same width, so its numbers sit in the same place from card to card. */
+.cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: start; }
+@media (max-width: 1000px) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .cards { grid-template-columns: minmax(0, 1fr); } }
+.card { background: var(--surface); border: 1px solid var(--rule); border-left: 5px solid var(--zero); border-radius: 10px; padding: 14px 18px 14px 16px; display: flex; flex-direction: column; gap: 10px; box-shadow: var(--shadow); min-width: 0; }
+.card.fail { border-left-color: var(--fail); }
+.card.flaky { border-left-color: var(--flaky); }
+.card.pass { border-left-color: var(--pass); }
+.card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
 .card h4 { font-size: 15px; font-weight: 600; margin: 0; }
-.card h4 { display: inline-flex; align-items: center; gap: 8px; }
 .card h4 a { color: var(--total); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--total) 35%, transparent); text-underline-offset: 3px; }
 .card h4 a:hover, .card h4 a:focus-visible { text-decoration-color: currentColor; }
-.dot { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--zero); }
-.dot.fail { background: var(--fail); }
-.dot.flaky { background: var(--flaky); }
-.dot.pass { background: var(--pass); }
-.nights { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; font: 13px var(--mono); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.nights { display: inline-flex; align-items: center; gap: 8px; font: 13px var(--mono); color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .strip { display: inline-flex; gap: 3px; }
 .strip i { width: 12px; height: 12px; border-radius: 2px; background: var(--night); }
 .strip i.gap { background: var(--unknown); opacity: .55; }
 .strip i.none { background: transparent; box-shadow: inset 0 0 0 1px var(--rule); }
-.figures { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 22px; font-variant-numeric: tabular-nums; }
-.figures .n { font-size: 22px; line-height: 1.2; font-weight: 600; }
-.figures .l { font-size: 14px; color: var(--ink-2); margin-left: 5px; }
-.figures .zero { color: var(--zero); }
-.move { font-size: 14px; font-weight: 600; color: var(--muted); }
-.move.up { color: var(--fail); }
-.move.down { color: var(--pass); }
-.move .l { font-weight: 400; }
+.figures { display: flex; flex-direction: column; gap: 2px; font-variant-numeric: tabular-nums; }
+.figures .main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.figures .n { font-size: 26px; line-height: 1.15; font-weight: 700; }
+.figures .n.fail { color: var(--fail); }
+.figures .n.zero { color: var(--zero); }
+.figures .l { font-size: 14px; color: var(--ink-2); }
+.figures .sub { font-size: 13px; color: var(--ink-2); }
+.figures .sub b { font-weight: 600; color: var(--ink); }
+.figures .sub b.flaky { color: var(--flaky-ink); }
 details.tests > summary { cursor: pointer; color: var(--total); font-size: 13px; }
 details.tests[open] > summary { margin-bottom: 10px; }
 details.tests > .lists { display: flex; flex-direction: column; gap: 12px; }
@@ -160,12 +180,11 @@ details.note p { margin-top: 8px; }
     <div><dt>Failing</dt><dd>Failing night after night at the week's end, or just started to. The arrow is the change since last week's end.</dd></div>
     <div><dt>Flaky</dt><dd>Failed this week, but flips between passing and failing. Not in the failing count.</dd></div>
   </dl>
+  <section class="summary" id="summary" aria-label="Where each SDK stands"></section>
   <div class="key">
-    <span><i class="sw dot fail"></i>Tests failing</span>
-    <span><i class="sw dot flaky"></i>Only flaky tests</span>
-    <span><i class="sw dot pass"></i>Neither</span>
-    <span><i class="sw" style="background:var(--night)"></i>Night with results</span>
-    <span><i class="sw" style="background:var(--unknown);opacity:.55"></i>Nightly ran, no results</span>
+    <span>Nights:</span>
+    <span><i class="sw" style="background:var(--night)"></i>With results</span>
+    <span><i class="sw" style="background:var(--unknown);opacity:.55"></i>Ran, no results</span>
     <span><i class="sw" style="box-shadow:inset 0 0 0 1px var(--rule)"></i>No nightly</span>
   </div>
   <div class="tools"><button type="button" id="toggle-all">Expand all</button></div>
@@ -246,34 +265,60 @@ function list(kind, title, tests, c) {
   return `<div class="list ${kind}"><h5>${title}: ${tests.length} test${tests.length === 1 ? "" : "s"}</h5><ul>${shown}</ul>${rest}</div>`;
 }
 
+// Where an SDK stands at the week's end: the badge, the card's edge and the summary all say it.
+const STATES = {
+  fail: { word: "Failing", about: "tests failing" },
+  flaky: { word: "Flaky only", about: "no tests failing, some flaky" },
+  pass: { word: "Clean", about: "no tests failing or flaky" },
+  none: { word: "No results", about: "no results all week" },
+};
+const stateOf = (c) => (!c.reported || !c.nightsWithResults ? "none" : c.failing ? "fail" : c.flaky.length ? "flaky" : "pass");
+const badge = (st) => `<span class="badge ${st}" title="${STATES[st].about}">${STATES[st].word}</span>`;
+const labelOf = (c) => (c.product === "SDK" ? `${c.name} SDK` : c.name);
+
 function card(c) {
-  const label = c.product === "SDK" ? `${c.name} SDK` : c.name;
-  const r = c.reported && c.nightsWithResults > 0;
-  const state = !r ? ["", "no results"] : c.failing ? ["fail", "tests failing"] : c.flaky.length ? ["flaky", "only flaky tests"] : ["pass", "no tests failing"];
-  const dot = `<i class="dot ${state[0]}" role="img" aria-label="${state[1]}" title="${state[1]}"></i>`;
-  const head = `<div class="card-head"><h4>${dot}<a href="${sdkPage(c.sdk)}" title="Open the ${esc(label)} report">${esc(label)} →</a></h4>${strip(c)}</div>`;
-  const open = (body) => `<section class="card" id="sdk-${esc(c.sdk)}">${head}${body}</section>`;
-  if (!r) return open(`<p class="quiet">No results all week.</p>`);
+  const label = labelOf(c);
+  const st = stateOf(c);
+  const head = `<div class="card-head"><h4><a href="${sdkPage(c.sdk)}" title="Open the ${esc(label)} report">${esc(label)} →</a></h4>${badge(st)}</div>`;
+  const open = (body) => `<section class="card ${st}" id="sdk-${esc(c.sdk)}">${head}${body}</section>`;
+  if (st === "none") return open(`${strip(c)}<p class="quiet">No results all week.</p>`);
   const b = c.failingBefore;
   const d = b === undefined ? undefined : c.failing - b;
-  const move = d === undefined ? `<span class="move">no week before to compare</span>`
-    : d === 0 ? `<span class="move">no change <span class="l">since last week</span></span>`
-    : `<span class="move ${d > 0 ? "up" : "down"}">${d > 0 ? "▲" : "▼"} ${fmt(Math.abs(d))} <span class="l">since last week</span></span>`;
-  const num = (n, l) => `<span><span class="n${n ? "" : " zero"}">${fmt(n)}</span><span class="l">${l}</span></span>`;
-  const figures = `<div class="figures">${num(c.failing, "failing")}${move}${num(c.flaky.length, "flaky")}</div>`;
+  // The change is in words and the arrow's shape, in ink: color is only for where the SDK stands.
+  const move = d === undefined ? "no week before to compare"
+    : d === 0 ? "same as last week"
+    : `<b>${d > 0 ? "▲" : "▼"} ${fmt(Math.abs(d))}</b> ${d > 0 ? "more" : "fewer"} than last week`;
+  const of = c.testsRun ? `<span class="l">of ${fmt(c.testsRun)} run</span>` : "";
+  const flaky = `<b class="${c.flaky.length ? "flaky" : ""}">${fmt(c.flaky.length)}</b> flaky`;
+  const figures = `<div class="figures"><div class="main"><span class="n ${c.failing ? "fail" : "zero"}">${fmt(c.failing)}</span><span class="l">failing</span>${of}</div>`
+    + `<div class="sub">${move} · ${flaky}</div></div>`;
   const parts = [
     c.newlyFailing.length ? `${fmt(c.newlyFailing.length)} newly failing` : "",
     c.noLongerFailing.length ? `${fmt(c.noLongerFailing.length)} no longer failing` : "",
     c.flaky.length ? `${fmt(c.flaky.length)} flaky` : "",
   ].filter(Boolean);
-  if (!parts.length) return open(figures);
+  const body = figures + strip(c);
+  if (!parts.length) return open(body);
   const lists = list("newly", "Newly failing", c.newlyFailing, c) + list("gone", "No longer failing", c.noLongerFailing, c) + list("flaky", "Flaky this week", c.flaky, c);
   const what = c.newlyFailing.length || c.noLongerFailing.length ? "What changed" : "The tests";
-  return open(`${figures}<details class="tests"><summary>${what} (${parts.join(", ")})</summary><div class="lists">${lists}</div></details>`);
+  return open(`${body}<details class="tests"><summary>${what} (${parts.join(", ")})</summary><div class="lists">${lists}</div></details>`);
+}
+
+// The summary answers "which need attention?" first, without reordering the cards: each state's
+// SDKs, in the page's order, linked to their cards.
+function summary(order) {
+  const rows = ["fail", "flaky", "pass", "none"].map((st) => {
+    const cs = order.filter((c) => stateOf(c) === st);
+    if (!cs.length) return "";
+    const names = cs.map((c) => `<a href="#sdk-${esc(c.sdk)}">${esc(labelOf(c))}</a>`).join("");
+    return `<div>${badge(st)}${names}</div>`;
+  });
+  document.getElementById("summary").innerHTML = rows.join("");
 }
 
 const host = document.getElementById("panels");
 const bySdk = new Map(D.cards.map((c) => [c.sdk, c]));
+summary(D.sections.flatMap((sec) => sec.rows.flatMap((r) => r.sdks.map((s) => bySdk.get(s)).filter(Boolean))));
 for (const sec of D.sections) {
   const box = document.createElement("section");
   box.className = sec.title ? "section core" : "section";

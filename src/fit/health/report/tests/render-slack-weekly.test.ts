@@ -44,20 +44,28 @@ function weekly(cards: WeeklyCard[]): Weekly {
 
 const t = (test: string, more = {}) => ({ test, series: "func", where: "on-prem", since: "2026-10-21", nights: 5, ...more });
 
-test("one message: a line per SDK with anything to say, in the page's order, and the page linked", () => {
+test("one message, grouped by where each SDK stands, the counts first, in the page's order", () => {
   const w = weekly([
-    card("go", "Go", { newlyFailing: [t("A.x"), t("A.y"), t("N.x")], failing: 3 }),
-    card("python", "Python", { noLongerFailing: [t("C.z", { last: "2026-10-20" })], failing: 1, failingBefore: 2 }),
-    card("java", "Java", { noChange: true, failing: 4, failingBefore: 4, flaky: [t("F.x")] }),
+    card("go", "Go", { newlyFailing: [t("A.x"), t("A.y"), t("N.x")], failing: 3, testsRun: 1200 }),
+    card("python", "Python", { failing: 1, failingBefore: 2, flaky: [t("F.y")] }),
+    card("java", "Java", { noChange: true, failing: 4, failingBefore: 4 }),
+    card("dotnet", ".NET", { flaky: [t("F.x"), t("F.z")] }),
     card("kotlin", "Kotlin", { noChange: true }),
-    card("scala", "Scala", { noChange: true }),
+    card("rust", "Rust", { reported: false, nightsWithResults: 0 }),
   ]);
   assert.deepEqual(renderSlackWeekly(w, "https://site/w/").split("\n"), [
-    "*<https://site/w/|FIT weekly · 2026-W43>* · 19 Oct to 25 Oct · against 2026-W42",
-    "• *<https://site/w/#sdk-java|Java>*: 4 failing (no change) · 1 flaky",
-    "• *<https://site/w/#sdk-python|Python>*: 1 failing (▼1)",
-    "• *<https://site/w/#sdk-go|Go>*: 3 failing (▲3)",
-    "• No change, nothing flaky: Scala, Kotlin",
+    "*<https://site/w/|FIT weekly · 2026-W43>*: :x: 3 failing  :warning: 1 flaky only  :white_check_mark: 1 clean  :heavy_minus_sign: 1 no results all week",
+    "_19 Oct to 25 Oct, against 2026-W42_",
+    "",
+    ":x: *Failing*",
+    "• <https://site/w/#sdk-java|Java>: *4 failing* · same as last week",
+    "• <https://site/w/#sdk-python|Python>: *1 failing* · ▼ 1 fewer than last week · 1 flaky",
+    "• <https://site/w/#sdk-go|Go>: *3 failing* of 1,200 · ▲ 3 more than last week",
+    "",
+    ":warning: *Flaky only:* <https://site/w/#sdk-dotnet|.NET> (2)",
+    ":white_check_mark: *Clean:* <https://site/w/#sdk-kotlin|Kotlin>",
+    ":heavy_minus_sign: *No results all week:* <https://site/w/#sdk-rust|Rust>",
+    "",
     "<https://site/w/|Open the weekly report>",
   ]);
 });
@@ -65,18 +73,18 @@ test("one message: a line per SDK with anything to say, in the page's order, and
 test("with no address for the site, the message has no links", () => {
   const text = renderSlackWeekly(weekly([card("go", "Go", { newlyFailing: [t("A.x")], failing: 1 })]));
   assert.doesNotMatch(text, /<|>/);
-  assert.match(text, /^\*FIT weekly · 2026-W43\* · /);
+  assert.match(text, /^\*FIT weekly · 2026-W43\*: :x: 1 failing$/m);
 });
 
-test("an SDK with no results all week says so; one missing nights shows its count", () => {
-  const w = weekly([card("rust", "Rust", { reported: false, nightsWithResults: 0 }), card("go", "Go", { nightsWithResults: 5 })]);
+test("a failing SDK with no failure last week says nothing of a change; missing nights are noted", () => {
+  const w = weekly([card("go", "Go", { failing: 2, failingBefore: undefined, nightsWithResults: 5 }), card("dotnet", ".NET", { flaky: [t("F.x")], nightsWithResults: 6 })]);
   const text = renderSlackWeekly(w);
-  assert.match(text, /^• \*Rust\*: \*no results all week\*$/m);
-  assert.match(text, /^• \*Go\*: 0 failing \(no change\) · 5\/7 nights$/m);
+  assert.match(text, /^• Go: \*2 failing\* · 5\/7 nights$/m);
+  assert.match(text, /^:warning: \*Flaky only:\* \.NET \(1, 6\/7 nights\)$/m);
 });
 
 test("names are escaped for Slack, and Operational Insights is shortened", () => {
   assert.equal(shortName({ name: "Go Operational Insights" }), "Go OI");
-  const text = renderSlackWeekly(weekly([card("go", "A<b>&c", { newlyFailing: [t("A.x")], failing: 1 })]));
-  assert.match(text, /\*A&lt;b&gt;&amp;c\*/);
+  const text = renderSlackWeekly(weekly([card("go", "A<b>&c", { failing: 1 })]));
+  assert.match(text, /• A&lt;b&gt;&amp;c:/);
 });

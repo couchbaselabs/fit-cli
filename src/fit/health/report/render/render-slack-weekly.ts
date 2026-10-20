@@ -1,10 +1,11 @@
 /**
- * The Slack message for a weekly wrap-up: one message, a line per SDK with its failing count, the
- * change since last week and its flaky tests, linked to the week's page. The tests themselves are
- * on the page, not in Slack.
+ * The Slack message for a weekly wrap-up: one message, grouped as the page's summary is, by where
+ * each SDK stands at the week's end. Its first line, which is what a notification shows, counts
+ * the SDKs in each state. Each failing SDK has a line: its failing count of the tests run, the
+ * change since last week, its flaky tests. The flaky-only, clean and no-results SDKs are named on
+ * a line per state. The tests themselves are on the page, not in Slack.
  *
- * The SDKs are in the page's order, not ranked by count. An SDK with no results all week always
- * gets its own line: that is the one thing a reader can't afford to miss.
+ * The SDKs are in the page's order within a state, not ranked by count.
  *
  * Slack mrkdwn, not Markdown: *bold*, _italic_, <url|text> links.
  */
@@ -23,22 +24,45 @@ export function pageOrder(w: Pick<Weekly, "sections" | "cards">): WeeklyCard[] {
   return w.sections.flatMap((s) => s.rows.flatMap((r) => r.sdks.map((sdk) => bySdk.get(sdk)).filter((c): c is WeeklyCard => !!c)));
 }
 
-/**
- * One SDK's line: its failing count and the change since last week, its flaky tests, or that it
- * had no results. "Python: 21 failing (▲18) · 2 flaky · 6/7 nights"
- */
-export function sdkLine(c: WeeklyCard, nights: number, url?: string): string {
+/** Where an SDK stands at the week's end, as the page's badges say it. */
+export type WeeklyState = "fail" | "flaky" | "pass" | "none";
+export const stateOf = (c: WeeklyCard): WeeklyState => (!c.reported || !c.nightsWithResults ? "none" : c.failing ? "fail" : c.flaky.length ? "flaky" : "pass");
+
+/** Each state's emoji and word. The emoji differ in shape as well as color, so they read without color. */
+const STATES: Record<WeeklyState, { emoji: string; word: string }> = {
+  fail: { emoji: ":x:", word: "failing" },
+  flaky: { emoji: ":warning:", word: "flaky only" },
+  pass: { emoji: ":white_check_mark:", word: "clean" },
+  none: { emoji: ":heavy_minus_sign:", word: "no results all week" },
+};
+
+const nightsNote = (c: WeeklyCard, nights: number) => (c.nightsWithResults < nights ? `${c.nightsWithResults}/${nights} nights` : "");
+
+/** The change since last week, in words: Slack text has no color, so the arrow's shape and the word carry it. */
+function moveText(c: WeeklyCard): string {
+  if (c.failingBefore === undefined) return "";
+  const d = c.failing - c.failingBefore;
+  return d === 0 ? "same as last week" : `${d > 0 ? "▲" : "▼"} ${n(Math.abs(d))} ${d > 0 ? "more" : "fewer"} than last week`;
+}
+
+/** A failing SDK's line: "• C++: *124 failing* of 1,629 · ▲ 3 more than last week · 1 flaky" */
+export function failingLine(c: WeeklyCard, nights: number, url?: string): string {
   const name = slackEscape(shortName(c));
-  const label = url ? `*<${url}|${name}>*` : `*${name}*`;
-  if (!c.reported || c.nightsWithResults === 0) return `• ${label}: *no results all week*`;
-  const d = c.failingBefore === undefined ? undefined : c.failing - c.failingBefore;
-  const move = d === undefined ? "" : d === 0 ? " (no change)" : ` (${d > 0 ? "▲" : "▼"}${n(Math.abs(d))})`;
   const parts = [
-    `${n(c.failing)} failing${move}`,
-    ...(c.flaky.length ? [`${n(c.flaky.length)} flaky`] : []),
-    ...(c.nightsWithResults < nights ? [`${c.nightsWithResults}/${nights} nights`] : []),
-  ];
-  return `• ${label}: ${parts.join(" · ")}`;
+    `*${n(c.failing)} failing*${c.testsRun ? ` of ${n(c.testsRun)}` : ""}`,
+    moveText(c),
+    c.flaky.length ? `${n(c.flaky.length)} flaky` : "",
+    nightsNote(c, nights),
+  ].filter(Boolean);
+  return `• ${url ? `<${url}|${name}>` : name}: ${parts.join(" · ")}`;
+}
+
+/** An SDK named in a one-line group: its flaky count, and its nights if some had no results. */
+function groupName(c: WeeklyCard, nights: number, url?: string): string {
+  const name = slackEscape(shortName(c));
+  const st = stateOf(c);
+  const notes = [st === "flaky" ? n(c.flaky.length) : "", st === "none" ? "" : nightsNote(c, nights)].filter(Boolean);
+  return `${url ? `<${url}|${name}>` : name}${notes.length ? ` (${notes.join(", ")})` : ""}`;
 }
 
 /** Where a card's own section of the page is: the link opens it with its tests shown. */
@@ -46,17 +70,25 @@ const cardUrl = (weekUrl: string | undefined, c: WeeklyCard) => (weekUrl ? `${we
 
 export function renderSlackWeekly(w: Weekly, weekUrl?: string): string {
   const cards = pageOrder(w);
-  // Nothing moved and nothing flaky: named together on one line.
-  const isQuiet = (c: WeeklyCard) => c.noChange && !c.flaky.length;
-  const quiet = cards.filter(isQuiet);
+  const nights = w.dates.length;
+  const by = (st: WeeklyState) => cards.filter((c) => stateOf(c) === st);
   const span = `${shortDate(w.week.start)} to ${shortDate(w.week.end)}`;
   const title = `FIT weekly · ${w.week.id}`;
 
-  // One line per SDK with anything to say, in the page's order; the quiet ones are named together.
+  // The first line is what a notification shows: the week's answer, not only its title.
+  const counts = (["fail", "flaky", "pass", "none"] as const)
+    .filter((st) => by(st).length)
+    .map((st) => `${STATES[st].emoji} ${by(st).length} ${STATES[st].word}`);
+  const failing = by("fail");
+  // The failing SDKs a line each, the rest a line per state; all in the page's order, not ranked.
+  const groups = (["flaky", "pass", "none"] as const)
+    .filter((st) => by(st).length)
+    .map((st) => `${STATES[st].emoji} *${STATES[st].word[0].toUpperCase()}${STATES[st].word.slice(1)}:* ${by(st).map((c) => groupName(c, nights, cardUrl(weekUrl, c))).join(", ")}`);
   return [
-    `*${weekUrl ? `<${weekUrl}|${title}>` : title}* · ${span} · against ${w.previous.id}`,
-    ...cards.filter((c) => !isQuiet(c)).map((c) => sdkLine(c, w.dates.length, cardUrl(weekUrl, c))),
-    ...(quiet.length ? [`• No change, nothing flaky: ${quiet.map((c) => slackEscape(shortName(c))).join(", ")}`] : []),
-    ...(weekUrl ? [`<${weekUrl}|Open the weekly report>`] : []),
+    `*${weekUrl ? `<${weekUrl}|${title}>` : title}*: ${counts.join("  ")}`,
+    `_${span}, against ${w.previous.id}_`,
+    ...(failing.length ? ["", `${STATES.fail.emoji} *Failing*`, ...failing.map((c) => failingLine(c, nights, cardUrl(weekUrl, c)))] : []),
+    ...(groups.length ? ["", ...groups] : []),
+    ...(weekUrl ? ["", `<${weekUrl}|Open the weekly report>`] : []),
   ].join("\n");
 }

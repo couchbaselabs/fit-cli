@@ -15,7 +15,7 @@
 import type { ReportSeries } from "./build-report.js";
 import type { TestClass } from "./classify.js";
 import { addDays } from "./dates.js";
-import { layoutSections, overviewDays, placeSdk, type OverviewDay, type OverviewInput, type OverviewSection } from "./overview.js";
+import { layoutSections, overviewDays, placeSdk, type OverviewDay, type OverviewInput, type OverviewNight, type OverviewSection } from "./overview.js";
 import type { HealthOptIn } from "../registry/health-opt-ins.js";
 
 /** An ISO week: `2026-W43`, its Monday and its Sunday. */
@@ -89,6 +89,8 @@ export interface WeeklyCard {
   /** Tests failing at this week's end, and at last week's (absent with no report then). */
   failing: number;
   failingBefore?: number;
+  /** Tests run on the week's median night (by tests run), counting JUnit nights only: the scale for `failing`. */
+  testsRun?: number;
   /** No test came into or left the failing set, and every night has results. */
   noChange: boolean;
 }
@@ -147,6 +149,15 @@ export function weekChanges(now: WeeklyInput, before: WeeklyInput | undefined, w
   return out;
 }
 
+/** The median night's tests run (passed plus failing), over the nights every run of which has JUnit. */
+export function typicalTestsRun(days: readonly OverviewDay[]): number | undefined {
+  const runs = days
+    .filter((d): d is OverviewNight => typeof d !== "string" && d.logOnly === 0)
+    .map((d) => d.passed + d.failing)
+    .sort((a, b) => a - b);
+  return runs.length ? runs[Math.floor((runs.length - 1) / 2)] : undefined;
+}
+
 /** The intermittent tests that failed during `week`, at the end of `r`. */
 export function flakyIn(r: WeeklyInput, week: IsoWeek): WeeklyTest[] {
   return functional(r).flatMap((s) =>
@@ -171,6 +182,7 @@ export function buildWeekly(
     const failing = current ? failingAtEnd(current).size : 0;
     const failingBefore = previous ? failingAtEnd(previous).size : undefined;
     const moved = changes.newlyFailing.length + changes.noLongerFailing.length;
+    const testsRun = typicalTestsRun(days);
     return {
       sdk,
       name,
@@ -182,6 +194,7 @@ export function buildWeekly(
       flaky: current ? flakyIn(current, week) : [],
       failing,
       ...(failingBefore !== undefined ? { failingBefore } : {}),
+      ...(testsRun !== undefined ? { testsRun } : {}),
       noChange: !!current && failingBefore !== undefined && !moved && nightsWithResults === dates.length,
     };
   });
