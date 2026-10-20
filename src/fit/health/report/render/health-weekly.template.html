@@ -8,11 +8,9 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
 <style>
 /* One card per SDK, laid out as on the top page: a row per language, a section per shared core.
-   Tokens match the other health pages. A number's color says which way its tests moved, never
-   whether that is good: red for tests that joined the failing set (started, new tests failing),
-   green for tests that left it by passing (stopped). Tests that left without passing (no longer
-   counted) and the total (failing at week end) are in ink: neither is good or bad news. A zero
-   is grey, whatever the tile. */
+   Tokens match the other health pages. The dot beside an SDK's name says where it stands at the
+   week's end: red with tests failing, amber with only flaky ones, green with neither, grey with
+   no results. The change since last week is red going up and green going down. */
 :root {
   --bg: #f5f6f8;
   --surface: #ffffff;
@@ -22,6 +20,7 @@
   --rule: #dde1e7;
   --fail: #d03b3b;
   --pass: #23864f;
+  --flaky: #b7791f;
   --zero: #8b939f;
   --total: #2a78d6;
   --unknown: #b9c0ca;
@@ -41,6 +40,7 @@
     --rule: #2a3038;
     --fail: #e66767;
     --pass: #4cbf7a;
+    --flaky: #e0a43a;
     --zero: #6b7380;
     --total: #3987e5;
     --unknown: #4a525e;
@@ -58,6 +58,7 @@
   --rule: #2a3038;
   --fail: #e66767;
   --pass: #4cbf7a;
+  --flaky: #e0a43a;
   --zero: #6b7380;
   --total: #3987e5;
   --unknown: #4a525e;
@@ -89,8 +90,6 @@ nav .newer { font-weight: 600; }
 .terms { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 8px 24px; font-size: 13px; }
 .terms div { min-width: 0; }
 .terms dt { font-weight: 600; display: inline; }
-.terms dt.joined { color: var(--fail); }
-.terms dt.passed { color: var(--pass); }
 .terms dt::after { content: ": "; }
 .terms dd { display: inline; margin: 0; color: var(--ink-2); }
 .key { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--ink-2); }
@@ -99,7 +98,6 @@ nav .newer { font-weight: 600; }
 
 .panels { display: flex; flex-direction: column; gap: 28px; }
 .section { display: flex; flex-direction: column; gap: 14px; }
-.section > .about { font-size: 14px; color: var(--ink-2); max-width: 80ch; margin-top: -8px; }
 .section.core { border-left: 3px solid var(--rule); padding-left: 14px; }
 .row { display: flex; flex-direction: column; gap: 8px; }
 h3 { font-size: 16px; font-weight: 600; margin: 0; }
@@ -108,23 +106,26 @@ h3 { font-size: 16px; font-weight: 600; margin: 0; }
 .card { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 14px 18px; display: flex; flex-direction: column; gap: 10px; box-shadow: var(--shadow); min-width: 0; }
 .card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
 .card h4 { font-size: 15px; font-weight: 600; margin: 0; }
-.card h4 a { color: var(--ink); text-decoration: none; }
-.card h4 a:hover, .card h4 a:focus-visible { color: var(--total); text-decoration: underline; }
-.run { font: 13px var(--mono); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.card h4 { display: inline-flex; align-items: center; gap: 8px; }
+.card h4 a { color: var(--total); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--total) 35%, transparent); text-underline-offset: 3px; }
+.card h4 a:hover, .card h4 a:focus-visible { text-decoration-color: currentColor; }
+.dot { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--zero); }
+.dot.fail { background: var(--fail); }
+.dot.flaky { background: var(--flaky); }
+.dot.pass { background: var(--pass); }
 .nights { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; font: 13px var(--mono); color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .strip { display: inline-flex; gap: 3px; }
 .strip i { width: 12px; height: 12px; border-radius: 2px; background: var(--night); }
 .strip i.gap { background: var(--unknown); opacity: .55; }
 .strip i.none { background: transparent; box-shadow: inset 0 0 0 1px var(--rule); }
-/* Five columns on every card, so the numbers line up from card to card. */
-.tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
-.tile { display: flex; flex-direction: column; min-width: 0; }
-.tile .n { font-size: 20px; line-height: 1.2; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.tile .l { font-size: 12px; line-height: 1.3; color: var(--ink-2); }
-.tile .s { font-size: 12px; line-height: 1.3; color: var(--muted); font-variant-numeric: tabular-nums; }
-.tile.started .n, .tile.newfailing .n { color: var(--fail); }
-.tile.stopped .n { color: var(--pass); }
-.tile.zero .n { color: var(--zero); }
+.figures { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 22px; font-variant-numeric: tabular-nums; }
+.figures .n { font-size: 22px; line-height: 1.2; font-weight: 600; }
+.figures .l { font-size: 14px; color: var(--ink-2); margin-left: 5px; }
+.figures .zero { color: var(--zero); }
+.move { font-size: 14px; font-weight: 600; color: var(--muted); }
+.move.up { color: var(--fail); }
+.move.down { color: var(--pass); }
+.move .l { font-weight: 400; }
 details.tests > summary { cursor: pointer; color: var(--total); font-size: 13px; }
 details.tests[open] > summary { margin-bottom: 10px; }
 details.tests > .lists { display: flex; flex-direction: column; gap: 12px; }
@@ -151,27 +152,25 @@ details.note p { margin-top: 8px; }
 <div class="wrap">
   <header>
     <h1>FIT weekly · <span id="week"></span></h1>
-    <p class="lede">This week's nightly FIT runs for each SDK, against last week: what changed, not a verdict.</p>
+    <p class="lede">Each SDK's nightly FIT runs this week: how many tests are failing, and how that changed since last week.</p>
     <p class="meta" id="meta"></p>
     <nav id="nav"></nav>
   </header>
-  <p class="meta">Red: tests that joined the failing set this week. Green: tests that left it by passing. Tests that left without passing, and totals, have no color. A zero is grey.</p>
   <dl class="terms">
-    <div><dt class="joined">Started failing</dt><dd>Failing at week end, not last week, and passed before.</dd></div>
-    <div><dt class="joined">New tests failing</dt><dd>Failing at week end, not last week, and never passed: new to the run.</dd></div>
-    <div><dt class="passed">Stopped failing</dt><dd>Failing last week, and passing now.</dd></div>
-    <div><dt>No longer counted</dt><dd>Failing last week, and not now, without passing: it stopped running, or now flips between passing and failing.</dd></div>
-    <div><dt>Failing at week end</dt><dd>Failing on the week's last night, and the nights before it in a row. Tests that flip between passing and failing are left out.</dd></div>
-    <div><dt>Run · skipped</dt><dd>Beside each SDK's name: tests run (passed plus failing) and skipped, on the week's median night.</dd></div>
+    <div><dt>Failing</dt><dd>Failing night after night at the week's end, or just started to. The arrow is the change since last week's end.</dd></div>
+    <div><dt>Flaky</dt><dd>Failed this week, but flips between passing and failing. Not in the failing count.</dd></div>
   </dl>
   <div class="key">
+    <span><i class="sw dot fail"></i>Tests failing</span>
+    <span><i class="sw dot flaky"></i>Only flaky tests</span>
+    <span><i class="sw dot pass"></i>Neither</span>
     <span><i class="sw" style="background:var(--night)"></i>Night with results</span>
     <span><i class="sw" style="background:var(--unknown);opacity:.55"></i>Nightly ran, no results</span>
     <span><i class="sw" style="box-shadow:inset 0 0 0 1px var(--rule)"></i>No nightly</span>
   </div>
   <div class="tools"><button type="button" id="toggle-all">Expand all</button></div>
   <div class="panels" id="panels"></div>
-  <details class="note"><summary>How this is counted</summary><p>Counted in tests (<code>Class.method</code>), not test cases, over the functional runs only. Failing at week end counts tests in a current failure run, including those only 1-2 nights in; a test that flips between passing and failing is not in it. Every list is a way into or out of that set since last week's end, so last week's count, plus started and new tests failing, minus stopped and no longer counted, is this week's. A test that stops failing late in a week can be listed the week after: the SDK pages call it recovered only after three clean nights. A test name opens its SDK's page at that night; the SDK page shows the state as of today, not as of this week.</p></details>
+  <details class="note"><summary>How this is counted</summary><p>Counted in tests (<code>Class.method</code>), not test cases, over the functional runs only. A test counts as failing from its first failing night, and as no longer failing after three clean nights, so one that stops failing late in a week is listed the week after. A test that leaves the failing count without passing (it stopped running, or now flips) is listed as no longer failing, with why. A test name opens its SDK's page, which shows the state as of today, not as of this week.</p></details>
 </div>
 
 <script>
@@ -224,15 +223,16 @@ function list(kind, title, tests, c) {
   for (const t of tests) {
     const dot = t.test.indexOf(".");
     const cls = dot < 0 ? t.test : t.test.slice(0, dot);
-    const night = kind === "stopped" || kind === "gone" ? t.last : t.since;
-    let g = groups.find((x) => x.cls === cls && x.where === t.where && x.night === night && x.why === t.why);
-    if (!g) groups.push((g = { cls, where: t.where, night, nights: t.nights, why: t.why, methods: [] }));
+    const night = kind === "newly" ? t.since : t.last;
+    const why = t.why ?? (t.neverPassed ? "never passed" : undefined);
+    let g = groups.find((x) => x.cls === cls && x.where === t.where && x.night === night && x.why === why);
+    if (!g) groups.push((g = { cls, where: t.where, night, nights: t.nights, why, methods: [] }));
     g.methods.push(dot < 0 ? "(whole class)" : t.test.slice(dot + 1));
   }
   const item = (g) => {
-    const when = kind === "stopped" || kind === "gone"
-      ? [g.why, g.night ? `last failed ${day(g.night)}` : ""].filter(Boolean).join(" · ")
-      : `since ${day(g.night)} · ${g.nights} night${g.nights === 1 ? "" : "s"}`;
+    const when = kind === "newly"
+      ? [`since ${day(g.night)} · ${g.nights} night${g.nights === 1 ? "" : "s"}`, g.why].filter(Boolean).join(" · ")
+      : [g.why, g.night ? `last failed ${day(g.night)}` : ""].filter(Boolean).join(" · ");
     const name = g.methods.length === 1 && g.methods[0] !== "(whole class)" ? `${g.cls}.${g.methods[0]}` : g.cls;
     // A class with many methods names the first few: the SDK page has them all.
     const few = g.methods.slice(0, 8).map(esc).join(", ") + (g.methods.length > 8 ? `, and ${g.methods.length - 8} more` : "");
@@ -246,35 +246,30 @@ function list(kind, title, tests, c) {
   return `<div class="list ${kind}"><h5>${title}: ${tests.length} test${tests.length === 1 ? "" : "s"}</h5><ul>${shown}</ul>${rest}</div>`;
 }
 
-function tile(kind, n, label, sub = "") {
-  const shown = n === undefined ? "–" : typeof n === "number" ? fmt(n) : n;
-  return `<div class="tile ${kind}${n === 0 || n === undefined ? " zero" : ""}"><span class="n">${shown}</span><span class="l">${label}</span>${sub ? `<span class="s">${sub}</span>` : ""}</div>`;
-}
-
 function card(c) {
   const label = c.product === "SDK" ? `${c.name} SDK` : c.name;
-  const t = c.typicalNight;
-  // Tests run is context for the numbers, not part of them: it goes with the nights.
-  const run = t ? `<span class="run" title="On the week's median night">${fmt(t.tests)} run · ${fmt(t.skipped)} skipped</span>` : "";
-  const head = `<div class="card-head"><h4><a href="${sdkPage(c.sdk)}" aria-label="${esc(label)}">${esc(c.product)}</a></h4>${run}${strip(c)}</div>`;
+  const r = c.reported && c.nightsWithResults > 0;
+  const state = !r ? ["", "no results"] : c.failing ? ["fail", "tests failing"] : c.flaky.length ? ["flaky", "only flaky tests"] : ["pass", "no tests failing"];
+  const dot = `<i class="dot ${state[0]}" role="img" aria-label="${state[1]}" title="${state[1]}"></i>`;
+  const head = `<div class="card-head"><h4>${dot}<a href="${sdkPage(c.sdk)}" title="Open the ${esc(label)} report">${esc(label)} →</a></h4>${strip(c)}</div>`;
   const open = (body) => `<section class="card" id="sdk-${esc(c.sdk)}">${head}${body}</section>`;
-  const r = c.reported;
+  if (!r) return open(`<p class="quiet">No results all week.</p>`);
   const b = c.failingBefore;
-  const change = b === undefined ? "" : c.failing === b ? `${fmt(b)} last week` : `${fmt(b)} last week · ${c.failing > b ? "+" : "−"}${fmt(Math.abs(c.failing - b))}`;
-  const tiles = `<div class="tiles">`
-    + tile("started", r ? c.started.length : undefined, "started failing")
-    + tile("newfailing", r ? c.newFailing.length : undefined, "new tests failing")
-    + tile("stopped", r ? c.stopped.length : undefined, "stopped failing")
-    + tile("gone", r ? c.noLongerCounted.length : undefined, "no longer counted")
-    // A total, not a move: no color, and the change is in grey.
-    + tile("still", r ? c.failing : undefined, "failing at week end", r ? change : "")
-    + `</div>`;
-  if (!r) return open(`${tiles}<p class="quiet">No results all week.</p>`);
-  if (c.noChange) return open(`${tiles}<p class="quiet">No change.</p>`);
-  const n = c.started.length + c.newFailing.length + c.stopped.length + c.noLongerCounted.length;
-  if (!n) return open(`${tiles}<p class="quiet">Nothing started or stopped failing.</p>`);
-  const lists = list("started", "Started failing", c.started, c) + list("newfailing", "New tests failing", c.newFailing, c) + list("stopped", "Stopped failing", c.stopped, c) + list("gone", "No longer counted", c.noLongerCounted, c);
-  return open(`${tiles}<details class="tests"><summary>Show the ${fmt(n)} test${n === 1 ? "" : "s"}</summary><div class="lists">${lists}</div></details>`);
+  const d = b === undefined ? undefined : c.failing - b;
+  const move = d === undefined ? `<span class="move">no week before to compare</span>`
+    : d === 0 ? `<span class="move">no change <span class="l">since last week</span></span>`
+    : `<span class="move ${d > 0 ? "up" : "down"}">${d > 0 ? "▲" : "▼"} ${fmt(Math.abs(d))} <span class="l">since last week</span></span>`;
+  const num = (n, l) => `<span><span class="n${n ? "" : " zero"}">${fmt(n)}</span><span class="l">${l}</span></span>`;
+  const figures = `<div class="figures">${num(c.failing, "failing")}${move}${num(c.flaky.length, "flaky")}</div>`;
+  const parts = [
+    c.newlyFailing.length ? `${fmt(c.newlyFailing.length)} newly failing` : "",
+    c.noLongerFailing.length ? `${fmt(c.noLongerFailing.length)} no longer failing` : "",
+    c.flaky.length ? `${fmt(c.flaky.length)} flaky` : "",
+  ].filter(Boolean);
+  if (!parts.length) return open(figures);
+  const lists = list("newly", "Newly failing", c.newlyFailing, c) + list("gone", "No longer failing", c.noLongerFailing, c) + list("flaky", "Flaky this week", c.flaky, c);
+  const what = c.newlyFailing.length || c.noLongerFailing.length ? "What changed" : "The tests";
+  return open(`${figures}<details class="tests"><summary>${what} (${parts.join(", ")})</summary><div class="lists">${lists}</div></details>`);
 }
 
 const host = document.getElementById("panels");
@@ -282,7 +277,7 @@ const bySdk = new Map(D.cards.map((c) => [c.sdk, c]));
 for (const sec of D.sections) {
   const box = document.createElement("section");
   box.className = sec.title ? "section core" : "section";
-  if (sec.title) box.insertAdjacentHTML("beforeend", `<h2>${esc(sec.title)}</h2>${sec.description ? `<p class="about">${esc(sec.description)}</p>` : ""}`);
+  if (sec.title) box.insertAdjacentHTML("beforeend", `<h2>${esc(sec.title)}</h2>`);
   for (const r of sec.rows) {
     const heading = sec.title ? "h3" : "h2";
     const cards = r.sdks.map((s) => bySdk.get(s)).filter(Boolean).map(card).join("");

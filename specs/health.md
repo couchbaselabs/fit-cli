@@ -82,19 +82,20 @@ Where an SDK's output goes is data in the store, not code: `fit health settings 
 ## Weekly wrap-up
 Once a week, a page shows each SDK's FIT condition for SDK teams and managers, and how it changed since the week before. A week is an ISO week of Monday-to-Sunday nights (`2026-W43`). The workflow builds it on Mondays, after the site, so Monday's night goes in the next week; its `weekly` input builds it on any day. Each SDK's two reports, one at the end of each week, are rebuilt with `--end`, so nothing new is stored.
 
-A card counts one set of tests: those failing at a week's end, in a current failure run (classes always, failing and new; an intermittent test is not in it). The card shows the set's size at both week ends, and the tests that moved between them:
-- started failing: joined the set, having passed before
-- new tests failing: joined the set, never having passed (new to the run, or split out of a class that errored as a whole)
-- stopped failing: left the set and pass again
-- no longer counted: left the set without passing (stopped running, or now intermittent)
+A card is the overall picture for one SDK at the week's end:
+- failing: the tests in a current failure run (classes always, failing and new), with the change since last week's end as one arrow (▲ up, ▼ down, or no change)
+- flaky: the intermittent tests that failed during the week; they are not in the failing count
+- the nights with results (`6/7`, the other nights shaded as on the top page)
 
-So last week's count, plus the tests that joined, minus those that left, is this week's. The card also shows the nights with results (`6/7`, the other nights shaded as on the top page) and the tests run and skipped on the median night. The test names are collapsed under one toggle per card; `#sdk-<sdk>` opens that card's.
+A dot beside the SDK's name says where it stands: red with tests failing, amber with only flaky tests, green with neither, grey with no results all week. The arrow is red going up and green going down. The SDK's name links to its page.
 
-The page lays out the SDKs in the top page's sections and rows, in the same order. A card with nothing new says "No change". No card gets a verdict like "healthy". The reader judges, so color only shows facts: red for failed, green for stopped failing, grey for no data.
+The tests behind the numbers are collapsed under one toggle per card (`#sdk-<sdk>` opens that card's): newly failing (joined the failing set; marked if it never passed), no longer failing (left it; with why when it doesn't pass: stopped running, now flaky, or not reported), and flaky this week. A test leaves the failing set after three clean nights, so one that stops failing late in a week is listed the week after.
+
+The page lays out the SDKs in the top page's sections and rows, in the same order, without the sections' descriptions.
 
 Each week is frozen at `/health/weekly/<YYYY-Www>/` and never rebuilt. The site keeps every published week. `/health/weekly/latest/` is a copy of the newest week, and `/health/weekly/` lists them all. A frozen page reads `weekly/index.json` when viewed, to link to the previous, next and latest weeks. A test name opens its SDK's page, which shows the state as of today, and the page says so. The first build also builds the past weeks the store covers.
 
-The scheduled Monday run (or a run with its `weekly_slack` input ticked; `slack` is only the daily digests') posts one message to the weekly channel (the `FIT_HEALTH_WEEKLY_SLACK_CHANNEL` repository variable; none set, no post), linking to the frozen week. The message has a line per SDK: its failing count against last week and how many tests joined and left the set, or that it had no results all week. The SDKs with no change share one line. The test names are on the page only.
+The scheduled Monday run (or a run with its `weekly_slack` input ticked; `slack` is only the daily digests') posts one message to the weekly channel (the `FIT_HEALTH_WEEKLY_SLACK_CHANNEL` repository variable; none set, no post), linking to the frozen week. The message has a line per SDK, as on its card: its failing count and the change since last week, its flaky tests, and its nights if any had no results, or that it had no results all week. The SDKs with no change and nothing flaky share one line. The test names are on the page only. Health posts, daily and weekly, never unfurl their links.
 
 ## Tests, not test cases
 Everything is counted in tests - the `Class.method` you'd go and fix - not test cases. One test can run as many cases (each API, every permutation; one permutation test runs 1,000), which is what fit-cli's results table counts; a test fails if any of its cases does. A parameterised test's variants (`durability(Durability)[2]`) are cases of one test, `durability`; a record keeps the variants that failed (`v`), and the page shows those of a test's last failing night on hover. Pages show test cases only on hover. A test id's class is the simple class name, except where the driver uses one name in several packages (`kv.GetTest` and `transactions.states.GetTest`): those get the shortest package suffix that tells them apart (`kv/GetTest`), from fit-cli's committed list of driver test files, so every SDK names a test the same way. The CI log prints only simple names. On a log-only night a failure under such a name goes to the one test of that name the JUnit nights have seen; only when they have seen it in several of the classes can the night not tell them apart, and each is unknown that night.

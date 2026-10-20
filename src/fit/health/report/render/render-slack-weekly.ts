@@ -1,10 +1,10 @@
 /**
- * The Slack message for a weekly wrap-up: one message, a line per SDK with its failing count and
- * what moved, linked to the week's page. The tests themselves are on the page, not in Slack.
+ * The Slack message for a weekly wrap-up: one message, a line per SDK with its failing count, the
+ * change since last week and its flaky tests, linked to the week's page. The tests themselves are
+ * on the page, not in Slack.
  *
- * Like the page, it states facts and never a verdict: counts and names, in the page's order (not
- * ranked by count). An SDK with no results all week always gets its own line: that is the one
- * thing a reader can't afford to miss.
+ * The SDKs are in the page's order, not ranked by count. An SDK with no results all week always
+ * gets its own line: that is the one thing a reader can't afford to miss.
  *
  * Slack mrkdwn, not Markdown: *bold*, _italic_, <url|text> links.
  */
@@ -23,27 +23,19 @@ export function pageOrder(w: Pick<Weekly, "sections" | "cards">): WeeklyCard[] {
   return w.sections.flatMap((s) => s.rows.flatMap((r) => r.sdks.map((sdk) => bySdk.get(sdk)).filter((c): c is WeeklyCard => !!c)));
 }
 
-type Move = "started" | "newFailing" | "stopped" | "noLongerCounted";
-/** What moved, in the page's tile order, as the message names it. */
-const MOVES: { key: Move; label: string }[] = [
-  { key: "started", label: "started" },
-  { key: "newFailing", label: "new" },
-  { key: "stopped", label: "stopped" },
-  { key: "noLongerCounted", label: "no longer counted" },
-];
-
 /**
- * One SDK's headline line: its failing count and what moved, or that it had no results.
- * "Python: failing 3 → 21 · 15 started · 3 new"
+ * One SDK's line: its failing count and the change since last week, its flaky tests, or that it
+ * had no results. "Python: 21 failing (▲18) · 2 flaky · 6/7 nights"
  */
 export function sdkLine(c: WeeklyCard, nights: number, url?: string): string {
   const name = slackEscape(shortName(c));
   const label = url ? `*<${url}|${name}>*` : `*${name}*`;
   if (!c.reported || c.nightsWithResults === 0) return `• ${label}: *no results all week*`;
-  const before = c.failingBefore === undefined ? "" : `${n(c.failingBefore)} → `;
+  const d = c.failingBefore === undefined ? undefined : c.failing - c.failingBefore;
+  const move = d === undefined ? "" : d === 0 ? " (no change)" : ` (${d > 0 ? "▲" : "▼"}${n(Math.abs(d))})`;
   const parts = [
-    `failing ${before}${n(c.failing)}`,
-    ...MOVES.filter(({ key }) => c[key].length).map(({ key, label }) => `${n(c[key].length)} ${label}`),
+    `${n(c.failing)} failing${move}`,
+    ...(c.flaky.length ? [`${n(c.flaky.length)} flaky`] : []),
     ...(c.nightsWithResults < nights ? [`${c.nightsWithResults}/${nights} nights`] : []),
   ];
   return `• ${label}: ${parts.join(" · ")}`;
@@ -54,15 +46,17 @@ const cardUrl = (weekUrl: string | undefined, c: WeeklyCard) => (weekUrl ? `${we
 
 export function renderSlackWeekly(w: Weekly, weekUrl?: string): string {
   const cards = pageOrder(w);
-  const quiet = cards.filter((c) => c.noChange);
+  // Nothing moved and nothing flaky: named together on one line.
+  const isQuiet = (c: WeeklyCard) => c.noChange && !c.flaky.length;
+  const quiet = cards.filter(isQuiet);
   const span = `${shortDate(w.week.start)} to ${shortDate(w.week.end)}`;
   const title = `FIT weekly · ${w.week.id}`;
 
   // One line per SDK with anything to say, in the page's order; the quiet ones are named together.
   return [
     `*${weekUrl ? `<${weekUrl}|${title}>` : title}* · ${span} · against ${w.previous.id}`,
-    ...cards.filter((c) => !c.noChange).map((c) => sdkLine(c, w.dates.length, cardUrl(weekUrl, c))),
-    ...(quiet.length ? [`• No change: ${quiet.map((c) => slackEscape(shortName(c))).join(", ")}`] : []),
+    ...cards.filter((c) => !isQuiet(c)).map((c) => sdkLine(c, w.dates.length, cardUrl(weekUrl, c))),
+    ...(quiet.length ? [`• No change, nothing flaky: ${quiet.map((c) => slackEscape(shortName(c))).join(", ")}`] : []),
     ...(weekUrl ? [`<${weekUrl}|Open the weekly report>`] : []),
   ].join("\n");
 }

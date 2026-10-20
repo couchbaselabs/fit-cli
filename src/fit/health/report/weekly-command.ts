@@ -187,7 +187,7 @@ export async function runWeeklyCommand(argv: string[], prefix: string): Promise<
   } else if (channel) {
     // Posting is a side effect of the page, never a reason for it to fail.
     try {
-      await postDigest(channel, { headline: message }, undefined, { unfurl: false });
+      await postDigest(channel, { headline: message });
       fitCliInfo(`Slack: posted ${post.week.id} to ${channel}.`);
     } catch (err) {
       const text = `Slack: could not post ${post.week.id} to ${channel}: ${err instanceof Error ? err.message : String(err)}`;

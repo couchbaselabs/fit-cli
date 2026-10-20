@@ -20,10 +20,9 @@ function card(sdk: string, name: string, more: Partial<WeeklyCard> = {}): Weekly
     reported: true,
     days: [],
     nightsWithResults: 7,
-    started: [],
-    newFailing: [],
-    stopped: [],
-    noLongerCounted: [],
+    newlyFailing: [],
+    noLongerFailing: [],
+    flaky: [],
     failing: 0,
     failingBefore: 0,
     noChange: false,
@@ -47,22 +46,24 @@ const t = (test: string, more = {}) => ({ test, series: "func", where: "on-prem"
 
 test("one message: a line per SDK with anything to say, in the page's order, and the page linked", () => {
   const w = weekly([
-    card("go", "Go", { started: [t("A.x"), t("A.y")], newFailing: [t("N.x")], failing: 3 }),
-    card("python", "Python", { stopped: [t("C.z", { last: "2026-10-20" })], failing: 1, failingBefore: 2 }),
+    card("go", "Go", { newlyFailing: [t("A.x"), t("A.y"), t("N.x")], failing: 3 }),
+    card("python", "Python", { noLongerFailing: [t("C.z", { last: "2026-10-20" })], failing: 1, failingBefore: 2 }),
+    card("java", "Java", { noChange: true, failing: 4, failingBefore: 4, flaky: [t("F.x")] }),
     card("kotlin", "Kotlin", { noChange: true }),
     card("scala", "Scala", { noChange: true }),
   ]);
   assert.deepEqual(renderSlackWeekly(w, "https://site/w/").split("\n"), [
     "*<https://site/w/|FIT weekly · 2026-W43>* · 19 Oct to 25 Oct · against 2026-W42",
-    "• *<https://site/w/#sdk-python|Python>*: failing 2 → 1 · 1 stopped",
-    "• *<https://site/w/#sdk-go|Go>*: failing 0 → 3 · 2 started · 1 new",
-    "• No change: Scala, Kotlin",
+    "• *<https://site/w/#sdk-java|Java>*: 4 failing (no change) · 1 flaky",
+    "• *<https://site/w/#sdk-python|Python>*: 1 failing (▼1)",
+    "• *<https://site/w/#sdk-go|Go>*: 3 failing (▲3)",
+    "• No change, nothing flaky: Scala, Kotlin",
     "<https://site/w/|Open the weekly report>",
   ]);
 });
 
 test("with no address for the site, the message has no links", () => {
-  const text = renderSlackWeekly(weekly([card("go", "Go", { started: [t("A.x")], failing: 1 })]));
+  const text = renderSlackWeekly(weekly([card("go", "Go", { newlyFailing: [t("A.x")], failing: 1 })]));
   assert.doesNotMatch(text, /<|>/);
   assert.match(text, /^\*FIT weekly · 2026-W43\* · /);
 });
@@ -71,11 +72,11 @@ test("an SDK with no results all week says so; one missing nights shows its coun
   const w = weekly([card("rust", "Rust", { reported: false, nightsWithResults: 0 }), card("go", "Go", { nightsWithResults: 5 })]);
   const text = renderSlackWeekly(w);
   assert.match(text, /^• \*Rust\*: \*no results all week\*$/m);
-  assert.match(text, /^• \*Go\*: failing 0 → 0 · 5\/7 nights$/m);
+  assert.match(text, /^• \*Go\*: 0 failing \(no change\) · 5\/7 nights$/m);
 });
 
 test("names are escaped for Slack, and Operational Insights is shortened", () => {
   assert.equal(shortName({ name: "Go Operational Insights" }), "Go OI");
-  const text = renderSlackWeekly(weekly([card("go", "A<b>&c", { started: [t("A.x")], failing: 1 })]));
+  const text = renderSlackWeekly(weekly([card("go", "A<b>&c", { newlyFailing: [t("A.x")], failing: 1 })]));
   assert.match(text, /\*A&lt;b&gt;&amp;c\*/);
 });

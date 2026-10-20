@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { NightTests, ReportTest } from "../build-report.js";
 import type { TestClass } from "../classify.js";
-import { buildWeekly, isoWeek, lastFullWeek, typicalNight, weekChanges, type WeeklyInput } from "../weekly.js";
+import { buildWeekly, flakyIn, isoWeek, lastFullWeek, weekChanges, type WeeklyInput } from "../weekly.js";
 
 const W43 = isoWeek("2026-10-19");
 
@@ -45,7 +45,7 @@ test("the last full week is the one that ended before today", () => {
   assert.equal(lastFullWeek("2026-10-25").id, "2026-W42"); // Sunday: this week isn't over
 });
 
-test("a test joining the failing set started failing if it passed before, else is new failing", () => {
+test("a test joining the failing set is newly failing, marked if it never passed", () => {
   const before = report("2026-10-18", [t("A.already", "failing", { since: "2026-10-10", lastGood: "2026-10-09" })]);
   const now = report("2026-10-25", [
     t("A.already", "failing", { since: "2026-10-10", lastGood: "2026-10-09" }),
@@ -55,12 +55,12 @@ test("a test joining the failing set started failing if it passed before, else i
     t("A.flaky", "intermittent", { since: "2026-10-25", streak: 1, lastGood: "2026-10-24" }),
   ]);
   const c = weekChanges(now, before, W43);
-  assert.deepEqual(names(c.started), ["A.broke", "A.lastTwo"]);
-  assert.deepEqual(names(c.newFailing), ["A.neverPassed"]);
-  assert.deepEqual(c.started[0], { test: "A.broke", series: "func", where: "on-prem", since: "2026-10-21", nights: 5 });
+  assert.deepEqual(names(c.newlyFailing), ["A.broke", "A.lastTwo", "A.neverPassed"]);
+  assert.deepEqual(c.newlyFailing[0], { test: "A.broke", series: "func", where: "on-prem", since: "2026-10-21", nights: 5 });
+  assert.equal(c.newlyFailing[2].neverPassed, true);
 });
 
-test("a test leaving the failing set stopped failing if it passes, else is no longer counted, with why", () => {
+test("a test leaving the failing set is no longer failing, with why when it doesn't pass", () => {
   const before = report("2026-10-18", [
     t("A.fixed", "failing"),
     t("A.blip", "new"),
@@ -80,18 +80,13 @@ test("a test leaving the failing set stopped failing if it passes, else is no lo
   ]);
   const c = weekChanges(now, before, W43);
   assert.deepEqual(
-    c.stopped.map((x) => [x.test, x.last]),
+    c.noLongerFailing.map((x) => [x.test, x.last, x.why]),
     [
-      ["A.fixed", "2026-10-20"],
-      ["A.blip", "2026-10-18"],
-    ],
-  );
-  assert.deepEqual(
-    c.noLongerCounted.map((x) => [x.test, x.why]),
-    [
-      ["A.flips", "intermittent"],
-      ["A.gone", "stopped running"],
-      ["A.dropped", "not reported"],
+      ["A.fixed", "2026-10-20", undefined],
+      ["A.blip", "2026-10-18", undefined],
+      ["A.flips", "2026-10-22", "now flaky"],
+      ["A.gone", "2026-10-16", "stopped running"],
+      ["A.dropped", undefined, "not reported"],
     ],
   );
 });
@@ -103,24 +98,26 @@ test("with no report for last week, only failure runs that began this week join"
     t("A.firstNight", "failing", { since: "2026-10-20", sinceFirstNight: true }),
   ]);
   const c = weekChanges(now, undefined, W43);
-  assert.deepEqual(names(c.started), ["A.thisWeek"]);
-  assert.deepEqual(c.newFailing, []);
-  assert.deepEqual(c.stopped, []);
+  assert.deepEqual(names(c.newlyFailing), ["A.thisWeek"]);
+  assert.deepEqual(c.noLongerFailing, []);
 });
 
 test("situational and inactive series are left out", () => {
   const broke = [t("A.x", "failing", { since: "2026-10-21", lastGood: "2026-10-20" })];
-  assert.deepEqual(weekChanges(report("2026-10-25", broke, {}, { kind: "situational" }), report("2026-10-18", []), W43).started, []);
-  assert.deepEqual(weekChanges(report("2026-10-25", broke, {}, { active: false }), report("2026-10-18", []), W43).started, []);
+  assert.deepEqual(weekChanges(report("2026-10-25", broke, {}, { kind: "situational" }), report("2026-10-18", []), W43).newlyFailing, []);
+  assert.deepEqual(weekChanges(report("2026-10-25", broke, {}, { active: false }), report("2026-10-18", []), W43).newlyFailing, []);
 });
 
-test("the typical night is the median by tests run, over JUnit nights only", () => {
-  const night = (date: string, passed: number, logOnly = 0) => ({ date, passed, failing: 1, skipped: 5, runs: 1, logOnly });
-  assert.deepEqual(typicalNight([night("a", 100), night("b", 300), night("c", 200), "none", night("d", 999, 1)]), { date: "c", tests: 201, skipped: 5 });
-  assert.equal(typicalNight(["none", "aborted"]), undefined);
+test("flaky is the intermittent tests that failed during the week, apart from failing", () => {
+  const now = report("2026-10-25", [
+    t("A.flips", "intermittent", { lastFail: "2026-10-22" }),
+    t("A.flippedBefore", "intermittent", { lastFail: "2026-10-15" }),
+    t("A.broke", "failing", { lastFail: "2026-10-25" }),
+  ]);
+  assert.deepEqual(flakyIn(now, W43), [{ test: "A.flips", series: "func", where: "on-prem", last: "2026-10-22" }]);
 });
 
-test("a card adds up: last week, plus what joined, minus what left, is this week", () => {
+test("a card: failing at both week ends, what joined and left, and the nights", () => {
   const week = Object.fromEntries(["2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23"].map((d) => [d, full(100, 2, 10)]));
   const before = report("2026-10-18", [t("A.fixed", "failing"), t("A.still", "always"), t("A.gone", "always")]);
   const now = report(
@@ -141,10 +138,10 @@ test("a card adds up: last week, plus what joined, minus what left, is this week
   const c = w.cards[0];
   assert.equal(c.failingBefore, 3);
   assert.equal(c.failing, 4);
-  assert.equal(c.failingBefore + c.started.length + c.newFailing.length - c.stopped.length - c.noLongerCounted.length, c.failing);
+  assert.deepEqual(names(c.newlyFailing), ["A.broke", "A.lastTwo", "A.added"]);
+  assert.deepEqual(names(c.noLongerFailing), ["A.fixed", "A.gone"]);
   assert.equal(c.nightsWithResults, 5);
   assert.deepEqual(c.days.slice(5), ["none", "none"]);
-  assert.deepEqual(c.typicalNight, { date: "2026-10-21", tests: 102, skipped: 10 });
   assert.equal(c.noChange, false);
 });
 
@@ -162,4 +159,5 @@ test("an SDK with no report has a card with no results all week", () => {
   assert.equal(card.nightsWithResults, 0);
   assert.equal(card.noChange, false);
   assert.equal(card.failingBefore, undefined);
+  assert.deepEqual(card.flaky, []);
 });

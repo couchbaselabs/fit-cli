@@ -3,19 +3,19 @@
  * before, for SDK teams and managers. Built from two reports per SDK, one ending on each week's
  * Sunday (`fit health report --end`), so it needs nothing the store doesn't already hold.
  *
- * It shows facts and how they changed, never a verdict: no card is called healthy or not. The
- * cards are laid out as on the top page (overview.ts), in its fixed order, so a team always
- * finds its SDK in the same place and nothing reads as a ranking.
+ * It is the overall picture: per SDK, how many tests are failing, which way that moved since
+ * last week, and how many are flaky. The tests behind the move are a click away. The cards are
+ * laid out as on the top page (overview.ts), in its fixed order, so a team always finds its SDK
+ * in the same place and nothing reads as a ranking.
  *
- * Everything is counted over one set: the tests failing at a week's end (in a current failure
- * run: always failing, failing, or new), in the active functional series. Each list is a way
- * into or out of that set between the two week ends, so a card always adds up: last week's
- * count, plus started and new failing, minus stopped and no longer counted, is this week's.
+ * Failing is one set: the tests in a current failure run at a week's end (always failing,
+ * failing, or new), in the active functional series. Flaky is apart from it: intermittent tests
+ * that failed during the week.
  */
 import type { ReportSeries } from "./build-report.js";
 import type { TestClass } from "./classify.js";
 import { addDays } from "./dates.js";
-import { layoutSections, overviewDays, placeSdk, type OverviewDay, type OverviewInput, type OverviewNight, type OverviewSection } from "./overview.js";
+import { layoutSections, overviewDays, placeSdk, type OverviewDay, type OverviewInput, type OverviewSection } from "./overview.js";
 import type { HealthOptIn } from "../registry/health-opt-ins.js";
 
 /** An ISO week: `2026-W43`, its Monday and its Sunday. */
@@ -60,13 +60,15 @@ export interface WeeklyTest {
   test: string;
   series: string;
   where: string;
-  /** Started: the first night of its current failure run, and how many nights it has failed. */
+  /** Newly failing: the first night of its current failure run, and how many nights it has failed. */
   since?: string;
   nights?: number;
-  /** Stopped, or no longer counted: the last night it failed. */
+  /** Newly failing, and it never passed: new to the run. */
+  neverPassed?: boolean;
+  /** No longer failing, or flaky: the last night it failed. */
   last?: string;
-  /** No longer counted: why it left the set without passing. */
-  why?: "stopped running" | "intermittent" | "not reported";
+  /** No longer failing without passing again: why it left the set. */
+  why?: "stopped running" | "now flaky" | "not reported";
 }
 
 export interface WeeklyCard {
@@ -78,19 +80,15 @@ export interface WeeklyCard {
   /** The week's 7 nights, Monday first. */
   days: OverviewDay[];
   nightsWithResults: number;
-  /** Failing at this week's end and not last week's, having passed before. */
-  started: WeeklyTest[];
-  /** Failing at this week's end and not last week's, never having passed: new to the run. */
-  newFailing: WeeklyTest[];
-  /** Failing at last week's end, and passing again at this week's. */
-  stopped: WeeklyTest[];
-  /** Failing at last week's end, and out of the set at this week's without passing. */
-  noLongerCounted: WeeklyTest[];
+  /** Failing at this week's end and not last week's. */
+  newlyFailing: WeeklyTest[];
+  /** Failing at last week's end and not this week's: passing again, or `why` not. */
+  noLongerFailing: WeeklyTest[];
+  /** Intermittent at this week's end, and failed during the week. Not in `failing`. */
+  flaky: WeeklyTest[];
   /** Tests failing at this week's end, and at last week's (absent with no report then). */
   failing: number;
   failingBefore?: number;
-  /** Tests run and skipped on the week's median night (by tests run), counting JUnit nights only. */
-  typicalNight?: { date: string; tests: number; skipped: number };
   /** No test came into or left the failing set, and every night has results. */
   noChange: boolean;
 }
@@ -121,10 +119,8 @@ export function failingAtEnd(r: WeeklyInput): Map<string, { s: WeeklyInput["seri
 }
 
 export interface WeekChanges {
-  started: WeeklyTest[];
-  newFailing: WeeklyTest[];
-  stopped: WeeklyTest[];
-  noLongerCounted: WeeklyTest[];
+  newlyFailing: WeeklyTest[];
+  noLongerFailing: WeeklyTest[];
 }
 
 /**
@@ -134,10 +130,10 @@ export interface WeekChanges {
 export function weekChanges(now: WeeklyInput, before: WeeklyInput | undefined, week: IsoWeek): WeekChanges {
   const was = before ? failingAtEnd(before) : undefined;
   const is = failingAtEnd(now);
-  const out: WeekChanges = { started: [], newFailing: [], stopped: [], noLongerCounted: [] };
+  const out: WeekChanges = { newlyFailing: [], noLongerFailing: [] };
   for (const [key, { s, t }] of is) {
     if (was ? was.has(key) : !(t.since && !t.sinceFirstNight && t.since >= week.start)) continue;
-    (t.lastGood ? out.started : out.newFailing).push({ test: t.test, series: s.id, where: s.short, since: t.since, nights: t.streak });
+    out.newlyFailing.push({ test: t.test, series: s.id, where: s.short, since: t.since, nights: t.streak, ...(t.lastGood ? {} : { neverPassed: true }) });
   }
   if (!was) return out;
   const tests = new Map<string, Test>(functional(now).flatMap((s) => s.tests.map((t): [string, Test] => [`${s.id}\n${t.test}`, t])));
@@ -145,19 +141,19 @@ export function weekChanges(now: WeeklyInput, before: WeeklyInput | undefined, w
     if (is.has(key)) continue;
     const t = tests.get(key);
     const item = { test: key.slice(key.indexOf("\n") + 1), series: s.id, where: s.short, ...(t?.lastFail ? { last: t.lastFail } : {}) };
-    if (t && isOn(t.cls, "recovered", "oneoff", "dormant")) out.stopped.push(item);
-    else out.noLongerCounted.push({ ...item, why: !t ? "not reported" : t.cls === "stopped" ? "stopped running" : "intermittent" });
+    if (t && isOn(t.cls, "recovered", "oneoff", "dormant")) out.noLongerFailing.push(item);
+    else out.noLongerFailing.push({ ...item, why: !t ? "not reported" : t.cls === "stopped" ? "stopped running" : "now flaky" });
   }
   return out;
 }
 
-/** The median night by tests run, over the nights every run of which has JUnit. */
-export function typicalNight(days: readonly OverviewDay[]): WeeklyCard["typicalNight"] {
-  const full = days
-    .filter((d): d is OverviewNight => typeof d !== "string" && d.logOnly === 0)
-    .map((d) => ({ date: d.date, tests: d.passed + d.failing, skipped: d.skipped }))
-    .sort((a, b) => a.tests - b.tests || a.date.localeCompare(b.date));
-  return full.length ? full[Math.floor((full.length - 1) / 2)] : undefined;
+/** The intermittent tests that failed during `week`, at the end of `r`. */
+export function flakyIn(r: WeeklyInput, week: IsoWeek): WeeklyTest[] {
+  return functional(r).flatMap((s) =>
+    s.tests
+      .filter((t) => t.cls === "intermittent" && t.lastFail && t.lastFail >= week.start && t.lastFail <= week.end)
+      .map((t) => ({ test: t.test, series: s.id, where: s.short, last: t.lastFail })),
+  );
 }
 
 export function buildWeekly(
@@ -171,11 +167,10 @@ export function buildWeekly(
   const cards = sdks.map(({ sdk, name, current, previous }): WeeklyCard => {
     const days = current ? overviewDays(current, dates) : dates.map((): OverviewDay => "unreported");
     const nightsWithResults = days.filter((d) => typeof d !== "string").length;
-    const changes: WeekChanges = current ? weekChanges(current, previous, week) : { started: [], newFailing: [], stopped: [], noLongerCounted: [] };
+    const changes: WeekChanges = current ? weekChanges(current, previous, week) : { newlyFailing: [], noLongerFailing: [] };
     const failing = current ? failingAtEnd(current).size : 0;
     const failingBefore = previous ? failingAtEnd(previous).size : undefined;
-    const moved = changes.started.length + changes.newFailing.length + changes.stopped.length + changes.noLongerCounted.length;
-    const typical = typicalNight(days);
+    const moved = changes.newlyFailing.length + changes.noLongerFailing.length;
     return {
       sdk,
       name,
@@ -184,9 +179,9 @@ export function buildWeekly(
       days,
       nightsWithResults,
       ...changes,
+      flaky: current ? flakyIn(current, week) : [],
       failing,
       ...(failingBefore !== undefined ? { failingBefore } : {}),
-      ...(typical ? { typicalNight: typical } : {}),
       noChange: !!current && failingBefore !== undefined && !moved && nightsWithResults === dates.length,
     };
   });
