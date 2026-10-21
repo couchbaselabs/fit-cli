@@ -59,7 +59,7 @@ test("one message, grouped by where each SDK stands, the counts first, in the pa
     "",
     ":x: *Failing*",
     "• <https://site/w/#sdk-java|Java>: *4 failing* · same as last week",
-    "• <https://site/w/#sdk-python|Python>: *1 failing* · ▼ 1 fewer than last week · 1 flaky",
+    "• <https://site/w/#sdk-python|Python>: *1 failing* · 1 more flaky · ▼ 1 fewer than last week",
     "• <https://site/w/#sdk-go|Go>: *3 failing* of 1,200 · ▲ 3 more than last week",
     "",
     ":warning: *Flaky only:* <https://site/w/#sdk-dotnet|.NET> (2)",

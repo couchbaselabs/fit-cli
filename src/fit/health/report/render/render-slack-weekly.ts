@@ -45,13 +45,14 @@ function moveText(c: WeeklyCard): string {
   return d === 0 ? "same as last week" : `${d > 0 ? "▲" : "▼"} ${n(Math.abs(d))} ${d > 0 ? "more" : "fewer"} than last week`;
 }
 
-/** A failing SDK's line: "• C++: *124 failing* of 1,629 · ▲ 3 more than last week · 1 flaky" */
+/** A failing SDK's line: "• C++: *124 failing* of 1,629 · 1 more flaky · ▲ 3 more than last week" */
 export function failingLine(c: WeeklyCard, nights: number, url?: string): string {
   const name = slackEscape(shortName(c));
   const parts = [
     `*${n(c.failing)} failing*${c.testsRun ? ` of ${n(c.testsRun)}` : ""}`,
+    // Not in the failing count, as "more" says.
+    c.flaky.length ? `${n(c.flaky.length)} more flaky` : "",
     moveText(c),
-    c.flaky.length ? `${n(c.flaky.length)} flaky` : "",
     nightsNote(c, nights),
   ].filter(Boolean);
   return `• ${url ? `<${url}|${name}>` : name}: ${parts.join(" · ")}`;

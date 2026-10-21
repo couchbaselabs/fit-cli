@@ -145,7 +145,7 @@ h3 { font-size: 16px; font-weight: 600; margin: 0; }
 .figures .l { font-size: 14px; color: var(--ink-2); }
 .figures .sub { font-size: 13px; color: var(--ink-2); }
 .figures .sub b { font-weight: 600; color: var(--ink); }
-.figures .sub b.flaky { color: var(--flaky-ink); }
+.figures b.flaky { color: var(--flaky-ink); }
 details.tests > summary { cursor: pointer; color: var(--total); font-size: 13px; }
 details.tests[open] > summary { margin-bottom: 10px; }
 details.tests > .lists { display: flex; flex-direction: column; gap: 12px; }
@@ -291,9 +291,10 @@ function card(c) {
     : d === 0 ? "same as last week"
     : `<b>${d > 0 ? "▲" : "▼"} ${fmt(Math.abs(d))}</b> ${d > 0 ? "more" : "fewer"} than last week`;
   const of = c.testsRun ? `<span class="l">of ${fmt(c.testsRun)} run</span>` : "";
-  const flaky = `<b class="${c.flaky.length ? "flaky" : ""}">${fmt(c.flaky.length)}</b> flaky`;
-  const figures = `<div class="figures"><div class="main"><span class="n ${c.failing ? "fail" : "zero"}">${fmt(c.failing)}</span><span class="l">failing</span>${of}</div>`
-    + `<div class="sub">${move} · ${flaky}</div></div>`;
+  // Flaky tests are not in the failing count: "18 failing · 3 more flaky" says so where it's read.
+  const flaky = `<span class="l">· <b class="${c.flaky.length ? "flaky" : ""}">${fmt(c.flaky.length)}</b> ${c.failing && c.flaky.length ? "more " : ""}flaky</span>`;
+  const figures = `<div class="figures"><div class="main"><span class="n ${c.failing ? "fail" : "zero"}">${fmt(c.failing)}</span><span class="l">failing</span>${of}${flaky}</div>`
+    + `<div class="sub">${move}</div></div>`;
   const parts = [
     c.newlyFailing.length ? `${fmt(c.newlyFailing.length)} newly failing` : "",
     c.noLongerFailing.length ? `${fmt(c.noLongerFailing.length)} no longer failing` : "",
