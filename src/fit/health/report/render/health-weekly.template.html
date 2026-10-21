@@ -197,12 +197,14 @@ const D = /*__DATA__*/null;
 const fmt = (n) => n.toLocaleString("en-US");
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const day = (d, opts = { month: "short", day: "numeric" }) => new Date(d + "T00:00:00Z").toLocaleString("en-US", { timeZone: "UTC", ...opts });
+// When the report was made, in the reader's own time zone (a night is a UTC date; this is a moment).
+const localTime = (iso) => new Date(iso).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
 const span = (w) => `${day(w.start)} to ${day(w.end, { month: "short", day: "numeric", year: "numeric" })}`;
 // Pages are at health/weekly/<week>/ (and health/weekly/latest/): an SDK's page is two up.
 const sdkPage = (sdk, night) => `../../${encodeURIComponent(sdk)}/${night ? `#night-${night}` : ""}`;
 
 document.getElementById("week").textContent = D.week.id;
-document.getElementById("meta").textContent = `${span(D.week)} · compared with ${D.previous.id} (${span(D.previous)}) · generated ${D.generatedAt.slice(0, 10)}`;
+document.getElementById("meta").textContent = `${span(D.week)} · compared with ${D.previous.id} (${span(D.previous)}) · updated ${localTime(D.generatedAt)}`;
 
 // The page is frozen; only its links to other weeks are read when it is viewed.
 async function navigation() {
