@@ -43,7 +43,7 @@ Usage:
   --weeks          Also build the N-1 weeks before it, e.g. to fill in the weeks the store
                    already covers (default: 1). Only the newest is posted to Slack.
   --rebuild        Rebuild a week that is already in the site. A week is frozen once built,
-                   so a rerun of the same Monday changes nothing and posts nothing.
+                   so a rerun for the same week changes nothing and posts nothing.
   --store          Store: a directory, or s3://bucket/prefix/ (default: ${defaultHealthStoreRoot()}, or $FIT_HEALTH_STORE).
   --slack-channel  Post the newest week to this channel or user ID, when it was built this run.
   --slack-dry-run  Print the Slack message instead of posting it.

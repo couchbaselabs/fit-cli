@@ -7,9 +7,10 @@
 #      a Slack digest if the SDK's settings in the store name a channel
 #      (`fit health settings <sdk> --slack-channel <id>`).
 # Then one job builds the site from every SDK's report and publishes it to the internal
-# couchbaselabs/fit-health repo, which serves it as a private Pages site. On Mondays it also
-# adds the weekly wrap-up of the week to Sunday (`fit health weekly`), and posts it to the
-# channel in the FIT_HEALTH_WEEKLY_SLACK_CHANNEL repository variable.
+# couchbaselabs/fit-health repo, which serves it as a private Pages site. It also adds the
+# weekly wrap-up of the last week to Sunday (`fit health weekly`) when the site doesn't have it
+# yet - on Mondays, or the next day if Monday's failed - and posts it to the channel in the
+# FIT_HEALTH_WEEKLY_SLACK_CHANNEL repository variable.
 #
 # The reports are private: they name commits from the private driver repo and tests from the
 # private run archives. This repo is public, so nothing from them may reach its Actions - no
@@ -47,7 +48,7 @@ on:
         type: boolean
         default: false
       weekly:
-        description: Build the weekly wrap-up of the last full week (a scheduled run does on Mondays). Posts it only with weekly_slack ticked.
+        description: Build the weekly wrap-up of the last full week (a scheduled run does when the site doesn't have it yet). Posts it only with weekly_slack ticked.
         required: false
         type: boolean
         default: false
@@ -196,6 +197,11 @@ jobs:
     needs: health
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    # One publish at a time: each force-pushes the whole site from the one before, so two at
+    # once would lose what the first added (a weekly wrap-up just built, say).
+    concurrency:
+      group: fit-health-site
+      cancel-in-progress: false
     permissions:
       id-token: write   # GitHub OIDC, to assume fit-cli-role
       contents: read
@@ -257,9 +263,11 @@ jobs:
       - name: Build the site
         run: .github/scripts/health-quiet.sh handoff/logs/site/build.log bun src/fit/main/main.ts health site --reports handoff --out site --previous previous
 
-      # Mondays (or when asked): the week to Sunday, against the week before, from the store.
-      # A week already on the site is frozen, so a rerun builds and posts nothing. It never
-      # holds up the daily site: a failure here still publishes it.
+      # Every scheduled run (or when asked): the last week to Sunday, against the week before,
+      # from the store. A week already on the site is frozen, so this builds and posts it on
+      # Monday and does nothing the rest of the week - unless Monday's failed, when the next
+      # day's run builds and posts it. It never holds up the daily site: a failure here still
+      # publishes it.
       - name: Build the weekly wrap-up
         id: weekly
         continue-on-error: true
@@ -274,8 +282,8 @@ jobs:
           # the channel is set. `slack` is the daily digests' input, never this one's.
           CHANNEL: ${{ (github.event_name == 'schedule' || inputs.weekly_slack) && vars.FIT_HEALTH_WEEKLY_SLACK_CHANNEL || '' }}
         run: |
-          if [ "$ASKED" != "true" ] && ! { [ "$SCHEDULED" = "true" ] && [ "$(date -u +%u)" = 1 ]; }; then
-            echo "Not Monday, and not asked for: no weekly wrap-up."
+          if [ "$ASKED" != "true" ] && [ "$SCHEDULED" != "true" ]; then
+            echo "Not asked for: no weekly wrap-up."
             exit 0
           fi
           if ! printf '%s' "$WEEKS" | grep -Eq '^[0-9]{1,2}$'; then

@@ -158,7 +158,7 @@ export async function buildSite(reportsDir: string, siteDir: string, previous?: 
   const sdks = [...new Set([...have, ...carried])].sort();
   if (!sdks.length) throw new Error("no SDK reports to publish");
 
-  // The weekly pages are frozen once built, and only a Monday run adds one: every publish keeps them.
+  // The weekly pages are frozen once built, and only the weekly step adds one: every publish keeps them.
   const weekly = previous ? join(previous, "health", "weekly") : undefined;
   if (weekly && existsSync(weekly)) cpSync(weekly, join(health, "weekly"), { recursive: true });
 
