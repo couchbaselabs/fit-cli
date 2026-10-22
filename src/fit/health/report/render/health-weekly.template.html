@@ -1,0 +1,356 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="robots" content="noindex">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FIT Weekly __WEEK__</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+/* One card per SDK, laid out as on the top page: a row per language, a section per shared core.
+   Tokens match the other health pages. Color means one thing: where an SDK stands at the week's
+   end. Red with tests failing, amber with only flaky ones, green with neither, grey with no
+   results. It is never alone: each state also has a symbol and a word (the badge), and the
+   card's left edge carries it for a fast scroll. The change since last week is in words and an
+   arrow's shape, in ink, so it never reads as a second status. */
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --ink: #161a20;
+  --ink-2: #454d5a;
+  --muted: #6b7380;
+  --rule: #dde1e7;
+  --fail: #d03b3b;
+  --pass: #23864f;
+  --flaky: #b7791f;
+  --flaky-ink: #8a5a0b;
+  --zero: #8b939f;
+  --total: #2a78d6;
+  --unknown: #b9c0ca;
+  --night: #8d95a2;
+  --shadow: 0 1px 2px rgba(22, 26, 32, .06);
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #101317;
+    --surface: #171b20;
+    --ink: #e9ecf0;
+    --ink-2: #b8bfca;
+    --muted: #8d95a2;
+    --rule: #2a3038;
+    --fail: #e66767;
+    --pass: #4cbf7a;
+    --flaky: #e0a43a;
+    --flaky-ink: #e0a43a;
+    --zero: #6b7380;
+    --total: #3987e5;
+    --unknown: #4a525e;
+    --night: #6b7380;
+    --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #101317;
+  --surface: #171b20;
+  --ink: #e9ecf0;
+  --ink-2: #b8bfca;
+  --muted: #8d95a2;
+  --rule: #2a3038;
+  --fail: #e66767;
+  --pass: #4cbf7a;
+  --flaky: #e0a43a;
+  --flaky-ink: #e0a43a;
+  --zero: #6b7380;
+  --total: #3987e5;
+  --unknown: #4a525e;
+  --night: #6b7380;
+  --shadow: none;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.55 var(--sans);
+  margin: 0;
+  padding-inline: 16px;
+  padding-block: 0 64px;
+}
+.wrap { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; }
+h1, h2 { text-wrap: balance; margin: 0; }
+h1 { font-size: 34px; line-height: 1.15; font-weight: 700; letter-spacing: -.015em; }
+h2 { font-size: 18px; font-weight: 600; }
+p { margin: 0; }
+a { color: var(--total); }
+header { padding-top: 40px; display: flex; flex-direction: column; gap: 12px; }
+.lede { font-size: 16px; max-width: 70ch; color: var(--ink-2); }
+.meta { color: var(--muted); font-size: 13px; }
+nav { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 14px; }
+nav .newer { font-weight: 600; }
+
+.terms { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 8px 24px; font-size: 13px; }
+.terms div { min-width: 0; }
+.terms dt { font-weight: 600; display: inline; }
+.terms dt::after { content: ": "; }
+.terms dd { display: inline; margin: 0; color: var(--ink-2); }
+.summary { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 14px 18px; display: flex; flex-direction: column; gap: 8px; box-shadow: var(--shadow); }
+.summary div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; font-size: 14px; }
+.summary .badge { min-width: 9.5em; }
+.summary a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--rule); text-underline-offset: 3px; }
+.summary a:hover, .summary a:focus-visible { color: var(--total); text-decoration-color: currentColor; }
+.badge { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; padding: 1px 9px; border-radius: 999px; white-space: nowrap; color: var(--muted); background: color-mix(in srgb, var(--zero) 14%, transparent); }
+.badge::before { font-size: 12px; }
+.badge.fail { color: var(--fail); background: color-mix(in srgb, var(--fail) 12%, transparent); }
+.badge.fail::before { content: "✕"; }
+.badge.flaky { color: var(--flaky-ink); background: color-mix(in srgb, var(--flaky) 16%, transparent); }
+.badge.flaky::before { content: "≈"; font-size: 15px; }
+.badge.pass { color: var(--pass); background: color-mix(in srgb, var(--pass) 12%, transparent); }
+.badge.pass::before { content: "✓"; }
+.badge.none::before { content: "–"; }
+.key { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--ink-2); }
+.key span { display: inline-flex; align-items: center; gap: 7px; }
+.sw { display: inline-block; width: 11px; height: 11px; border-radius: 2px; }
+
+.panels { display: flex; flex-direction: column; gap: 28px; }
+.section { display: flex; flex-direction: column; gap: 14px; }
+.section.core { border-left: 3px solid var(--rule); padding-left: 14px; }
+.row { display: flex; flex-direction: column; gap: 8px; }
+h3 { font-size: 16px; font-weight: 600; margin: 0; }
+/* Every card the same width, so its numbers sit in the same place from card to card. */
+.cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: start; }
+@media (max-width: 1000px) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .cards { grid-template-columns: minmax(0, 1fr); } }
+.card { background: var(--surface); border: 1px solid var(--rule); border-left: 5px solid var(--zero); border-radius: 10px; padding: 14px 18px 14px 16px; display: flex; flex-direction: column; gap: 10px; box-shadow: var(--shadow); min-width: 0; }
+.card.fail { border-left-color: var(--fail); }
+.card.flaky { border-left-color: var(--flaky); }
+.card.pass { border-left-color: var(--pass); }
+.card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.card h4 { font-size: 15px; font-weight: 600; margin: 0; }
+.card h4 a { color: var(--total); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--total) 35%, transparent); text-underline-offset: 3px; }
+.card h4 a:hover, .card h4 a:focus-visible { text-decoration-color: currentColor; }
+.nights { display: inline-flex; align-items: center; gap: 8px; font: 13px var(--mono); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.strip { display: inline-flex; gap: 3px; }
+.strip i { width: 12px; height: 12px; border-radius: 2px; background: var(--night); }
+.strip i.gap { background: var(--unknown); opacity: .55; }
+.strip i.none { background: transparent; box-shadow: inset 0 0 0 1px var(--rule); }
+.figures { display: flex; flex-direction: column; gap: 2px; font-variant-numeric: tabular-nums; }
+.figures .main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.figures .n { font-size: 26px; line-height: 1.15; font-weight: 700; }
+.figures .n.fail { color: var(--fail); }
+.figures .n.zero { color: var(--zero); }
+.figures .l { font-size: 14px; color: var(--ink-2); }
+.figures .sub { font-size: 13px; color: var(--ink-2); }
+.figures .sub b { font-weight: 600; color: var(--ink); }
+.figures b.flaky { color: var(--flaky-ink); }
+details.tests > summary { cursor: pointer; color: var(--total); font-size: 13px; }
+details.tests[open] > summary { margin-bottom: 10px; }
+details.tests > .lists { display: flex; flex-direction: column; gap: 12px; }
+.card:target { outline: 2px solid var(--total); outline-offset: 2px; }
+.tools button { font: 13px var(--sans); color: var(--total); background: none; border: 1px solid var(--rule); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+.tools button:hover, .tools button:focus-visible { border-color: var(--total); }
+.list { display: flex; flex-direction: column; gap: 4px; }
+.list h5 { font-size: 13px; font-weight: 600; margin: 0; display: flex; align-items: center; gap: 7px; }
+.list ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.list li { font-size: 13px; min-width: 0; }
+.list li a { font: 13px var(--mono); overflow-wrap: anywhere; color: var(--ink); text-decoration: none; }
+.list li a:hover, .list li a:focus-visible { color: var(--total); text-decoration: underline; }
+.list .sub { color: var(--muted); font-size: 12px; }
+.list .methods { font: 12px var(--mono); color: var(--ink-2); overflow-wrap: anywhere; }
+.list details { font-size: 13px; }
+.list summary { cursor: pointer; color: var(--total); }
+.list details ul { margin-top: 4px; }
+.quiet { font-size: 14px; color: var(--muted); }
+.note { font-size: 13px; color: var(--muted); max-width: 80ch; }
+details.note > summary { cursor: pointer; color: var(--ink-2); }
+details.note p { margin-top: 8px; }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>FIT weekly · <span id="week"></span></h1>
+    <p class="lede">Each SDK's nightly FIT runs this week: how many tests are failing, and how that changed since last week.</p>
+    <p class="meta" id="meta"></p>
+    <nav id="nav"></nav>
+  </header>
+  <dl class="terms">
+    <div><dt>Failing</dt><dd>Failing night after night at the week's end, or just started to. The arrow is the change since last week's end.</dd></div>
+    <div><dt>Flaky</dt><dd>Failed this week, but flips between passing and failing. Not in the failing count.</dd></div>
+  </dl>
+  <section class="summary" id="summary" aria-label="Where each SDK stands"></section>
+  <div class="key">
+    <span>Nights:</span>
+    <span><i class="sw" style="background:var(--night)"></i>With results</span>
+    <span><i class="sw" style="background:var(--unknown);opacity:.55"></i>Ran, no results</span>
+    <span><i class="sw" style="box-shadow:inset 0 0 0 1px var(--rule)"></i>No nightly</span>
+  </div>
+  <div class="tools"><button type="button" id="toggle-all">Expand all</button></div>
+  <div class="panels" id="panels"></div>
+  <details class="note"><summary>How this is counted</summary><p>Counted in tests (<code>Class.method</code>), not test cases, over the functional runs only. A test counts as failing from its first failing night, and as no longer failing after three clean nights, so one that stops failing late in a week is listed the week after. A test that leaves the failing count without passing (it stopped running, or now flips) is listed as no longer failing, with why. A test name opens its SDK's page, which shows the state as of today, not as of this week.</p></details>
+</div>
+
+<script>
+const D = /*__DATA__*/null;
+const fmt = (n) => n.toLocaleString("en-US");
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const day = (d, opts = { month: "short", day: "numeric" }) => new Date(d + "T00:00:00Z").toLocaleString("en-US", { timeZone: "UTC", ...opts });
+// When the report was made, in the reader's own time zone (a night is a UTC date; this is a moment).
+const localTime = (iso) => new Date(iso).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
+const span = (w) => `${day(w.start)} to ${day(w.end, { month: "short", day: "numeric", year: "numeric" })}`;
+// Pages are at health/weekly/<week>/ (and health/weekly/latest/): an SDK's page is two up.
+const sdkPage = (sdk, night) => `../../${encodeURIComponent(sdk)}/${night ? `#night-${night}` : ""}`;
+
+document.getElementById("week").textContent = D.week.id;
+document.getElementById("meta").textContent = `${span(D.week)} · compared with ${D.previous.id} (${span(D.previous)}) · updated ${localTime(D.generatedAt)}`;
+
+// The page is frozen; only its links to other weeks are read when it is viewed.
+async function navigation() {
+  const nav = document.getElementById("nav");
+  const links = [];
+  try {
+    const res = await fetch("../index.json", { cache: "no-cache" });
+    const weeks = (await res.json()).weeks.map((w) => w.id).sort();
+    const i = weeks.indexOf(D.week.id);
+    const newest = weeks.at(-1);
+    if (i > 0) links.push(`<a href="../${weeks[i - 1]}/">← ${weeks[i - 1]}</a>`);
+    if (i >= 0 && i < weeks.length - 1) links.push(`<a href="../${weeks[i + 1]}/">${weeks[i + 1]} →</a>`);
+    if (newest && newest !== D.week.id) links.push(`<a class="newer" href="../latest/">A newer week is available: ${newest}</a>`);
+  } catch {
+    // No index (a local build, or none published yet): only the links that need none.
+  }
+  links.push(`<a href="../">Every week</a>`, `<a href="../../">Today's health</a>`);
+  nav.innerHTML = links.join("");
+}
+navigation();
+
+function strip(c) {
+  const cells = c.days.map((d, i) => {
+    const when = day(D.dates[i], { weekday: "short", month: "short", day: "numeric" });
+    if (typeof d === "object") return `<i title="${when}: ${fmt(d.failing)} failing of ${fmt(d.passed + d.failing)} run"></i>`;
+    if (d === "aborted" || d === "unreadable") return `<i class="gap" title="${when}: the nightly ran but gave no results (${d})"></i>`;
+    return `<i class="none" title="${when}: ${d === "none" ? "no nightly ran" : "not in this SDK's report"}"></i>`;
+  });
+  return `<span class="nights"><span class="strip" aria-hidden="true">${cells.join("")}</span>${c.nightsWithResults}/${c.days.length} nights</span>`;
+}
+
+// A list's tests, grouped by class, series and night: a class that broke at once is one line.
+const SHOWN = 6;
+function list(kind, title, tests, c) {
+  if (!tests.length) return "";
+  const groups = [];
+  for (const t of tests) {
+    const dot = t.test.indexOf(".");
+    const cls = dot < 0 ? t.test : t.test.slice(0, dot);
+    const night = kind === "newly" ? t.since : t.last;
+    const why = t.why ?? (t.neverPassed ? "never passed" : undefined);
+    let g = groups.find((x) => x.cls === cls && x.where === t.where && x.night === night && x.why === why);
+    if (!g) groups.push((g = { cls, where: t.where, night, nights: t.nights, why, methods: [] }));
+    g.methods.push(dot < 0 ? "(whole class)" : t.test.slice(dot + 1));
+  }
+  const item = (g) => {
+    const when = kind === "newly"
+      ? [`since ${day(g.night)} · ${g.nights} night${g.nights === 1 ? "" : "s"}`, g.why].filter(Boolean).join(" · ")
+      : [g.why, g.night ? `last failed ${day(g.night)}` : ""].filter(Boolean).join(" · ");
+    const name = g.methods.length === 1 && g.methods[0] !== "(whole class)" ? `${g.cls}.${g.methods[0]}` : g.cls;
+    // A class with many methods names the first few: the SDK page has them all.
+    const few = g.methods.slice(0, 8).map(esc).join(", ") + (g.methods.length > 8 ? `, and ${g.methods.length - 8} more` : "");
+    const methods = name === g.cls ? `<div class="sub methods">${few}</div>` : "";
+    return `<li><a href="${sdkPage(c.sdk, g.night)}">${esc(name)}</a>${methods}<div class="sub">${[when, esc(g.where)].filter(Boolean).join(" · ")}</div></li>`;
+  };
+  const shown = groups.slice(0, SHOWN).map(item).join("");
+  const rest = groups.length > SHOWN
+    ? `<details><summary>${groups.length - SHOWN} more</summary><ul>${groups.slice(SHOWN).map(item).join("")}</ul></details>`
+    : "";
+  return `<div class="list ${kind}"><h5>${title}: ${tests.length} test${tests.length === 1 ? "" : "s"}</h5><ul>${shown}</ul>${rest}</div>`;
+}
+
+// Where an SDK stands at the week's end: the badge, the card's edge and the summary all say it.
+const STATES = {
+  fail: { word: "Failing", about: "tests failing" },
+  flaky: { word: "Flaky only", about: "no tests failing, some flaky" },
+  pass: { word: "Clean", about: "no tests failing or flaky" },
+  none: { word: "No results", about: "no results all week" },
+};
+const stateOf = (c) => (!c.reported || !c.nightsWithResults ? "none" : c.failing ? "fail" : c.flaky.length ? "flaky" : "pass");
+const badge = (st) => `<span class="badge ${st}" title="${STATES[st].about}">${STATES[st].word}</span>`;
+const labelOf = (c) => (c.product === "SDK" ? `${c.name} SDK` : c.name);
+
+function card(c) {
+  const label = labelOf(c);
+  const st = stateOf(c);
+  const head = `<div class="card-head"><h4><a href="${sdkPage(c.sdk)}" title="Open the ${esc(label)} report">${esc(label)} →</a></h4>${badge(st)}</div>`;
+  const open = (body) => `<section class="card ${st}" id="sdk-${esc(c.sdk)}">${head}${body}</section>`;
+  if (st === "none") return open(`${strip(c)}<p class="quiet">No results all week.</p>`);
+  const b = c.failingBefore;
+  const d = b === undefined ? undefined : c.failing - b;
+  // The change is in words and the arrow's shape, in ink: color is only for where the SDK stands.
+  const move = d === undefined ? "no week before to compare"
+    : d === 0 ? "same as last week"
+    : `<b>${d > 0 ? "▲" : "▼"} ${fmt(Math.abs(d))}</b> ${d > 0 ? "more" : "fewer"} than last week`;
+  const of = c.testsRun ? `<span class="l">of ${fmt(c.testsRun)} run</span>` : "";
+  // Flaky tests are not in the failing count: "18 failing · 3 more flaky" says so where it's read.
+  const flaky = `<span class="l">· <b class="${c.flaky.length ? "flaky" : ""}">${fmt(c.flaky.length)}</b> ${c.failing && c.flaky.length ? "more " : ""}flaky</span>`;
+  const figures = `<div class="figures"><div class="main"><span class="n ${c.failing ? "fail" : "zero"}">${fmt(c.failing)}</span><span class="l">failing</span>${of}${flaky}</div>`
+    + `<div class="sub">${move}</div></div>`;
+  const parts = [
+    c.newlyFailing.length ? `${fmt(c.newlyFailing.length)} newly failing` : "",
+    c.noLongerFailing.length ? `${fmt(c.noLongerFailing.length)} no longer failing` : "",
+    c.flaky.length ? `${fmt(c.flaky.length)} flaky` : "",
+  ].filter(Boolean);
+  const body = figures + strip(c);
+  if (!parts.length) return open(body);
+  const lists = list("newly", "Newly failing", c.newlyFailing, c) + list("gone", "No longer failing", c.noLongerFailing, c) + list("flaky", "Flaky this week", c.flaky, c);
+  const what = c.newlyFailing.length || c.noLongerFailing.length ? "What changed" : "The tests";
+  return open(`${body}<details class="tests"><summary>${what} (${parts.join(", ")})</summary><div class="lists">${lists}</div></details>`);
+}
+
+// The summary answers "which need attention?" first, without reordering the cards: each state's
+// SDKs, in the page's order, linked to their cards.
+function summary(order) {
+  const rows = ["fail", "flaky", "pass", "none"].map((st) => {
+    const cs = order.filter((c) => stateOf(c) === st);
+    if (!cs.length) return "";
+    const names = cs.map((c) => `<a href="#sdk-${esc(c.sdk)}">${esc(labelOf(c))}</a>`).join("");
+    return `<div>${badge(st)}${names}</div>`;
+  });
+  document.getElementById("summary").innerHTML = rows.join("");
+}
+
+const host = document.getElementById("panels");
+const bySdk = new Map(D.cards.map((c) => [c.sdk, c]));
+summary(D.sections.flatMap((sec) => sec.rows.flatMap((r) => r.sdks.map((s) => bySdk.get(s)).filter(Boolean))));
+for (const sec of D.sections) {
+  const box = document.createElement("section");
+  box.className = sec.title ? "section core" : "section";
+  if (sec.title) box.insertAdjacentHTML("beforeend", `<h2>${esc(sec.title)}</h2>`);
+  for (const r of sec.rows) {
+    const heading = sec.title ? "h3" : "h2";
+    const cards = r.sdks.map((s) => bySdk.get(s)).filter(Boolean).map(card).join("");
+    box.insertAdjacentHTML("beforeend", `<div class="row"><${heading}>${esc(r.name)}</${heading}><div class="cards">${cards}</div></div>`);
+  }
+  host.appendChild(box);
+}
+
+// Expand all, or the one card a link names (#sdk-<sdk>, as the Slack thread links).
+const toggle = document.getElementById("toggle-all");
+const allTests = () => [...document.querySelectorAll("details.tests")];
+const syncToggle = () => { toggle.textContent = allTests().length && allTests().every((d) => d.open) ? "Collapse all" : "Expand all"; };
+toggle.addEventListener("click", () => {
+  const open = !allTests().every((d) => d.open);
+  for (const d of allTests()) d.open = open;
+  syncToggle();
+});
+for (const d of allTests()) d.addEventListener("toggle", syncToggle);
+function openFromHash() {
+  const card = /^#sdk-[a-z0-9-]+$/.test(location.hash) && document.getElementById(location.hash.slice(1));
+  if (!card) return;
+  const d = card.querySelector("details.tests");
+  if (d) d.open = true;
+  requestAnimationFrame(() => card.scrollIntoView({ block: "start" }));
+}
+window.addEventListener("hashchange", openFromHash);
+openFromHash();
+</script>

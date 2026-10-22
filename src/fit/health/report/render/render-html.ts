@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { HealthReport } from "../build-report.js";
 import type { Overview } from "../overview.js";
+import type { WeekEntry, Weekly } from "../weekly.js";
 
 /**
  * Dev mode (bun run): read the template from disk. Compiled binary (/$bunfs/): embedded via a
@@ -49,4 +50,34 @@ export function fillOverviewTemplate(template: string, overview: Overview): stri
 /** The site's top page: every SDK's last nights, one chart each. */
 export async function renderOverviewHtml(overview: Overview): Promise<string> {
   return fillOverviewTemplate(await loadOverviewTemplate(), overview);
+}
+
+async function loadWeeklyTemplate(): Promise<string> {
+  if (!import.meta.url.includes("/$bunfs/")) {
+    return readFileSync(join(dirname(fileURLToPath(import.meta.url)), "health-weekly.template.html"), "utf8");
+  }
+  return (await import("./health-weekly.template.html", { with: { type: "text" } })).default;
+}
+
+export function fillWeeklyTemplate(template: string, weekly: Weekly): string {
+  const json = JSON.stringify(weekly).replace(/</g, "\\u003c");
+  return template.replaceAll("__WEEK__", weekly.week.id).replace("/*__DATA__*/null", () => json);
+}
+
+/** A week's wrap-up page: each SDK's week against the week before. */
+export async function renderWeeklyHtml(weekly: Weekly): Promise<string> {
+  return fillWeeklyTemplate(await loadWeeklyTemplate(), weekly);
+}
+
+async function loadWeeklyIndexTemplate(): Promise<string> {
+  if (!import.meta.url.includes("/$bunfs/")) {
+    return readFileSync(join(dirname(fileURLToPath(import.meta.url)), "health-weekly-index.template.html"), "utf8");
+  }
+  return (await import("./health-weekly-index.template.html", { with: { type: "text" } })).default;
+}
+
+/** The list of every week's wrap-up, newest first. */
+export async function renderWeeklyIndexHtml(weeks: WeekEntry[]): Promise<string> {
+  const json = JSON.stringify({ weeks }).replace(/</g, "\\u003c");
+  return (await loadWeeklyIndexTemplate()).replace("/*__DATA__*/null", () => json);
 }

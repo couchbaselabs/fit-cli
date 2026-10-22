@@ -130,6 +130,8 @@ const NS = "http://www.w3.org/2000/svg";
 const fmt = (n) => n.toLocaleString("en-US");
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const longDate = (d, opts) => new Date(d + "T00:00:00Z").toLocaleString("en-US", { timeZone: "UTC", ...opts });
+// When the report was made, in the reader's own time zone (a night is a UTC date; this is a moment).
+const localTime = (iso) => new Date(iso).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
 const el = (name, attrs, parent) => {
   const e = document.createElementNS(NS, name);
   for (const k in attrs) e.setAttribute(k, attrs[k]);
@@ -147,8 +149,8 @@ const end = D.dates.at(-1);
 
 document.getElementById("win").textContent = D.windowDays;
 document.getElementById("meta").textContent = D.dates.length
-  ? `${longDate(D.dates[0], { month: "short", day: "numeric" })} to ${longDate(end, { month: "short", day: "numeric", year: "numeric" })} · generated ${D.generatedAt.slice(0, 10)}`
-  : `generated ${D.generatedAt.slice(0, 10)}`;
+  ? `Nightly runs ${longDate(D.dates[0], { month: "short", day: "numeric" })} to ${longDate(end, { month: "short", day: "numeric", year: "numeric" })} · latest night ${longDate(end, { weekday: "short", month: "short", day: "numeric" })} (UTC date) · updated ${localTime(D.generatedAt)}`
+  : `updated ${localTime(D.generatedAt)}`;
 
 function bar(g, x, y, w, h, fill) {
   if (h <= 0) return;

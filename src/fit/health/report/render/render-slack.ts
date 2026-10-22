@@ -21,6 +21,19 @@ export interface SlackDigest {
 const MAX_ITEMS = 15;
 
 /** Escape the three characters Slack treats as control characters in message text. */
+/** "Tue 20 Oct": a night is a UTC date. */
+export const weekdayDate = (date: string) => `${new Date(`${date}T00:00:00Z`).toLocaleString("en-US", { timeZone: "UTC", weekday: "short" })} ${shortDate(date)}`;
+
+/**
+ * A moment as Slack shows it in each reader's own time zone ("Wed 21 Oct at 2:38 PM"), with the
+ * UTC time as the fallback for clients that can't.
+ */
+export function slackLocalTime(iso: string): string {
+  const t = new Date(iso);
+  const fallback = `${t.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+  return `<!date^${Math.floor(t.getTime() / 1000)}^{date_short_pretty} at {time}|${fallback}>`;
+}
+
 export function slackEscape(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -55,7 +68,7 @@ export function renderSlackDigest(report: HealthReport, sdkName: string, reportU
   const failed = d.failedLastNight;
   const ran = last ? ` of ${n(last.tests)} run · ${n(last.skipped)} skipped${failed?.atLeast ? " (series with full results)" : ""}` : "";
   const headline = [
-    `*${slackEscape(sdkName)} FIT health* · as of ${shortDate(report.end)} · last ${report.classes.windowDays} days`,
+    `*${slackEscape(sdkName)} FIT health* · nightly run of ${weekdayDate(report.end)} (UTC date) · updated ${slackLocalTime(report.generatedAt)} · last ${report.classes.windowDays} days`,
     ...(failed
       ? [
           `• Failed last night: *${failed.atLeast ? "at least " : ""}${failed.total}*${ran} (${split(failed)})` +
