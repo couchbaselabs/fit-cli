@@ -25,38 +25,23 @@ export interface CapellaEnvironment {
   oid?: string | null;
   /** The (shared, non-secret) Capella account username for this environment. */
   username?: string | null;
-  secretId?: string | null;
-  sandbox?: boolean;
   /**
-   * Host suffixes a {@link sandbox}'s per-run endpoints must fall under. A sandbox's control plane
-   * comes from a definition file or the environment, and the run then sends CAPELLA_USER/PASS and
-   * the v4 API key to it — so a shared or CI-supplied definition could otherwise point those
-   * credentials at an attacker's HTTPS host. Leave unset only for an environment whose endpoints
-   * are pinned in this file and therefore already trusted.
+   * AWS Secrets Manager id/ARN holding { password, apiKey, apiSecret,
+   * internalSupportToken?, overrideToken? } for this Capella environment. The two
+   * tokens are optional — only "dev" and the sandbox currently have them, which is what
+   * makes cbcollect support available there. A sandbox's secret holds only the tokens.
    */
+  secretId?: string | null;
+  /** A pre-deployed sandbox: nothing about its control plane is pinned here (see capellaControlPlane). */
+  sandbox?: boolean;
+  /** Domains a {@link sandbox}'s per-run endpoint must fall under (see assertTrustedCapellaHost). */
   endpointSuffixes?: string[] | null;
-}
-
-export interface CapellaEnvironmentOverride {
-  endpoint: string;
-  v4Endpoint: string;
-  oid: string;
-}
-
-// Origin host chars: no whitespace, `/?#` or backslash (a path would corrupt concatenated API paths,
-// and WHATWG URL parsing treats `\` as `/`, so a backslash smuggles one past an origin-only check) and
-
-export interface CapellaSandboxEndpoints {
-  endpoint: string;
-  v4Endpoint: string;
-  recognised: boolean;
 }
 
 /**
  * Parse `value` as a Capella endpoint origin, or null. The URL parser does the work a regex can't:
  * `https://api.x.example.com:notaport` and `https://%` look fine delimiter-wise but are not URLs.
- * Requires https, a host, no userinfo (which would smuggle a credential into a shareable
- * definition file) and no path/query/fragment (these get concatenated with API paths).
+ * Requires https, a host, no userinfo and no path/query/fragment (these get concatenated with API paths).
  */
 function parseCapellaOrigin(value: string): URL | null {
   let url: URL;
@@ -71,72 +56,18 @@ function parseCapellaOrigin(value: string): URL | null {
   return url;
 }
 
-export function isCapellaEndpointOrigin(value: string): boolean {
-  const trimmed = value.trim();
-  // `new URL` tolerates a trailing slash; the stored form must not carry one.
-  return !trimmed.endsWith("/") && parseCapellaOrigin(trimmed) !== null;
-}
-
 export function isCapellaOrganizationId(value: string): boolean {
-  // A Capella org id is a plain UUID, so reuse the canonical pattern rather than restating it.
   return UUID_RE.test(value.trim());
 }
 
 /**
- * Whether `value` is acceptable as the URL a user pastes for a sandbox. Unlike
- * {@link isCapellaEndpointOrigin} a path is allowed — a browser UI URL is the expected input, and
- * {@link deriveCapellaSandboxEndpoints} drops the path.
+ * A sandbox's v4 and v2 control-plane origins from the URL given as its CAPELLA_V4_ENDPOINT, or null
+ * unless that is an https `cloudapi.` origin. A sandbox serves its v2 API on the `api.` host of the
+ * same domain. Rebuilt from the parsed host, so a stray trailing `?` or `#` isn't passed on.
  */
-export function isCapellaSandboxUrl(value: string): boolean {
-  let url: URL;
-  try {
-    url = new URL(value.trim());
-  } catch {
-    return false;
-  }
-  return url.protocol === "https:" && !!url.hostname && !url.username && !url.password;
-}
-
-/** `url` reduced to its origin (scheme + host + any port), or the trimmed input if it won't parse. */
-export function capellaEndpointOrigin(url: string): string {
-  const trimmed = url.trim();
-  try {
-    return new URL(trimmed).origin.toLowerCase();
-  } catch {
-    return trimmed.replace(/\/+$/, "");
-  }
-}
-
-/** An origin's scheme and host with a leading ui./api./cloudapi. label stripped, or null. */
-export function capellaLabelledOrigin(origin: string): { scheme: string; host: string } | null {
-  const url = parseCapellaOrigin(origin.trim().replace(/\/+$/, ""));
-  if (!url) return null;
-  const match = /^(?:ui|api|cloudapi)\.(.+)$/i.exec(url.host);
-  return match ? { scheme: `${url.protocol}//`, host: match[1].toLowerCase() } : null;
-}
-
-/**
- * A sandbox serves `ui.`, `api.` (v2) and `cloudapi.` (v4) on one domain, so whichever URL the
- * user has to hand yields the other two; a browser UI URL's path is dropped rather than carried
- * into the APIs. `recognised` is true only when both derived endpoints are valid origins, so a
- * caller that trusts the flag cannot end up with an unusable endpoint.
- */
-export function deriveCapellaSandboxEndpoints(url: string): CapellaSandboxEndpoints {
-  const trimmed = url.trim().replace(/\/+$/, "");
-  const unrecognised = { endpoint: trimmed, v4Endpoint: trimmed, recognised: false };
-  let parsed: URL;
-  try {
-    parsed = new URL(trimmed);
-  } catch {
-    return unrecognised;
-  }
-  if (parsed.protocol !== "https:" || !parsed.host || parsed.username || parsed.password) return unrecognised;
-  const base = parsed.host.replace(/^(?:ui|api|cloudapi)\./i, "").toLowerCase();
-  const endpoint = `https://api.${base}`;
-  const v4Endpoint = `https://cloudapi.${base}`;
-  return isCapellaEndpointOrigin(endpoint) && isCapellaEndpointOrigin(v4Endpoint)
-    ? { endpoint, v4Endpoint, recognised: true }
-    : unrecognised;
+export function sandboxControlPlaneOrigins(value: string): { endpoint: string; v4Endpoint: string } | null {
+  const domain = /^cloudapi\.(.+)$/.exec(parseCapellaOrigin(value)?.host ?? "")?.[1];
+  return domain ? { endpoint: `https://api.${domain}`, v4Endpoint: `https://cloudapi.${domain}` } : null;
 }
 
 export interface ResultsEnvironment {
@@ -343,57 +274,51 @@ export function isSandboxCapellaEnvironment(
   return environments.capella[name]?.sandbox === true;
 }
 
-// Rewrites every sandbox each call, so a later definition supplying none can't inherit an earlier one's.
-/**
- * A sandbox endpoint receives this run's Capella credentials, so it must be a host we trust.
- * Without this, any definition file could redirect them to a server of its author's choosing.
- */
-function assertTrustedCapellaHost(
-  name: string,
-  field: string,
-  value: string,
-  suffixes: string[] | null | undefined,
-): void {
-  if (!suffixes?.length) return;
-  let hostname: string;
-  try {
-    hostname = new URL(value).hostname.toLowerCase();
-  } catch {
-    throw new Error(`Capella environment "${name}" ${field} is not a URL: ${JSON.stringify(value)}`);
-  }
-  if (!suffixes.some((suffix) => hostname === suffix.replace(/^\./, "") || hostname.endsWith(suffix.toLowerCase()))) {
-    throw new Error(
-      `Capella environment "${name}" ${field} host "${hostname}" is not under ${suffixes.join(", ")}. ` +
-        `A sandbox endpoint receives this run's Capella credentials, so only those hosts are accepted; ` +
-        `add the suffix to environments.json5 if this sandbox is legitimately served elsewhere.`,
-    );
-  }
+/** Where a Capella environment's control plane is. `endpoint` is the v2 one, used only for the optional v2 login. */
+export interface CapellaControlPlane {
+  endpoint?: string;
+  v4Endpoint?: string;
+  oid?: string;
 }
 
-export function applyCapellaEnvironmentOverrides(
-  overrides: Record<string, CapellaEnvironmentOverride>,
-  environments: EnvironmentsFile = loadEnvironments(),
-): void {
-  for (const [name, override] of Object.entries(overrides)) {
-    const entry = environments.capella[name];
-    if (!entry) {
-      throw new Error(`Unknown Capella environment "${name}" — not defined in environments.json5.`);
-    }
-    if (entry.sandbox !== true) {
-      throw new Error(
-        `Capella environment "${name}" is not a sandbox, so its endpoint and org id can't be set from a definition file.`,
-      );
-    }
-    for (const [field, value] of [["endpoint", override.endpoint], ["v4Endpoint", override.v4Endpoint]] as const) {
-      assertTrustedCapellaHost(name, field, value, entry.endpointSuffixes);
-    }
+/**
+ * Where `entry`'s control plane is. A standing environment's is pinned in this file. A sandbox's is
+ * recreated too often to pin, so it comes from CAPELLA_V4_ENDPOINT/CAPELLA_OID; its endpoints are left
+ * unset unless CAPELLA_V4_ENDPOINT is a valid `cloudapi.` origin (see sandboxControlPlaneOrigins).
+ */
+export function capellaControlPlane(entry: CapellaEnvironment, env: NodeJS.ProcessEnv = process.env): CapellaControlPlane {
+  if (entry.sandbox !== true) {
+    return {
+      endpoint: entry.endpoint?.trim() || undefined,
+      v4Endpoint: entry.v4Endpoint?.trim() || undefined,
+      oid: entry.oid?.trim() || undefined,
+    };
   }
-  for (const [name, entry] of Object.entries(environments.capella)) {
-    if (entry.sandbox !== true) continue;
-    const override = overrides[name];
-    entry.endpoint = override?.endpoint ?? null;
-    entry.v4Endpoint = override?.v4Endpoint ?? null;
-    entry.oid = override?.oid ?? null;
+  const origins = sandboxControlPlaneOrigins(env.CAPELLA_V4_ENDPOINT ?? "");
+  return {
+    endpoint: origins?.endpoint,
+    v4Endpoint: origins?.v4Endpoint,
+    oid: env.CAPELLA_OID?.trim() || undefined,
+  };
+}
+
+/**
+ * A sandbox endpoint receives this run's Capella credentials and the shared support tokens, so it
+ * must be under one of the environment's `endpointSuffixes` domains: a mistyped or pasted
+ * CAPELLA_V4_ENDPOINT shouldn't send them elsewhere. Fails closed when no domain is configured.
+ */
+export function assertTrustedCapellaHost(name: string, hostname: string, suffixes: string[] | null | undefined): void {
+  const domains = (suffixes ?? []).map((suffix) => suffix.trim().replace(/^\./, "").toLowerCase()).filter(Boolean);
+  if (domains.length === 0) {
+    throw new Error(`Capella environment "${name}" has no endpointSuffixes in environments.json5, so no endpoint is trusted for it.`);
+  }
+  const host = hostname.toLowerCase();
+  if (!domains.some((domain) => host === domain || host.endsWith(`.${domain}`))) {
+    throw new Error(
+      `Capella environment "${name}" endpoint host "${host}" is not under ${domains.join(", ")}. ` +
+        `A sandbox endpoint receives this run's Capella credentials, so only those domains are accepted; ` +
+        `add the domain to environments.json5 if this sandbox is legitimately served elsewhere.`,
+    );
   }
 }
 

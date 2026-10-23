@@ -1,63 +1,48 @@
 /**
- * Env-var control of which Capella environment a run targets, and (for a sandbox) where its
- * control plane lives. This is what makes a sandbox usable from a preset:
+ * Env-var control of which Capella environment a run targets. This is what makes a sandbox usable
+ * from a preset, which pins its own environment (`capellaEnvironment: 'prod'`):
  *
- *   CAPELLA_ENVIRONMENT=sandbox CAPELLA_ENDPOINT=... CAPELLA_OID=... \
- *   CAPELLA_USER=... CAPELLA_PASS=... fit run preset op-capella-sit-sanity --performer java-fit-performer:main
+ *   CAPELLA_ENVIRONMENT=sandbox CAPELLA_V4_ENDPOINT=https://cloudapi.... CAPELLA_OID=... \
+ *   CAPELLA_API_KEY=... CAPELLA_API_SECRET=... fit run preset op-capella-sit-sanity --performer java-fit-performer:main
  *
- * Presets pin their environment (`capellaEnvironment: 'prod'`) and cannot carry a sandbox's
- * per-run coordinates, so both come from the environment instead and are applied to the
- * generated definition before it is resolved.
+ * The sandbox's control plane and accounts aren't applied here: they are read from the env when the
+ * run resolves its Capella config (see resolveCapellaConfig).
  *
  * Run on its own:
  *   CAPELLA_ENVIRONMENT=sandbox bun src/fit/shared/definition/capella-environment.ts examples/documented.json5
  */
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
-import { deriveCapellaSandboxEndpoints, type CapellaEnvironmentOverride } from "../../util/environments.js";
-import type { ClusterConfigRef, ClusterLifetime, FitDefinition } from "./types.js";
+import { isSandboxCapellaEnvironment, loadEnvironments, type EnvironmentsFile } from "../../util/environments.js";
+import { buildExecutionGroups, resolveDefinition, usesCapella } from "./resolve-definition.js";
+import type { CbdinoclusterSetup, FitDefinition } from "./types.js";
 
 /** The environment named by CAPELLA_ENVIRONMENT, or undefined when it isn't set. */
 export function capellaEnvironmentFromEnv(env: NodeJS.ProcessEnv = process.env): string | undefined {
   return env.CAPELLA_ENVIRONMENT?.trim() || undefined;
 }
 
-/**
- * A sandbox's control plane from CAPELLA_ENDPOINT/CAPELLA_OID (v4 derived when CAPELLA_V4_ENDPOINT
- * is absent), keyed by the environment CAPELLA_ENVIRONMENT names. Undefined unless all of the
- * environment name, endpoint and org id are set — a partial set is reported by the caller rather
- * than silently half-applied.
- */
-export function capellaEnvironmentOverridesFromEnv(
-  env: NodeJS.ProcessEnv = process.env,
-): Record<string, CapellaEnvironmentOverride> | undefined {
-  const name = capellaEnvironmentFromEnv(env);
-  const endpoint = env.CAPELLA_ENDPOINT?.trim();
-  const oid = env.CAPELLA_OID?.trim();
-  if (!name || !endpoint || !oid) return undefined;
-  const v4Endpoint = env.CAPELLA_V4_ENDPOINT?.trim() || deriveCapellaSandboxEndpoints(endpoint).v4Endpoint;
-  return { [name]: { endpoint: deriveCapellaSandboxEndpoints(endpoint).endpoint, v4Endpoint, oid } };
+/** Whether any group in `definition` allocates on a sandbox Capella environment, as the run resolves it. */
+export function definitionTargetsSandbox(
+  definition: FitDefinition,
+  environments: EnvironmentsFile = loadEnvironments(),
+): boolean {
+  return buildExecutionGroups(resolveDefinition(definition).instances)
+    .some((group) => usesCapella(group) && isSandboxCapellaEnvironment(group.capellaEnvironment, environments));
 }
 
-function clusterWithEnvironment(cluster: ClusterLifetime, name: string): ClusterLifetime {
-  if (!cluster.cbdinocluster?.capella) return cluster;
+/** An inline cluster or a cluster config with any `capella.environment` pin repointed at `name`. */
+function withPinnedEnvironment<T extends { cbdinocluster?: CbdinoclusterSetup }>(holder: T, name: string): T {
+  if (!holder.cbdinocluster?.capella) return holder;
   return {
-    ...cluster,
-    cbdinocluster: { ...cluster.cbdinocluster, capella: { ...cluster.cbdinocluster.capella, environment: name } },
-  };
-}
-
-function clusterConfigWithEnvironment(config: ClusterConfigRef, name: string): ClusterConfigRef {
-  if (!config.cbdinocluster?.capella) return config;
-  return {
-    ...config,
-    cbdinocluster: { ...config.cbdinocluster, capella: { ...config.cbdinocluster.capella, environment: name } },
+    ...holder,
+    cbdinocluster: { ...holder.cbdinocluster, capella: { ...holder.cbdinocluster.capella, environment: name } },
   };
 }
 
 /**
  * `definition` with every Capella environment selector repointed at `name` — the instance-level
- * one each situational and Capella Analytics run reads, and the cluster-level one a Capella
- * functional cluster carries (inline or via clusterConfigs). Returns a copy; the input is untouched.
+ * one every run reads, and any per-cluster `capella.environment` pin (inline or via clusterConfigs),
+ * which would otherwise win over it. Returns a copy; the input is untouched.
  */
 export function withCapellaEnvironment(definition: FitDefinition, name: string): FitDefinition {
   return {
@@ -65,10 +50,10 @@ export function withCapellaEnvironment(definition: FitDefinition, name: string):
     instances: definition.instances.map((instance) => ({
       ...instance,
       setup: { ...instance.setup, capellaEnvironment: name },
-      clusters: instance.clusters.map((cluster) => clusterWithEnvironment(cluster, name)),
+      clusters: instance.clusters.map((cluster) => withPinnedEnvironment(cluster, name)),
     })),
     ...(definition.clusterConfigs
-      ? { clusterConfigs: definition.clusterConfigs.map((config) => clusterConfigWithEnvironment(config, name)) }
+      ? { clusterConfigs: definition.clusterConfigs.map((config) => withPinnedEnvironment(config, name)) }
       : {}),
   };
 }
@@ -82,11 +67,12 @@ if (isMain(import.meta.url)) {
     }
     const { loadDefinition } = await import("./parse-definition.js");
     const name = capellaEnvironmentFromEnv();
-    const definition = loadDefinition(path);
+    const loaded = loadDefinition(path);
+    const definition = name ? withCapellaEnvironment(loaded, name) : loaded;
     console.log(JSON.stringify({
       selected: name ?? "(CAPELLA_ENVIRONMENT not set)",
-      overridesFromEnv: capellaEnvironmentOverridesFromEnv() ?? "(none)",
-      instances: (name ? withCapellaEnvironment(definition, name) : definition).instances.map((i) => i.setup?.capellaEnvironment),
+      instances: definition.instances.map((i) => i.setup?.capellaEnvironment),
+      targetsSandbox: definitionTargetsSandbox(definition),
     }, null, 2));
   });
 }

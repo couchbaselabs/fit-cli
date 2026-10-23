@@ -231,17 +231,23 @@ function capellaConfigScript(capella: ResolvedCapellaConfig): string {
   // The env var names cbdinocluster's `init` reads (see its cmd/init.go). With
   // CAPELLA_API_SECRET present, `init --auto` enables Capella and fills the block
   // from these; without it the cloud deployer is silently left disabled. The v2
-  // user/pass stay forwarded: custom image deploys, server version changes, and
-  // columnar operations still authenticate with them.
+  // endpoint is always forwarded: without it init falls back to production's, and
+  // the support/override tokens below are sent there. The v2 login is forwarded when
+  // there is one (a sandbox can run on v4 alone): custom image deploys, server version
+  // changes, and columnar operations still need it.
   const lines = [
-    `export CAPELLA_USER=${posixQuote(capella.username ?? "")}`,
     `export CAPELLA_ENDPOINT=${posixQuote(capella.endpoint)}`,
     `export CAPELLA_OID=${posixQuote(capella.organizationId)}`,
-    `export CAPELLA_PASS=${posixQuote(capella.password)}`,
     `export CAPELLA_V4_ENDPOINT=${posixQuote(capella.v4Endpoint)}`,
     `export CAPELLA_API_KEY=${posixQuote(capella.apiKey)}`,
     `export CAPELLA_API_SECRET=${posixQuote(capella.apiSecret)}`,
   ];
+  if (capella.username && capella.password) {
+    lines.push(
+      `export CAPELLA_USER=${posixQuote(capella.username)}`,
+      `export CAPELLA_PASS=${posixQuote(capella.password)}`,
+    );
+  }
   // Optional: only present for environments the Capella team has issued them for
   // (currently "dev" and the sandbox). Both have env-var fallbacks in cbdinocluster's `init`,
   // unlike --upload-server-logs-host-name (which has none, so it's passed as an

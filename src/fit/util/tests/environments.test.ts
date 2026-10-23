@@ -1,78 +1,77 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  applyCapellaEnvironmentOverrides,
-  isCapellaSandboxUrl,
-  capellaEndpointOrigin,
-  deriveCapellaSandboxEndpoints,
-  isCapellaEndpointOrigin,
+  assertTrustedCapellaHost,
+  capellaControlPlane,
   isCapellaOrganizationId,
   isSandboxCapellaEnvironment,
   loadEnvironments,
-  type EnvironmentsFile,
+  sandboxControlPlaneOrigins,
 } from "../environments.js";
 
-/** A minimal registry: one normal environment and one unprovisioned sandbox. */
-function testEnvironments(): EnvironmentsFile {
-  return {
-    ...loadEnvironments(),
-    capella: {
-      dev: { endpoint: "https://api.dev.example", v4Endpoint: "https://cloudapi.dev.example", oid: "oid-dev" },
-      sandbox: { sandbox: true, endpoint: null, v4Endpoint: null, oid: null, secretId: "cap/sandbox" },
-    },
-  };
-}
+const SANDBOX_ENV = {
+  CAPELLA_V4_ENDPOINT: " https://cloudapi.sbx-25.sandbox.nonprod-project-avengers.com/ ",
+  CAPELLA_OID: " 4c1d8e6a-0b2f-4a1e-9f3c-5d6e7a8b9c01 ",
+};
 
-test("applyCapellaEnvironmentOverrides fills in a sandbox's control plane", () => {
-  const environments = testEnvironments();
-  applyCapellaEnvironmentOverrides(
-    { sandbox: { endpoint: "https://api.sbx-1.example", v4Endpoint: "https://cloudapi.sbx-1.example", oid: "oid-sandbox" } },
-    environments,
-  );
-  assert.deepEqual(environments.capella.sandbox, {
-    sandbox: true,
-    endpoint: "https://api.sbx-1.example",
-    v4Endpoint: "https://cloudapi.sbx-1.example",
-    oid: "oid-sandbox",
-    secretId: "cap/sandbox",
-  });
+test("capellaControlPlane takes a sandbox's from CAPELLA_V4_ENDPOINT/CAPELLA_OID, with its v2 endpoint beside it", () => {
+  const plane = capellaControlPlane({ sandbox: true, secretId: "cap/sandbox" }, SANDBOX_ENV);
+  assert.equal(plane.v4Endpoint, "https://cloudapi.sbx-25.sandbox.nonprod-project-avengers.com");
+  assert.equal(plane.endpoint, "https://api.sbx-25.sandbox.nonprod-project-avengers.com");
+  assert.equal(plane.oid, "4c1d8e6a-0b2f-4a1e-9f3c-5d6e7a8b9c01");
 });
 
-test("applyCapellaEnvironmentOverrides resets a sandbox left provisioned by an earlier definition", () => {
-  const environments = testEnvironments();
-  applyCapellaEnvironmentOverrides(
-    { sandbox: { endpoint: "https://api.sbx-1.example", v4Endpoint: "https://cloudapi.sbx-1.example", oid: "oid-1" } },
-    environments,
-  );
-  // A later definition in the same process names no sandbox: it must not inherit the above.
-  applyCapellaEnvironmentOverrides({}, environments);
-  assert.equal(environments.capella.sandbox.endpoint, null);
-  assert.equal(environments.capella.sandbox.v4Endpoint, null);
-  assert.equal(environments.capella.sandbox.oid, null);
-  // Non-sandbox environments are untouched by the reset.
-  assert.equal(environments.capella.dev.endpoint, "https://api.dev.example");
+test("capellaControlPlane leaves a sandbox's unset when the env vars are, so the caller can say which", () => {
+  const plane = capellaControlPlane({ sandbox: true }, { CAPELLA_OID: "  " });
+  assert.equal(plane.v4Endpoint, undefined);
+  assert.equal(plane.endpoint, undefined);
+  assert.equal(plane.oid, undefined);
 });
 
-test("applyCapellaEnvironmentOverrides refuses to repoint a non-sandbox environment", () => {
-  assert.throws(
-    () =>
-      applyCapellaEnvironmentOverrides(
-        { dev: { endpoint: "https://evil.example", v4Endpoint: "https://evil.example", oid: "oid" } },
-        testEnvironments(),
-      ),
-    /is not a sandbox/,
-  );
+test("capellaControlPlane gives a sandbox no endpoints when CAPELLA_V4_ENDPOINT isn't a cloudapi. origin", () => {
+  const plane = capellaControlPlane({ sandbox: true }, { CAPELLA_V4_ENDPOINT: "https://ui.sbx-25.sandbox.nonprod-project-avengers.com" });
+  assert.equal(plane.v4Endpoint, undefined);
+  assert.equal(plane.endpoint, undefined);
 });
 
-test("applyCapellaEnvironmentOverrides rejects an environment that isn't in the registry", () => {
-  assert.throws(
-    () =>
-      applyCapellaEnvironmentOverrides(
-        { nope: { endpoint: "https://a.example", v4Endpoint: "https://b.example", oid: "oid" } },
-        testEnvironments(),
-      ),
-    /Unknown Capella environment "nope"/,
+test("capellaControlPlane ignores the env vars for a standing environment, whose control plane is pinned", () => {
+  const plane = capellaControlPlane(
+    { endpoint: "https://api.dev.example", v4Endpoint: "https://cloudapi.dev.example", oid: "oid-dev" },
+    SANDBOX_ENV,
   );
+  assert.equal(plane.endpoint, "https://api.dev.example");
+  assert.equal(plane.v4Endpoint, "https://cloudapi.dev.example");
+  assert.equal(plane.oid, "oid-dev");
+});
+
+test("assertTrustedCapellaHost accepts only hosts under the environment's domains", () => {
+  const suffixes = [".sandbox.nonprod-project-avengers.com"];
+  assertTrustedCapellaHost("sandbox", "cloudapi.sbx-25.sandbox.nonprod-project-avengers.com", suffixes);
+  for (const host of [
+    "cloudapi.sbx-25.sandbox.nonprod-project-avengers.com.evil.example",
+    "cloudapi.dev.nonprod-project-avengers.com", // the standing dev control plane shares the nonprod domain
+  ]) {
+    assert.throws(() => assertTrustedCapellaHost("sandbox", host, suffixes), /is not under sandbox\.nonprod-project-avengers\.com/, host);
+  }
+});
+
+test("assertTrustedCapellaHost matches whole domain labels, so a suffix without its leading dot can't admit lookalikes", () => {
+  assertTrustedCapellaHost("sandbox", "cloudapi.sbx-25.example.com", ["example.com"]);
+  assert.throws(() => assertTrustedCapellaHost("sandbox", "cloudapi.evilexample.com", ["example.com"]), /is not under example\.com/);
+});
+
+test("assertTrustedCapellaHost fails closed when the environment names no domains", () => {
+  for (const suffixes of [undefined, null, [], [" "]]) {
+    assert.throws(() => assertTrustedCapellaHost("sandbox", "cloudapi.sbx-25.example.com", suffixes), /no endpointSuffixes/);
+  }
+});
+
+test("the shipped sandbox only trusts sandbox hosts, not the standing environments on the same domain", () => {
+  const { sandbox, dev, stage } = loadEnvironments().capella;
+  for (const standing of [dev, stage]) {
+    const host = new URL(standing.v4Endpoint ?? "").hostname;
+    assert.throws(() => assertTrustedCapellaHost("sandbox", host, sandbox.endpointSuffixes), /is not under/, host);
+  }
 });
 
 test("the shipped registry has exactly one sandbox environment, with no control plane pinned", () => {
@@ -80,61 +79,37 @@ test("the shipped registry has exactly one sandbox environment, with no control 
   const sandboxes = Object.keys(environments.capella).filter((name) => isSandboxCapellaEnvironment(name, environments));
   assert.deepEqual(sandboxes, ["sandbox"]);
   const sandbox = environments.capella.sandbox;
-  assert.equal(sandbox.endpoint, null);
-  assert.equal(sandbox.v4Endpoint, null);
-  assert.equal(sandbox.oid, null);
+  // Its control plane comes from env vars (see capellaControlPlane), so none of it is pinned here.
+  assert.equal(sandbox.endpoint, undefined);
+  assert.equal(sandbox.v4Endpoint, undefined);
+  assert.equal(sandbox.oid, undefined);
   // Only the two support tokens are stable enough to keep in the secret.
   assert.equal(sandbox.secretId, "fit-cli/capella/sandbox");
 });
 
-test("deriveCapellaSandboxEndpoints turns the sandbox UI URL into both control-plane endpoints", () => {
-  assert.deepEqual(deriveCapellaSandboxEndpoints("https://ui.sbx-25.sandbox.nonprod-project-avengers.com/"), {
-    endpoint: "https://api.sbx-25.sandbox.nonprod-project-avengers.com",
-    v4Endpoint: "https://cloudapi.sbx-25.sandbox.nonprod-project-avengers.com",
-    recognised: true,
-  });
-});
-
-test("deriveCapellaSandboxEndpoints accepts the api. or cloudapi. URL just as well", () => {
-  const expected = {
-    endpoint: "https://api.sbx-25.sandbox.nonprod-project-avengers.com",
-    v4Endpoint: "https://cloudapi.sbx-25.sandbox.nonprod-project-avengers.com",
-    recognised: true,
-  };
-  assert.deepEqual(deriveCapellaSandboxEndpoints("https://api.sbx-25.sandbox.nonprod-project-avengers.com"), expected);
-  assert.deepEqual(deriveCapellaSandboxEndpoints("https://cloudapi.sbx-25.sandbox.nonprod-project-avengers.com"), expected);
-});
-
-test("deriveCapellaSandboxEndpoints keeps only the host from a full browser URL (drops path/query)", () => {
-  assert.deepEqual(
-    deriveCapellaSandboxEndpoints("https://ui.sbx-25.sandbox.nonprod-project-avengers.com/projects/abc?oid=xyz"),
-    {
-      endpoint: "https://api.sbx-25.sandbox.nonprod-project-avengers.com",
-      v4Endpoint: "https://cloudapi.sbx-25.sandbox.nonprod-project-avengers.com",
-      recognised: true,
-    },
-  );
-});
-
-test("deriveCapellaSandboxEndpoints matches any of ui./api./cloudapi. case-insensitively, canonicalising the host", () => {
-  assert.deepEqual(deriveCapellaSandboxEndpoints("HTTPS://CloudAPI.SBX-25.Sandbox.Example.COM"), {
-    endpoint: "https://api.sbx-25.sandbox.example.com",
-    v4Endpoint: "https://cloudapi.sbx-25.sandbox.example.com",
-    recognised: true,
-  });
-});
-
-test("deriveCapellaSandboxEndpoints derives from a bare domain (no ui./api./cloudapi. label)", () => {
-  assert.deepEqual(deriveCapellaSandboxEndpoints("  https://sbx-25.example.com/  "), {
+test("sandboxControlPlaneOrigins takes a cloudapi. origin and gives the api. host beside it", () => {
+  assert.deepEqual(sandboxControlPlaneOrigins("HTTPS://CloudAPI.SBX-25.Example.COM/"), {
     endpoint: "https://api.sbx-25.example.com",
     v4Endpoint: "https://cloudapi.sbx-25.example.com",
-    recognised: true,
   });
+  // A stray `?` or `#` isn't carried into the endpoint cbdinocluster appends API paths to.
+  for (const value of ["https://cloudapi.sbx-25.example.com?", "https://cloudapi.sbx-25.example.com#"]) {
+    assert.equal(sandboxControlPlaneOrigins(value)?.v4Endpoint, "https://cloudapi.sbx-25.example.com", value);
+  }
 });
 
-test("capellaEndpointOrigin drops a browser path so the offered endpoint default is one the parser accepts", () => {
-  assert.equal(capellaEndpointOrigin("https://foo.example.com/projects/x?tab=1"), "https://foo.example.com");
-  assert.equal(capellaEndpointOrigin("  https://Foo.Example.com/  "), "https://foo.example.com");
+test("sandboxControlPlaneOrigins rejects anything that isn't an https cloudapi. origin", () => {
+  for (const value of [
+    "https://ui.sbx-25.example.com", // the browser URL
+    "https://api.sbx-25.example.com", // the v2 API
+    "https://sbx-25.example.com",
+    "http://cloudapi.sbx-25.example.com",
+    "https://cloudapi.sbx-25.example.com/v4",
+    "https://user:hunter2@cloudapi.sbx-25.example.com",
+    "not a url",
+  ]) {
+    assert.equal(sandboxControlPlaneOrigins(value), null, value);
+  }
 });
 
 test("isCapellaOrganizationId rejects the oid= prefix the Capella UI URL carries", () => {
@@ -142,29 +117,4 @@ test("isCapellaOrganizationId rejects the oid= prefix the Capella UI URL carries
   assert.equal(isCapellaOrganizationId("  4C1D8E6A-0B2F-4A1E-9F3C-5D6E7A8B9C01  "), true);
   assert.equal(isCapellaOrganizationId("oid=4c1d8e6a-0b2f-4a1e-9f3c-5d6e7a8b9c01"), false);
   assert.equal(isCapellaOrganizationId("not a uuid at all"), false);
-});
-
-test("isCapellaEndpointOrigin accepts a bare origin and rejects anything carrying a path or space", () => {
-  assert.equal(isCapellaEndpointOrigin("https://api.sbx-25.example.com"), true);
-  assert.equal(isCapellaEndpointOrigin("https://api.sbx-25.example.com:8443"), true);
-  assert.equal(isCapellaEndpointOrigin("https://api.sbx-25.example.com/projects"), false);
-  assert.equal(isCapellaEndpointOrigin("https://api.sbx-25 .example.com"), false);
-});
-
-test("deriveCapellaSandboxEndpoints only reports recognised when both results are valid origins", () => {
-  const derived = deriveCapellaSandboxEndpoints("https://ui.sbx-25.example.com/projects/x");
-  assert.equal(derived.recognised, true);
-  assert.equal(isCapellaEndpointOrigin(derived.endpoint), true);
-  assert.equal(isCapellaEndpointOrigin(derived.v4Endpoint), true);
-});
-
-test("isCapellaEndpointOrigin rejects userinfo, which would smuggle a credential into the file", () => {
-  assert.equal(isCapellaEndpointOrigin("https://user:hunter2@api.sbx.example.com"), false);
-  assert.equal(deriveCapellaSandboxEndpoints("https://ui.u:p@x.example.com").recognised, false);
-});
-
-test("isCapellaSandboxUrl allows a pasted browser URL but no plaintext scheme or embedded credentials", () => {
-  assert.equal(isCapellaSandboxUrl("https://ui.sbx-25.example.com/projects/x?t=1"), true);
-  assert.equal(isCapellaSandboxUrl("http://ui.sbx-25.example.com"), false);
-  assert.equal(isCapellaSandboxUrl("https://user:pass@ui.sbx-25.example.com"), false);
 });

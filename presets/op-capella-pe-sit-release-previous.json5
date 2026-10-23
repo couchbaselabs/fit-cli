@@ -18,6 +18,9 @@
       aws: {
         privateEndpoint: {},
       },
+      setup: {
+        capellaEnvironment: 'prod',
+      },
       clusters: [],
       clusterlessSessions: [
         {

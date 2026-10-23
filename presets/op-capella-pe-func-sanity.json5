@@ -12,6 +12,9 @@
         // Capella PrivateLink endpoint, which lands in the same SG.
         privateEndpoint: {},
       },
+      setup: {
+        capellaEnvironment: 'dev',
+      },
       clusters: [
         {
           clusterConfig: 'cluster-0',
@@ -53,7 +56,6 @@
         onClusterExists: 'useExisting',
         capella: {
           cloudProvider: 'aws',
-          environment: 'dev',
           privateEndpoint: {},
         },
       },

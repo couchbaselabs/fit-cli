@@ -9,7 +9,8 @@
  * control-plane endpoint (verified against both prod ->
  * https://cloud.couchbase.com and dev -> https://dev.nonprod-project-avengers.com);
  * the org id reuses environments.capella[env].oid, the same org the shared
- * sdk_qe@couchbase.com account uses for API calls.
+ * sdk_qe@couchbase.com account uses for API calls. A sandbox's endpoint and org id
+ * come from CAPELLA_V4_ENDPOINT/CAPELLA_OID instead (see capellaControlPlane).
  *
  * The Fleet Manager host is *not* independently confirmed for every environment
  * — only "dev" is verified (https://api.dev.nonprod-project-avengers.com ->
@@ -22,7 +23,7 @@
  *   bun src/cluster/cluster-create/capella-debug-links.ts dev b0652a58-45d4-4cf7-afff-343ca735c6c6
  */
 import { isMain, runCli } from "../../util/non-fit/cli.js";
-import { capellaLabelledOrigin, loadEnvironments, type EnvironmentsFile } from "../../fit/util/environments.js";
+import { capellaControlPlane, loadEnvironments, type CapellaEnvironment, type EnvironmentsFile } from "../../fit/util/environments.js";
 
 export interface CapellaDebugLinks {
   /** The org's databases list in the Capella UI — absent if the environment has no oid configured. */
@@ -42,18 +43,21 @@ export interface CapellaDebugLinks {
 export function capellaUiUrl(
   environment: string,
   environments: EnvironmentsFile = loadEnvironments(),
+  env: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
   const capellaEnv = environments.capella[environment];
-  if (!capellaEnv?.endpoint || !capellaEnv.oid) {
+  if (!capellaEnv) {
     return undefined;
   }
-  if (capellaEnv.sandbox === true) {
-    // A sandbox serves its UI on a ui. host; no link if its endpoint carries no ui./api./cloudapi. label.
-    const parts = capellaLabelledOrigin(capellaEnv.endpoint);
-    return parts ? `${parts.scheme}ui.${parts.host}/databases?oid=${capellaEnv.oid}` : undefined;
-  }
-  const uiHost = capellaEnv.endpoint.replace(/^https:\/\/api\./i, "https://");
-  return `${uiHost}/databases?oid=${capellaEnv.oid}`;
+  const { oid } = capellaControlPlane(capellaEnv, env);
+  // A sandbox serves its UI on a ui. host; a standing environment on the bare domain.
+  const uiHost = capellaHost(capellaEnv, capellaEnv.sandbox === true ? "ui." : "", env);
+  return uiHost && oid ? `${uiHost}/databases?oid=${oid}` : undefined;
+}
+
+/** The host beside a Capella environment's v2 `api.` endpoint, with that label swapped for `label` ("" for none). */
+function capellaHost(capellaEnv: CapellaEnvironment, label: string, env: NodeJS.ProcessEnv): string | undefined {
+  return capellaControlPlane(capellaEnv, env).endpoint?.replace(/^https:\/\/api\./i, `https://${label}`);
 }
 
 /**
@@ -65,14 +69,14 @@ export function capellaDebugLinks(
   environment: string,
   couchbaseClusterUuid: string,
   environments: EnvironmentsFile = loadEnvironments(),
+  env: NodeJS.ProcessEnv = process.env,
 ): CapellaDebugLinks | undefined {
   const capellaEnv = environments.capella[environment];
-  const endpoint = capellaEnv?.endpoint;
-  if (!endpoint) {
+  const fleetManagerHost = capellaEnv && capellaHost(capellaEnv, "fm.", env);
+  if (!fleetManagerHost) {
     return undefined;
   }
-  const fleetManagerHost = endpoint.replace(/^https:\/\/api\./i, "https://fm.");
-  const uiUrl = capellaUiUrl(environment, environments);
+  const uiUrl = capellaUiUrl(environment, environments, env);
   // A sandbox's DataDog logs are tagged with its real deployment env, not its registry key ("sandbox"),
   // and we don't know that tag — so omit the link rather than emit `env:sandbox`, which matches nothing.
   const datadogLogsUrl = capellaEnv.sandbox === true
@@ -110,22 +114,24 @@ export function printCapellaDebugLinks(environment: string, couchbaseClusterUuid
 export function printCapellaPreflightInfo(
   environment: string,
   environments: EnvironmentsFile = loadEnvironments(),
+  env: NodeJS.ProcessEnv = process.env,
 ): void {
   const capellaEnv = environments.capella[environment];
   if (!capellaEnv) {
     return;
   }
+  const { endpoint, v4Endpoint, oid } = capellaControlPlane(capellaEnv, env);
   console.log(`  Capella environment: ${environment}`);
-  if (capellaEnv.oid) {
-    console.log(`  Capella org id: ${capellaEnv.oid}`);
+  if (oid) {
+    console.log(`  Capella org id: ${oid}`);
   }
-  if (capellaEnv.endpoint) {
-    console.log(`  Capella endpoint: ${capellaEnv.endpoint}`);
+  if (endpoint) {
+    console.log(`  Capella endpoint: ${endpoint}`);
   }
-  if (capellaEnv.v4Endpoint) {
-    console.log(`  Capella v4 endpoint: ${capellaEnv.v4Endpoint}`);
+  if (v4Endpoint) {
+    console.log(`  Capella v4 endpoint: ${v4Endpoint}`);
   }
-  const uiUrl = capellaUiUrl(environment, environments);
+  const uiUrl = capellaUiUrl(environment, environments, env);
   if (uiUrl) {
     console.log(`  Capella UI (${environment}): ${uiUrl}`);
   }
@@ -154,7 +160,10 @@ if (isMain(import.meta.url)) {
     }
     const links = capellaDebugLinks(environment, uuid);
     if (!links) {
-      console.error(`No Capella environment "${environment}" configured in environments.json5.`);
+      console.error(
+        `No Capella environment "${environment}" configured in environments.json5 ` +
+          `(a sandbox also needs CAPELLA_V4_ENDPOINT set).`,
+      );
       process.exit(1);
     }
     console.log(JSON.stringify(links, null, 2));

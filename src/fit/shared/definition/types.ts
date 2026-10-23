@@ -5,7 +5,6 @@ import type { PortInUsePolicy } from "../../performers/util/performer-port.js";
 import type { CapellaCloudProvider, CbdinoclusterDef } from "../../../cluster/cluster-create/build-cluster-def.js";
 import type { ClusterExistsPolicy } from "../../../cluster/cluster-create/cluster-exists-policy.js";
 import type { PieceData } from "../../../util/non-fit/config-pieces.js";
-import type { CapellaEnvironmentOverride } from "../../util/environments.js";
 
 export const FIT_DEFINITION_TYPE = "fit";
 export const CURRENT_FIT_DEFINITION_VERSION = 1;
@@ -64,14 +63,17 @@ export interface CbdinoclusterSource {
 /**
  * Declares that this cluster should be created as a Capella cloud cluster via
  * cbdinocluster's `cloud` deployer. `cloudProvider` specifies where Capella
- * should deploy the underlying infrastructure; `environment` selects the
- * Capella control-plane (a key under `capella` in environments.json5 — e.g.
- * "dev", "stage"). fit-cli derives the cbdinocluster init args and deployer
- * from this block at runtime; neither needs to appear in the definition file.
+ * should deploy the underlying infrastructure. fit-cli derives the cbdinocluster
+ * init args and deployer from this block at runtime; neither needs to appear in
+ * the definition file.
  */
 export interface CapellaClusterSetup {
   cloudProvider: CapellaCloudProvider;
-  /** Capella environment to create this cluster in. Defaults to "dev". */
+  /**
+   * Overrides the instance's {@link InstanceSetup.capellaEnvironment} for this cluster.
+   * Normally left unset, so functional and situational definitions pick the environment
+   * in the same place.
+   */
   environment?: string;
   /**
    * Set up a private endpoint (AWS PrivateLink or GCP PSC) connection to this
@@ -109,7 +111,8 @@ export interface InstanceSetup {
    * Capella environment this instance's clusters are created in (a key under
    * `capella` in environments.json5 — e.g. "dev", "stage"). Lives here because
    * `cbdinocluster init` configures one `~/.cbdinocluster` (and so one Capella
-   * identity) per instance/box. Defaults to "dev".
+   * identity) per instance/box. Defaults to environments.json5's
+   * `defaultCapellaEnvironment`.
    */
   capellaEnvironment?: string;
 }
@@ -167,8 +170,6 @@ export interface SharedSetup {
     /** Where to get the binary, applied to every instance in this run. Omit to use the latest published release. */
     source?: CbdinoclusterSource;
   };
-  /** Per-run control-plane coordinates for the sandbox environments this file selects, keyed by name; never credentials. */
-  capellaEnvironments?: Record<string, CapellaEnvironmentOverride>;
 }
 
 export interface PerformerSetup {

@@ -1132,13 +1132,12 @@ export async function setupDeclarativeCluster(plan: {
   /** Where to get the cbdinocluster binary. Absent means latest release. */
   source?: CbdinoclusterSource;
   /** Present when this is a Capella cloud cluster; `privateEndpoint` triggers PrivateLink setup after allocation. */
-  capella?: CapellaClusterSetup;
+  capella?: Omit<CapellaClusterSetup, "environment">;
   /**
    * The Capella environment (a key under `capella` in environments.json5) this cluster's
-   * credentials were actually uploaded under — used only to build the debug links printed
-   * alongside the Couchbase cluster UUID (see capella-debug-links.ts). Callers should pass
-   * whatever value they resolved for uploading Capella credentials, not just `capella.environment`,
-   * since some cluster types (e.g. Capella Analytics) key credential upload off a different field.
+   * credentials were uploaded under — the resolved group's `capellaEnvironment`. Used for the
+   * debug links printed alongside the Couchbase cluster UUID (see capella-debug-links.ts) and
+   * recorded on the cluster for log collection.
    * Defaults to {@link DEFAULT_CAPELLA_ENV} so standalone/manual callers still get a best-effort link.
    */
   capellaEnvironment?: string;

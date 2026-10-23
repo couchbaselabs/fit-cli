@@ -18,6 +18,7 @@ import {
   SITUATIONAL_MAVEN_TEST_ARGS,
 } from "../../run-test-driver/run-test-driver.js";
 import { DEFAULT_PERFORMER_PORT } from "../../../performers/util/performer-port.js";
+import { DEFAULT_CAPELLA_ENV } from "../../../util/config.js";
 import type { FitDefinition, InstanceLifetime, SessionLifetime } from "../types.js";
 
 const LOCAL_FIT_CONFIG = {
@@ -531,4 +532,43 @@ test("a run path keeps its cluster's index, so labels built from a run match the
   assert.ok(second?.type === "functional");
   assert.equal(second.path.clusterIndex, 1);
   assert.equal(second.sessions[0]?.runs[0]?.path.clusterIndex, 1);
+});
+
+function capellaInstance(instanceEnvironment: string | undefined, clusterEnvironment?: string): InstanceLifetime {
+  return {
+    aws: {},
+    ...(instanceEnvironment !== undefined ? { setup: { capellaEnvironment: instanceEnvironment } } : {}),
+    clusters: [
+      {
+        cbdinocluster: {
+          config: { nodes: [{ version: "8.0.0", count: 3, services: ["kv"] }] },
+          capella: { cloudProvider: "aws", ...(clusterEnvironment !== undefined ? { environment: clusterEnvironment } : {}) },
+        },
+        sessions: [
+          {
+            performer: { image: "java-fit-performer:main" },
+            runs: [{ type: "functional", tests: { presets: ["standard-qe"] } }],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+test("a Capella functional cluster runs against its instance's Capella environment", () => {
+  const [group] = buildExecutionGroups([resolveInstancePlan(capellaInstance("stage"), 0)]);
+  assert.equal(group?.capellaEnvironment, "stage");
+});
+
+test("a cluster's own capella.environment overrides its instance's, and is the only place it is read from", () => {
+  const [group] = buildExecutionGroups([resolveInstancePlan(capellaInstance("stage", "dev"), 0)]);
+  assert.ok(group?.type === "functional");
+  assert.equal(group.capellaEnvironment, "dev");
+  // Folded into capellaEnvironment, so the resolved capella block no longer carries it.
+  assert.deepEqual(group.cbdinocluster?.capella, { cloudProvider: "aws" });
+});
+
+test("a Capella functional cluster with no environment set anywhere uses the default", () => {
+  const [group] = buildExecutionGroups([resolveInstancePlan(capellaInstance(undefined), 0)]);
+  assert.equal(group?.capellaEnvironment, DEFAULT_CAPELLA_ENV);
 });
