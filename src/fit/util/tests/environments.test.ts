@@ -28,8 +28,14 @@ test("capellaControlPlane leaves a sandbox's unset when the env vars are, so the
   assert.equal(plane.oid, undefined);
 });
 
-test("capellaControlPlane gives a sandbox no endpoints when CAPELLA_V4_ENDPOINT isn't a cloudapi. origin", () => {
+test("capellaControlPlane derives a sandbox's endpoints from its UI URL", () => {
   const plane = capellaControlPlane({ sandbox: true }, { CAPELLA_V4_ENDPOINT: "https://ui.sbx-25.sandbox.nonprod-project-avengers.com" });
+  assert.equal(plane.v4Endpoint, "https://cloudapi.sbx-25.sandbox.nonprod-project-avengers.com");
+  assert.equal(plane.endpoint, "https://api.sbx-25.sandbox.nonprod-project-avengers.com");
+});
+
+test("capellaControlPlane gives a sandbox no endpoints when CAPELLA_V4_ENDPOINT has no ui./api./cloudapi. host", () => {
+  const plane = capellaControlPlane({ sandbox: true }, { CAPELLA_V4_ENDPOINT: "https://sbx-25.sandbox.nonprod-project-avengers.com" });
   assert.equal(plane.v4Endpoint, undefined);
   assert.equal(plane.endpoint, undefined);
 });
@@ -98,13 +104,29 @@ test("sandboxControlPlaneOrigins takes a cloudapi. origin and gives the api. hos
   }
 });
 
-test("sandboxControlPlaneOrigins rejects anything that isn't an https cloudapi. origin", () => {
+test("sandboxControlPlaneOrigins derives both origins from any of the sandbox's URLs, dropping any path", () => {
   for (const value of [
-    "https://ui.sbx-25.example.com", // the browser URL
+    "https://ui.sbx-25.example.com",
+    "https://UI.SBX-25.Example.COM/sign-in", // as `fit sandbox deploy`'s Output summary shows it
+    "https://ui.sbx-25.example.com/databases?oid=4c1d8e6a-0b2f-4a1e-9f3c-5d6e7a8b9c01#top", // copied from a browser
     "https://api.sbx-25.example.com", // the v2 API
-    "https://sbx-25.example.com",
-    "http://cloudapi.sbx-25.example.com",
     "https://cloudapi.sbx-25.example.com/v4",
+  ]) {
+    assert.deepEqual(
+      sandboxControlPlaneOrigins(value),
+      { endpoint: "https://api.sbx-25.example.com", v4Endpoint: "https://cloudapi.sbx-25.example.com" },
+      value,
+    );
+  }
+});
+
+test("sandboxControlPlaneOrigins rejects anything that isn't an https ui./api./cloudapi. URL without credentials", () => {
+  for (const value of [
+    "http://ui.sbx-25.example.com",
+    "https://user:hunter2@ui.sbx-25.example.com",
+    "https://sbx-25.example.com",
+    "https://fm.sbx-25.example.com",
+    "http://cloudapi.sbx-25.example.com",
     "https://user:hunter2@cloudapi.sbx-25.example.com",
     "not a url",
   ]) {

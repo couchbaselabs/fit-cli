@@ -56,7 +56,7 @@ const DEFAULT_RESULTS_DB_USERNAME = "postgres";
 
 /** The env vars a sandbox Capella run takes everything from (see resolveSandboxCapellaConfig). */
 export const CAPELLA_SANDBOX_ENV_VAR_GUIDANCE =
-  "export CAPELLA_V4_ENDPOINT=https://cloudapi.<sbx-id>.sandbox.nonprod-project-avengers.com CAPELLA_OID=...\n" +
+  "export CAPELLA_V4_ENDPOINT=https://cloudapi.<sbx-id>.sandbox.nonprod-project-avengers.com CAPELLA_OID=...   # its ui. or api. URL works too\n" +
   "    export CAPELLA_API_KEY=... CAPELLA_API_SECRET=...   # v4 organization API key\n" +
   "    export CAPELLA_USER=... CAPELLA_PASS=...            # optional v2 login: custom server images, server version changes, columnar";
 
@@ -1066,7 +1066,7 @@ async function resolveSandboxCapellaConfig(
   }
   if (!endpoint || !v4Endpoint) {
     throw new InvalidFitCliConfigError(
-      `CAPELLA_V4_ENDPOINT must be the sandbox's v4 API origin, https://cloudapi.<sandbox domain> ` +
+      `CAPELLA_V4_ENDPOINT must be one of the sandbox's https URLs, on its ui., api. or cloudapi. host ` +
         `(e.g. https://cloudapi.sbx-25.sandbox.nonprod-project-avengers.com); got ${JSON.stringify(withoutUserinfo(givenV4Endpoint))}`,
     );
   }

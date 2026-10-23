@@ -150,6 +150,7 @@ fit run preset op-capella-sit-sanity --performer java-fit-performer:main
 ```
 
 `CAPELLA_ENVIRONMENT` points every run at the sandbox, including presets that pin `prod`.  A definition file can instead name `sandbox` itself (the wizard offers it), and then needs only the other vars.
+`CAPELLA_V4_ENDPOINT` takes any of the sandbox's URLs, e.g. the UI one `fit sandbox deploy` prints (`https://ui.sbx-25.…`), and derives the v4 URL from it.
 
 Sandbox runs need a cloud instance (a fresh or an existing EC2 one), as that's where fit-cli writes a cbdinocluster config for the run; on localhost it uses your own `~/.cbdinocluster`.  They intentionally aren't supported on CI, so these credentials never become GitHub Actions inputs.
 

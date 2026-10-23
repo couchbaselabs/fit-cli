@@ -802,19 +802,36 @@ test("resolveCapellaConfig fails a sandbox when its token secret can't be read (
   );
 });
 
-test("resolveCapellaConfig only sends a sandbox's credentials to its https cloudapi. origin, under its trusted domains", async () => {
+test("resolveCapellaConfig only sends a sandbox's credentials to its https origins, under its trusted domains", async () => {
   const creds = { CAPELLA_OID: SANDBOX_PLANE_ENV.CAPELLA_OID, CAPELLA_API_KEY: "k", CAPELLA_API_SECRET: "s" };
   const resolveWith = (v4Endpoint: string) =>
     resolveCapellaConfig({ block: "sandbox", environments: SANDBOX_ENVIRONMENTS, env: { ...creds, CAPELLA_V4_ENDPOINT: v4Endpoint }, fetchSecret: noFetch });
   for (const v4Endpoint of [
     "http://cloudapi.sbx-25.sandbox.nonprod-project-avengers.com",
-    "https://cloudapi.sbx-25.sandbox.nonprod-project-avengers.com/v4",
-    "https://ui.sbx-25.sandbox.nonprod-project-avengers.com", // the browser URL, not the v4 API
+    "https://sbx-25.sandbox.nonprod-project-avengers.com",
   ]) {
-    await assert.rejects(resolveWith(v4Endpoint), /must be the sandbox's v4 API origin/, v4Endpoint);
+    await assert.rejects(resolveWith(v4Endpoint), /must be one of the sandbox's https URLs/, v4Endpoint);
   }
   await assert.rejects(resolveWith("https://cloudapi.sbx-25.evil.example"), /is not under sandbox\.nonprod-project-avengers\.com/);
   await assert.rejects(resolveWith("https://cloudapi.dev.nonprod-project-avengers.com"), /is not under sandbox\.nonprod-project-avengers\.com/);
+  await assert.rejects(resolveWith("https://ui.dev.nonprod-project-avengers.com/sign-in"), /is not under sandbox\.nonprod-project-avengers\.com/);
+});
+
+test("resolveCapellaConfig takes whichever of a sandbox's URLs it's given, and derives its v4 and v2 endpoints", async () => {
+  for (const given of [
+    "https://ui.sbx-25.sandbox.nonprod-project-avengers.com/sign-in", // as `fit sandbox deploy` prints it
+    "https://api.sbx-25.sandbox.nonprod-project-avengers.com",
+    "https://cloudapi.sbx-25.sandbox.nonprod-project-avengers.com",
+  ]) {
+    const resolved = await resolveCapellaConfig({
+      block: "sandbox",
+      environments: SANDBOX_ENVIRONMENTS,
+      env: { CAPELLA_OID: SANDBOX_PLANE_ENV.CAPELLA_OID, CAPELLA_API_KEY: "k", CAPELLA_API_SECRET: "s", CAPELLA_V4_ENDPOINT: given },
+      fetchSecret: () => Promise.resolve({}),
+    });
+    assert.equal(resolved.v4Endpoint, "https://cloudapi.sbx-25.sandbox.nonprod-project-avengers.com", given);
+    assert.equal(resolved.endpoint, "https://api.sbx-25.sandbox.nonprod-project-avengers.com", given);
+  }
 });
 
 test("resolveCapellaConfig doesn't echo credentials embedded in a rejected CAPELLA_V4_ENDPOINT", async () => {

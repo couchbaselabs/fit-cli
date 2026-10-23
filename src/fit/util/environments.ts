@@ -39,11 +39,11 @@ export interface CapellaEnvironment {
 }
 
 /**
- * Parse `value` as a Capella endpoint origin, or null. The URL parser does the work a regex can't:
+ * Parse `value` as an https Capella URL, or null. The URL parser does the work a regex can't:
  * `https://api.x.example.com:notaport` and `https://%` look fine delimiter-wise but are not URLs.
- * Requires https, a host, no userinfo and no path/query/fragment (these get concatenated with API paths).
+ * Requires https, a host and no userinfo.
  */
-function parseCapellaOrigin(value: string): URL | null {
+function parseCapellaUrl(value: string): URL | null {
   let url: URL;
   try {
     url = new URL(value.trim());
@@ -52,7 +52,6 @@ function parseCapellaOrigin(value: string): URL | null {
   }
   if (url.protocol !== "https:" || !url.hostname) return null;
   if (url.username || url.password) return null;
-  if (url.pathname !== "/" || url.search || url.hash) return null;
   return url;
 }
 
@@ -61,12 +60,14 @@ export function isCapellaOrganizationId(value: string): boolean {
 }
 
 /**
- * A sandbox's v4 and v2 control-plane origins from the URL given as its CAPELLA_V4_ENDPOINT, or null
- * unless that is an https `cloudapi.` origin. A sandbox serves its v2 API on the `api.` host of the
- * same domain. Rebuilt from the parsed host, so a stray trailing `?` or `#` isn't passed on.
+ * A sandbox's v4 and v2 control-plane origins from the URL given as its CAPELLA_V4_ENDPOINT, or null.
+ * A sandbox serves `ui.`, `api.` (v2) and `cloudapi.` (v4) on one domain, so whichever of its https URLs
+ * is to hand (e.g. the UI URL `fit sandbox deploy` prints, or any page a browser shows) yields both
+ * origins. They're rebuilt from the parsed host, so a path, query or fragment is dropped rather than
+ * carried into the endpoint cbdinocluster appends API paths to.
  */
 export function sandboxControlPlaneOrigins(value: string): { endpoint: string; v4Endpoint: string } | null {
-  const domain = /^cloudapi\.(.+)$/.exec(parseCapellaOrigin(value)?.host ?? "")?.[1];
+  const domain = /^(?:ui|api|cloudapi)\.(.+)$/.exec(parseCapellaUrl(value)?.host ?? "")?.[1];
   return domain ? { endpoint: `https://api.${domain}`, v4Endpoint: `https://cloudapi.${domain}` } : null;
 }
 
@@ -284,7 +285,7 @@ export interface CapellaControlPlane {
 /**
  * Where `entry`'s control plane is. A standing environment's is pinned in this file. A sandbox's is
  * recreated too often to pin, so it comes from CAPELLA_V4_ENDPOINT/CAPELLA_OID; its endpoints are left
- * unset unless CAPELLA_V4_ENDPOINT is a valid `cloudapi.` origin (see sandboxControlPlaneOrigins).
+ * unset unless CAPELLA_V4_ENDPOINT is one of its `ui.`/`api.`/`cloudapi.` URLs (see sandboxControlPlaneOrigins).
  */
 export function capellaControlPlane(entry: CapellaEnvironment, env: NodeJS.ProcessEnv = process.env): CapellaControlPlane {
   if (entry.sandbox !== true) {
