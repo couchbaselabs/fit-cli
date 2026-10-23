@@ -118,8 +118,11 @@ test("capellaDebugLinks points a sandbox at the ui. and fm. hosts beside its v4 
   assert.equal(links?.fleetManagerUrl, `https://fm.sbx-25.sandbox.nonprod-project-avengers.com/clusters/${uuid}`);
 });
 
-test("capellaDebugLinks omits the DataDog link for a sandbox (its real env tag isn't the key 'sandbox')", () => {
-  assert.equal(capellaDebugLinks("sandbox", uuid, environments, SANDBOX_ENV)?.datadogLogsUrl, undefined);
+test("capellaDebugLinks gives a sandbox the DataDog link for env:sandbox, as Capella tags its logs", () => {
+  assert.equal(
+    capellaDebugLinks("sandbox", uuid, environments, SANDBOX_ENV)?.datadogLogsUrl,
+    `https://app.datadoghq.com/logs?query=env%3Asandbox%20%40clusterId%3A${uuid}`,
+  );
 });
 
 test("capellaUiUrl gives no sandbox link when the v4 endpoint has no cloudapi. label to swap", () => {

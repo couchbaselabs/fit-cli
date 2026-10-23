@@ -30,8 +30,8 @@ export interface CapellaDebugLinks {
   capellaUiUrl?: string;
   /** Best-guess Fleet Manager cluster page — see the caveat above. */
   fleetManagerUrl: string;
-  /** DataDog logs, filtered by env and clusterId. Absent for a sandbox (its real env tag isn't known). */
-  datadogLogsUrl?: string;
+  /** DataDog logs, filtered by env and clusterId. Capella tags logs with the environment's name here, sandboxes included (`env:sandbox`). */
+  datadogLogsUrl: string;
 }
 
 /**
@@ -76,16 +76,12 @@ export function capellaDebugLinks(
   if (!fleetManagerHost) {
     return undefined;
   }
+  const datadogQuery = `env:${environment} @clusterId:${couchbaseClusterUuid}`;
   const uiUrl = capellaUiUrl(environment, environments, env);
-  // A sandbox's DataDog logs are tagged with its real deployment env, not its registry key ("sandbox"),
-  // and we don't know that tag — so omit the link rather than emit `env:sandbox`, which matches nothing.
-  const datadogLogsUrl = capellaEnv.sandbox === true
-    ? undefined
-    : `https://app.datadoghq.com/logs?query=${encodeURIComponent(`env:${environment} @clusterId:${couchbaseClusterUuid}`)}`;
   return {
     ...(uiUrl ? { capellaUiUrl: uiUrl } : {}),
     fleetManagerUrl: `${fleetManagerHost}/clusters/${couchbaseClusterUuid}`,
-    ...(datadogLogsUrl ? { datadogLogsUrl } : {}),
+    datadogLogsUrl: `https://app.datadoghq.com/logs?query=${encodeURIComponent(datadogQuery)}`,
   };
 }
 
@@ -101,9 +97,7 @@ export function printCapellaDebugLinks(environment: string, couchbaseClusterUuid
   console.log(
     `  Fleet Manager (needs VPN): ${links.fleetManagerUrl}`,
   );
-  if (links.datadogLogsUrl) {
-    console.log(`  DataDog logs: ${links.datadogLogsUrl}`);
-  }
+  console.log(`  DataDog logs: ${links.datadogLogsUrl}`);
 }
 
 /**
