@@ -27,7 +27,7 @@ function report(end: string, tests: ReportTest[], testCounts: Record<string, Nig
     sdk: "go",
     start: "2026-07-01",
     end,
-    series: [{ id: "func", short: "on-prem", kind: "functional", active: true, tests, testCounts, aborted: [], ...more }],
+    series: [{ id: "func", short: "on-prem", kind: "functional", active: true, ran: Object.keys(testCounts).sort(), perNight: {}, tests, testCounts, aborted: [], ...more }],
   };
 }
 
@@ -109,7 +109,7 @@ test("situational and inactive series are left out", () => {
 });
 
 test("tests run is the median night's, over JUnit nights only", () => {
-  const night = (date: string, passed: number, logOnly = 0) => ({ date, passed, failing: 1, skipped: 5, runs: 1, logOnly });
+  const night = (date: string, passed: number, logOnly = 0) => ({ date, passed, failing: 1, skipped: 5, runs: 1, logOnly, clean: false });
   assert.equal(typicalTestsRun([night("a", 100), night("b", 300), night("c", 200), "none", night("d", 999, 1)]), 201);
   assert.equal(typicalTestsRun(["none", "aborted"]), undefined);
 });

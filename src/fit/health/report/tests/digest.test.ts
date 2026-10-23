@@ -112,3 +112,14 @@ test("there is no failed-last-night count when no functional series ran on the e
   const { digest } = buildHealthReport("dotnet", rs, [], { end: "2026-09-12" });
   assert.equal(digest.failedLastNight, undefined);
 });
+
+test("the clean nights are those every functional series passed with full results; situational ones don't count", () => {
+  const rs = days(5).flatMap((d, i) => [
+    rec(d, i === 1 ? ["A.x"] : [], i === 3 ? { source: "run-log-scrape", passesKnown: false } : {}),
+    ...(i === 2 ? [] : [rec(d, [], { preset: "op-cng-func-lite" })]),
+    rec(d, ["Scenario.s"], { preset: "op-capella-sit-lite", kind: "situational" }),
+  ]);
+  const { digest } = buildHealthReport("dotnet", rs, [], { end: "2026-09-05" });
+  // 2: on-prem failed; 3: CNG didn't run; 4: on-prem only from the log.
+  assert.deepEqual(digest.cleanNights, ["2026-09-01", "2026-09-05"]);
+});

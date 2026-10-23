@@ -9,6 +9,7 @@
  */
 import type { HealthReport, NightTests, ReportSeries } from "./build-report.js";
 import type { TestClass } from "./classify.js";
+import { cleanNights, isCounted } from "./clean.js";
 import { addDays, daysBetween } from "./dates.js";
 
 /** A total over the functional series, and each one's part of it by short name. */
@@ -117,6 +118,8 @@ export interface Digest {
    * absent when none is.
    */
   lastNight?: { tests: number; skipped: number; testCases: number; bySeries: { series: string; tests: number }[] };
+  /** The report's clean nights (clean.ts), oldest first. */
+  cleanNights: string[];
   /** In the classification window: nights with no usable results, and runs with no readable log. */
   gaps: string[];
   unreadableRuns: HealthReport["source"]["unreadableRuns"];
@@ -135,7 +138,7 @@ export function testMethod(test: string): string {
 }
 
 export function buildDigest(report: Omit<HealthReport, "digest">): Digest {
-  const func = report.series.filter((s) => s.active && s.kind === "functional");
+  const func = report.series.filter(isCounted);
   const count = (f: (s: ReportSeries) => number): DigestCount => {
     const bySeries = func.map((s) => ({ series: s.short, n: f(s) }));
     return { total: bySeries.reduce((a, x) => a + x.n, 0), bySeries };
@@ -195,6 +198,7 @@ export function buildDigest(report: Omit<HealthReport, "digest">): Digest {
           },
         }
       : {}),
+    cleanNights: cleanNights(report.series, report.dates),
     gaps: report.blackout.filter((d) => d >= windowStart),
     unreadableRuns: report.source.unreadableRuns.filter((r) => r.date >= windowStart),
   };
