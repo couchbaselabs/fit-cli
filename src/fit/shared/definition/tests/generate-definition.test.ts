@@ -240,6 +240,39 @@ test("an analytics-functional definition relocates the fitConfig to top-level fi
   assert.deepEqual(parseDefinition(formatFitDefinition(definition, "json5")), definition);
 });
 
+test("a Capella Analytics run records its Capella environment at instance level (no cluster capella block)", () => {
+  const analyticsSdk = sdkByValue("columnar-java");
+  if (!analyticsSdk) throw new Error("Expected the columnar-java SDK to exist.");
+  const definition = buildFitFunctionalDefinitionFrom({
+    cluster: {
+      kind: "cbdinocluster",
+      def: { nodeCount: 3, version: "", services: [], cng: false, capellaAnalytics: true, cloudProvider: "aws" },
+    },
+    sdk: analyticsSdk,
+    selection: buildDefaultFitTestSelection(),
+    analytics: true,
+    capellaEnvironment: "sandbox",
+  });
+  assert.equal(definition.instances[0]?.setup?.capellaEnvironment, "sandbox");
+  assert.equal(definition.clusterConfigs?.[0]?.cbdinocluster?.capella, undefined);
+  assert.deepEqual(parseDefinition(formatFitDefinition(definition, "json5")), definition);
+});
+
+test("a Capella run records its Capella environment at instance level, like situational, not on the cluster", () => {
+  const definition = buildFitFunctionalDefinitionFrom({
+    cluster: {
+      kind: "cbdinocluster",
+      def: { nodeCount: 3, version: "8.0.0", services: [], cng: false, capellaCloudProvider: "aws" },
+    },
+    sdk,
+    selection: buildDefaultFitTestSelection(),
+    capellaEnvironment: "stage",
+  });
+  assert.equal(definition.instances[0]?.setup?.capellaEnvironment, "stage");
+  assert.deepEqual(definition.clusterConfigs?.[0]?.cbdinocluster?.capella, { cloudProvider: "aws" });
+  assert.deepEqual(parseDefinition(formatFitDefinition(definition, "json5")), definition);
+});
+
 test("an Enterprise Analytics SDK performer connects over http(s), not couchbases", () => {
   const eaSdk = sdkByValue("analytics-java");
   if (!eaSdk) throw new Error("Expected the analytics-java SDK to exist.");

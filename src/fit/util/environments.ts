@@ -16,6 +16,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import JSON5 from "json5";
 import type { CbdinoclusterSourceGit } from "../shared/definition/types.js";
+import { UUID_RE } from "../../util/non-fit/uuid.js";
 
 export interface CapellaEnvironment {
   endpoint?: string | null;
@@ -27,10 +28,47 @@ export interface CapellaEnvironment {
   /**
    * AWS Secrets Manager id/ARN holding { password, apiKey, apiSecret,
    * internalSupportToken?, overrideToken? } for this Capella environment. The two
-   * tokens are optional — only "dev" currently has them, which is what makes
-   * cbcollect's dev-only support available.
+   * tokens are optional — only "dev" and the sandbox currently have them, which is what
+   * makes cbcollect support available there. A sandbox's secret holds only the tokens.
    */
   secretId?: string | null;
+  /** A pre-deployed sandbox: nothing about its control plane is pinned here (see capellaControlPlane). */
+  sandbox?: boolean;
+  /** Domains a {@link sandbox}'s per-run endpoint must fall under (see assertTrustedCapellaHost). */
+  endpointSuffixes?: string[] | null;
+}
+
+/**
+ * Parse `value` as an https Capella URL, or null. The URL parser does the work a regex can't:
+ * `https://api.x.example.com:notaport` and `https://%` look fine delimiter-wise but are not URLs.
+ * Requires https, a host and no userinfo.
+ */
+function parseCapellaUrl(value: string): URL | null {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" || !url.hostname) return null;
+  if (url.username || url.password) return null;
+  return url;
+}
+
+export function isCapellaOrganizationId(value: string): boolean {
+  return UUID_RE.test(value.trim());
+}
+
+/**
+ * A sandbox's v4 and v2 control-plane origins from the URL given as its CAPELLA_V4_ENDPOINT, or null.
+ * A sandbox serves `ui.`, `api.` (v2) and `cloudapi.` (v4) on one domain, so whichever of its https URLs
+ * is to hand (e.g. the UI URL `fit sandbox deploy` prints, or any page a browser shows) yields both
+ * origins. They're rebuilt from the parsed host, so a path, query or fragment is dropped rather than
+ * carried into the endpoint cbdinocluster appends API paths to.
+ */
+export function sandboxControlPlaneOrigins(value: string): { endpoint: string; v4Endpoint: string } | null {
+  const domain = /^(?:ui|api|cloudapi)\.(.+)$/.exec(parseCapellaUrl(value)?.host ?? "")?.[1];
+  return domain ? { endpoint: `https://api.${domain}`, v4Endpoint: `https://cloudapi.${domain}` } : null;
 }
 
 export interface ResultsEnvironment {
@@ -228,6 +266,61 @@ export function loadEnvironments(path: string = DEFAULT_ENVIRONMENTS_PATH): Envi
 /** The configured Capella environment names (e.g. ["dev", "stage"]). */
 export function capellaEnvironmentNames(environments: EnvironmentsFile = loadEnvironments()): string[] {
   return Object.keys(environments.capella);
+}
+
+export function isSandboxCapellaEnvironment(
+  name: string,
+  environments: EnvironmentsFile = loadEnvironments(),
+): boolean {
+  return environments.capella[name]?.sandbox === true;
+}
+
+/** Where a Capella environment's control plane is. `endpoint` is the v2 one, used only for the optional v2 login. */
+export interface CapellaControlPlane {
+  endpoint?: string;
+  v4Endpoint?: string;
+  oid?: string;
+}
+
+/**
+ * Where `entry`'s control plane is. A standing environment's is pinned in this file. A sandbox's is
+ * recreated too often to pin, so it comes from CAPELLA_V4_ENDPOINT/CAPELLA_OID; its endpoints are left
+ * unset unless CAPELLA_V4_ENDPOINT is one of its `ui.`/`api.`/`cloudapi.` URLs (see sandboxControlPlaneOrigins).
+ */
+export function capellaControlPlane(entry: CapellaEnvironment, env: NodeJS.ProcessEnv = process.env): CapellaControlPlane {
+  if (entry.sandbox !== true) {
+    return {
+      endpoint: entry.endpoint?.trim() || undefined,
+      v4Endpoint: entry.v4Endpoint?.trim() || undefined,
+      oid: entry.oid?.trim() || undefined,
+    };
+  }
+  const origins = sandboxControlPlaneOrigins(env.CAPELLA_V4_ENDPOINT ?? "");
+  return {
+    endpoint: origins?.endpoint,
+    v4Endpoint: origins?.v4Endpoint,
+    oid: env.CAPELLA_OID?.trim() || undefined,
+  };
+}
+
+/**
+ * A sandbox endpoint receives this run's Capella credentials and the shared support tokens, so it
+ * must be under one of the environment's `endpointSuffixes` domains: a mistyped or pasted
+ * CAPELLA_V4_ENDPOINT shouldn't send them elsewhere. Fails closed when no domain is configured.
+ */
+export function assertTrustedCapellaHost(name: string, hostname: string, suffixes: string[] | null | undefined): void {
+  const domains = (suffixes ?? []).map((suffix) => suffix.trim().replace(/^\./, "").toLowerCase()).filter(Boolean);
+  if (domains.length === 0) {
+    throw new Error(`Capella environment "${name}" has no endpointSuffixes in environments.json5, so no endpoint is trusted for it.`);
+  }
+  const host = hostname.toLowerCase();
+  if (!domains.some((domain) => host === domain || host.endsWith(`.${domain}`))) {
+    throw new Error(
+      `Capella environment "${name}" endpoint host "${host}" is not under ${domains.join(", ")}. ` +
+        `A sandbox endpoint receives this run's Capella credentials, so only those domains are accepted; ` +
+        `add the domain to environments.json5 if this sandbox is legitimately served elsewhere.`,
+    );
+  }
 }
 
 /** The tenant alias (e.g. "cb-sdk") for an AWS account id, or undefined if it's not a known tenant. */

@@ -8,6 +8,9 @@
   instances: [
     {
       aws: {},
+      setup: {
+        capellaEnvironment: 'prod',
+      },
       clusters: [
         {
           // Functional Capella testing, latest server version.
@@ -72,7 +75,6 @@
         onClusterExists: 'useExisting',
         capella: {
           cloudProvider: 'aws',
-          environment: 'prod',
         },
       },
     },
@@ -93,7 +95,6 @@
         onClusterExists: 'useExisting',
         capella: {
           cloudProvider: 'aws',
-          environment: 'prod',
         },
       },
     },

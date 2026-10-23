@@ -20,6 +20,7 @@ import {
 import { describeDefinition } from "../../shared/definition/generate-desc.js";
 import type { FitDefinition } from "../../shared/definition/types.js";
 import { printDefinitionRunGuidance } from "../../shared/definition/run-guidance.js";
+import { capellaEnvironmentFromEnv, definitionTargetsSandbox, withCapellaEnvironment } from "../../shared/definition/capella-environment.js";
 import { pushGist, type GistVisibility } from "../../shared/definition/push-gist.js";
 import { loadEnvironments } from "../../util/environments.js";
 
@@ -612,7 +613,9 @@ export async function generatePreset(args: GeneratePresetArgs): Promise<{ path: 
   }
 
   if (!skipGuidance) {
-    printDefinitionRunGuidance(result.path);
+    // The file keeps the preset's own environment; CAPELLA_ENVIRONMENT only repoints it when it's run.
+    const selected = capellaEnvironmentFromEnv();
+    printDefinitionRunGuidance(result.path, definitionTargetsSandbox(selected ? withCapellaEnvironment(definition, selected) : definition));
   }
 
   return { path: result.path };

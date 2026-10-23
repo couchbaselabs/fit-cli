@@ -19,7 +19,8 @@ import { askPerformerTag } from "../../performers/util/ask-performer-image.js";
 import { askPortInUsePolicy } from "../../performers/util/ask-port-in-use-policy.js";
 import { printDefinitionRunGuidance } from "../definition/run-guidance.js";
 import { extractPushGistVisibility, pushGist, type GistVisibility } from "../definition/push-gist.js";
-import { loadEnvironments } from "../../util/environments.js";
+import { definitionTargetsSandbox } from "../definition/capella-environment.js";
+import { isSandboxCapellaEnvironment, loadEnvironments } from "../../util/environments.js";
 import { DEFAULT_CAPELLA_ENV } from "../../util/config.js";
 import {
   buildFitDefinition,
@@ -158,14 +159,17 @@ async function chooseFunctionalDefinitionCluster(connectivity: FunctionalConnect
   return chooseDefinitionCluster();
 }
 
-async function chooseInstanceExecution(promptIdPrefix: string): Promise<InstanceMode> {
+/** `cloudOnly` leaves out localhost, for a Capella sandbox (which only a cloud instance can reach). */
+async function chooseInstanceExecution(promptIdPrefix: string, cloudOnly = false): Promise<InstanceMode> {
   const choice = await select<"localhost" | "aws" | "gcp">({
     promptId: qualifyPromptId("execution.instance", promptIdPrefix),
-    message: "Where should this instance's tests execute? (You can override this at runtime and run it on localhost)",
+    message: cloudOnly
+      ? "Where should this instance's tests execute? (A Capella sandbox needs a cloud instance)"
+      : "Where should this instance's tests execute? (You can override this at runtime and run it on localhost)",
     choices: [
       { name: "A clean AWS EC2 instance", value: "aws" },
       { name: "A clean GCP Compute Engine instance", value: "gcp" },
-      { name: "This machine (localhost)", value: "localhost" },
+      ...(cloudOnly ? [] : [{ name: "This machine (localhost)", value: "localhost" as const }]),
     ],
   });
   if (choice === "aws") return { aws: {} };
@@ -366,6 +370,8 @@ async function addFunctionalRun(
       if (capellaCloudProvider === "aws" || capellaCloudProvider === "gcp") {
         capellaPrivateEndpoint = await askCapellaPrivateEndpoint(promptIdPrefix, capellaCloudProvider);
       }
+    } else if (connectivity === "capella-analytics") {
+      capellaEnvironment = await chooseCapellaEnvironment(promptIdPrefix);
     }
 
     console.log(
@@ -385,7 +391,7 @@ async function addFunctionalRun(
       ? capellaCloudProvider === "gcp"
         ? { gcp: { privateEndpoint: {} } }
         : { aws: { privateEndpoint: {} } }
-      : await chooseInstanceExecution(promptIdPrefix);
+      : await chooseInstanceExecution(promptIdPrefix, capellaEnvironment !== undefined && isSandboxCapellaEnvironment(capellaEnvironment));
     const cluster = await chooseFunctionalDefinitionCluster(connectivity, capellaCloudProvider);
     const onClusterExists = cluster.kind === "cbdinocluster" ? await askClusterExistsPolicy() : undefined;
     const subDef = buildFitFunctionalDefinitionFrom({
@@ -463,12 +469,22 @@ async function chooseCapellaEnvironment(promptIdPrefix: string): Promise<string>
   const names = Object.keys(capella);
   if (names.length === 0) return DEFAULT_CAPELLA_ENV;
   // Always prompt (even with a single environment) so the choice is explicit and confirmed.
-  return select<string>({
+  const environment = await select<string>({
     promptId: qualifyPromptId("situational.capella.environment", promptIdPrefix),
     message: "Which Capella environment should clusters be created in?",
     default: names.includes(DEFAULT_CAPELLA_ENV) ? DEFAULT_CAPELLA_ENV : names[0],
-    choices: names.map((name) => ({ name: `${name} — ${capella[name].endpoint ?? "(endpoint not set)"}`, value: name })),
+    choices: names.map((name) => ({
+      name: `${name} — ${capella[name].endpoint ?? (capella[name].sandbox ? "(pre-deployed sandbox, set up from CAPELLA_* env vars)" : "(endpoint not set)")}`,
+      value: name,
+    })),
   });
+  if (isSandboxCapellaEnvironment(environment)) {
+    console.log(
+      `\n"${environment}" is recreated every few hours, so its URL, org id and API key aren't stored in the definition file: ` +
+        `you set them as CAPELLA_* env vars when you run it.`,
+    );
+  }
+  return environment;
 }
 
 async function addSituationalRun(
@@ -484,8 +500,12 @@ async function addSituationalRun(
   const capellaEnvironment = await chooseCapellaEnvironment(promptIdPrefix);
   const selection = await selectFitTests(execution, SITUATIONAL_TEST_DOMAIN, promptIdPrefix);
 
+  // One box = one Capella env (init is per-box), so only reuse an instance when the chosen env matches.
   const currentInstance = lastSituationalInstance(state);
-  if (currentInstance?.clusterlessSessions) {
+  if (
+    currentInstance?.clusterlessSessions &&
+    (currentInstance.setup?.capellaEnvironment ?? DEFAULT_CAPELLA_ENV) === capellaEnvironment
+  ) {
     // The instance's execution mode (and its aws/gcp.privateEndpoint, if any) was
     // fixed when it was created, so reuse whatever PE-ness that instance already has.
     const privateEndpoint =
@@ -525,7 +545,7 @@ async function addSituationalRun(
     ? privateEndpointCloudProvider === "gcp"
       ? { gcp: { privateEndpoint: {} } }
       : { aws: { privateEndpoint: {} } }
-    : await chooseInstanceExecution(promptIdPrefix);
+    : await chooseInstanceExecution(promptIdPrefix, isSandboxCapellaEnvironment(capellaEnvironment));
   const subDef = buildFitSituationalDefinitionFrom({
     sdk,
     instance,
@@ -598,7 +618,7 @@ export async function createFitDefinition(options?: { format?: DefinitionFormat;
     console.log(`✓ Gist created: ${gist.url}`);
   }
 
-  printDefinitionRunGuidance(result.path);
+  printDefinitionRunGuidance(result.path, definitionTargetsSandbox(definition));
 
   return { artifacts: [result.artifact], details: [] };
 }

@@ -8,6 +8,9 @@
   instances: [
     {
       aws: {},
+      setup: {
+        capellaEnvironment: 'prod',
+      },
       clusters: [
         {
           clusterConfig: 'cluster-0',
@@ -49,7 +52,6 @@
         onClusterExists: 'useExisting',
         capella: {
           cloudProvider: 'aws',
-          environment: 'prod',
         },
       },
     },

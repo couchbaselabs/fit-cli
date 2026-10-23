@@ -24,6 +24,8 @@
   // The username is the shared account below unless overridden. Results creds always from the secret.
   //
   // A null non-secret value means "not yet provided" — selecting that block fails fast.
+  // The exception is a `sandbox: true` Capella block (see `sandbox`), which pins nothing: a
+  // pre-deployed sandbox is recreated too often, so a run takes it from env vars instead.
   // bun run secrets set capella/dev password='<password>' apiKey='<key>' apiSecret='<secret>'
   // bun run secrets set results/dev password='<password>'
 
@@ -224,6 +226,18 @@
       oid: "5ae82d34-5da8-4313-af5f-90ea4142a4c6",
       username: "sdk_qe@couchbase.com",
       secretId: "fit-cli/capella/stage",
+    },
+    // A pre-deployed sandbox: a Capella control plane spun up on demand and recreated every few
+    // hours, so nothing about it is pinned here. A run takes it from env vars: CAPELLA_V4_ENDPOINT,
+    // CAPELLA_OID, CAPELLA_API_KEY/CAPELLA_API_SECRET, and an optional v2 CAPELLA_USER/CAPELLA_PASS.
+    // Only the two support tokens are stable enough to keep in the secret:
+    //   bun run secrets set capella/sandbox internalSupportToken='<token>' overrideToken='<token>'
+    sandbox: {
+      sandbox: true,
+      secretId: "fit-cli/capella/sandbox",
+      // CAPELLA_V4_ENDPOINT is sent the run's credentials and the support tokens, so it must be a sandbox host
+      // (not, say, the standing dev control plane on the same nonprod domain).
+      endpointSuffixes: [".sandbox.nonprod-project-avengers.com"],
     },
   },
   results: {

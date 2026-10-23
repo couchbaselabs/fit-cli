@@ -63,7 +63,8 @@ export interface DefinitionInputs {
   /**
    * Capella environment to create this cluster in (a key under `capella` in
    * environments.json5 — e.g. "dev"). Only meaningful when the cluster is a
-   * Capella cloud cluster (i.e. `cluster.def.capellaCloudProvider` is set).
+   * Capella or Capella Analytics cloud cluster. Recorded on the instance
+   * (`setup.capellaEnvironment`), the same place situational runs use.
    */
   capellaEnvironment?: string;
   /**
@@ -202,7 +203,6 @@ function buildFunctionalInstance(inputs: DefinitionInputs): BuiltFunctionalInsta
             ...(capellaCloudProvider ? {
               capella: {
                 cloudProvider: capellaCloudProvider,
-                ...(inputs.capellaEnvironment ? { environment: inputs.capellaEnvironment } : {}),
                 ...(inputs.capellaPrivateEndpoint ? { privateEndpoint: {} } : {}),
               },
             } : {}),
@@ -235,6 +235,9 @@ function buildFunctionalInstance(inputs: DefinitionInputs): BuiltFunctionalInsta
       },
     ],
   };
+  if (inputs.capellaEnvironment) {
+    instance.setup = { ...instance.setup, capellaEnvironment: inputs.capellaEnvironment };
+  }
   const capellaAnalytics = (inputs.analytics ?? false) && inputs.cluster.kind === "cbdinocluster" && (inputs.cluster.def.capellaAnalytics ?? false);
   return { instance, clusterConfigRef, ...(inputs.analytics ? { fitConfigRef: analyticsFitConfigRef(inputs.sdk, capellaAnalytics) } : {}) };
 }

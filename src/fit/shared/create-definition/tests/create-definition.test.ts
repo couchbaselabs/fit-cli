@@ -1,7 +1,20 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { functionalInstanceConnectivity } from "../create-definition.js";
+import { definitionRunGuidance } from "../../definition/run-guidance.js";
 import type { InstanceLifetime } from "../../definition/types.js";
+
+test("definitionRunGuidance names the sandbox env vars only when the definition targets a sandbox", () => {
+  const plain = definitionRunGuidance("fit.json5");
+  assert.ok(!plain.includes("CAPELLA_API_SECRET"), "non-sandbox guidance should not mention sandbox creds");
+  assert.match(plain, /gh workflow run/, "non-sandbox guidance offers the CI recipe");
+  const sandbox = definitionRunGuidance("fit.json5", true);
+  assert.match(sandbox, /Capella sandbox/);
+  assert.match(sandbox, /CAPELLA_V4_ENDPOINT=.*CAPELLA_OID=.*CAPELLA_API_SECRET.*CAPELLA_USER.*optional v2 login/s);
+  assert.ok(!sandbox.includes("gh workflow run"), "sandbox guidance must not offer the CI recipe");
+  assert.match(sandbox, /definition fit\.json5\n/, "sandbox guidance gives the command to run it");
+  assert.match(sandbox, /not localhost, and isn't supported on CI/);
+});
 
 const NODES = [{ count: 1, version: "8.1.0-2188", services: ["kv"] }];
 

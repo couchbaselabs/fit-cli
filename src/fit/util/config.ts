@@ -6,7 +6,14 @@ import YAML from "yaml";
 import { confirm } from "../../util/non-fit/prompts.js";
 import { expandTilde } from "../../util/non-fit/expand-tilde.js";
 import { runScriptPrefix } from "../../util/non-fit/fit-cli-log.js";
-import { loadEnvironments, type EnvironmentsFile } from "./environments.js";
+import {
+  assertTrustedCapellaHost,
+  capellaControlPlane,
+  isCapellaOrganizationId,
+  loadEnvironments,
+  type CapellaEnvironment,
+  type EnvironmentsFile,
+} from "./environments.js";
 import { getJsonSecret } from "../../cloud/util/aws/secrets.js";
 
 /** Where to get cbdinocluster — shown to users when it can't be found. */
@@ -46,6 +53,13 @@ export const DEFAULT_CAPELLA_ENV = loadEnvironments().defaults.defaultCapellaEnv
 export const DEFAULT_RESULTS_ENV = loadEnvironments().defaults.defaultResultsEnvironment;
 /** Last-resort user for the hosted results database, for an environment that names none. */
 const DEFAULT_RESULTS_DB_USERNAME = "postgres";
+
+/** The env vars a sandbox Capella run takes everything from (see resolveSandboxCapellaConfig). */
+export const CAPELLA_SANDBOX_ENV_VAR_GUIDANCE =
+  "export CAPELLA_V4_ENDPOINT=https://ui.<sbx-id>.sandbox.nonprod-project-avengers.com   # any of its URLs, e.g. the one `fit sandbox deploy` prints\n" +
+  "    export CAPELLA_OID=...                              # the oid= in its UI URL\n" +
+  "    export CAPELLA_API_KEY=... CAPELLA_API_SECRET=...   # a v4 organization API key, created in its UI\n" +
+  "    export CAPELLA_USER=... CAPELLA_PASS=...            # optional v2 login: custom server images, server version changes, columnar";
 
 export const FIT_CLI_CONFIG_VERSION = 1;
 export const FIT_CLI_CONFIG_DIRNAME = ".fit-cli";
@@ -866,16 +880,21 @@ export function resolveOutputFormat(
 
 /** The Capella settings forwarded to a remote box, with every field resolved. */
 export interface ResolvedCapellaConfig {
+  /**
+   * The v2 login: only custom server images, server version changes and columnar use it.
+   * Absent only for a sandbox run without CAPELLA_USER/CAPELLA_PASS.
+   */
   username?: string;
+  /** The v2 control-plane endpoint; the support/override tokens are used against it too, so it's always set. */
   endpoint: string;
   organizationId: string;
-  password: string;
+  password?: string;
   /** Capella Management API v4 endpoint. */
   v4Endpoint: string;
   /** v4 organization API key; cbdinocluster's cloud deployer authenticates with it. */
   apiKey: string;
   apiSecret: string;
-  /** Only set for environments the Capella team has issued one for (currently just "dev"). */
+  /** Only set for environments the Capella team has issued one for (currently "dev" and the sandbox). */
   internalSupportToken?: string;
   overrideToken?: string;
 }
@@ -890,6 +909,21 @@ function firstEnv(env: NodeJS.ProcessEnv, names: string[]): string | undefined {
 }
 
 /**
+ * The env vars that may supply `entry`'s credentials. CAPELLA_V4_ENDPOINT names the control plane the
+ * CAPELLA_* credentials are for (normally a sandbox's), so a standing environment only takes them when it
+ * is unset or names that environment's own v4 endpoint; otherwise they'd be sent to the wrong control plane.
+ */
+function credentialEnv(entry: CapellaEnvironment, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const named = firstEnv(env, ["CAPELLA_V4_ENDPOINT"])?.replace(/\/+$/, "").toLowerCase();
+  return entry.sandbox === true || !named || named === entry.v4Endpoint?.trim().toLowerCase() ? env : {};
+}
+
+/** `url` with any embedded `user:password@` removed, for error messages. */
+function withoutUserinfo(url: string): string {
+  return url.replace(/\/\/[^/?#@]*@/, "//");
+}
+
+/**
  * Resolve the Capella control-plane settings for a Capella environment (a key
  * under `capella` in environments.json5; default "prod").
  *
@@ -901,7 +935,8 @@ function firstEnv(env: NodeJS.ProcessEnv, names: string[]): string | undefined {
  * cloud deployer without an API secret; the v2 password stays required because
  * custom image deploys, server version changes, and columnar operations still use
  * it. Throws when the environment is unknown/unprovisioned or any credential
- * can't be resolved.
+ * can't be resolved. A sandbox environment is resolved differently, from env vars
+ * only — see {@link resolveSandboxCapellaConfig}.
  */
 export async function resolveCapellaConfig(
   options: {
@@ -915,7 +950,6 @@ export async function resolveCapellaConfig(
 ): Promise<ResolvedCapellaConfig> {
   const block = options.block ?? DEFAULT_CAPELLA_ENV;
   const env = options.env ?? process.env;
-  const config = options.config ?? loadFitCliConfig(options.path).config;
   const environments = options.environments ?? loadEnvironments();
   const fetchSecret = options.fetchSecret ?? getJsonSecret;
 
@@ -923,6 +957,10 @@ export async function resolveCapellaConfig(
   if (!entry) {
     throw new InvalidFitCliConfigError(`Unknown Capella environment "${block}" — not defined in environments.json5.`);
   }
+  if (entry.sandbox === true) {
+    return resolveSandboxCapellaConfig(block, entry, env, fetchSecret);
+  }
+  const config = options.config ?? loadFitCliConfig(options.path).config;
   const endpoint = entry.endpoint?.trim();
   const v4Endpoint = entry.v4Endpoint?.trim();
   const organizationId = entry.oid?.trim();
@@ -936,12 +974,16 @@ export async function resolveCapellaConfig(
   }
 
   const c = config?.capella;
+  const credEnv = credentialEnv(entry, env);
+  if (credEnv !== env) {
+    console.info(`CAPELLA_V4_ENDPOINT names another Capella control plane, so its CAPELLA_* credentials aren't used for "${block}".`);
+  }
   // Username is the shared, non-secret account from the registry, overridable by personal config/env.
-  let username = c?.username ?? firstEnv(env, ["CAPELLA_USER", "CAP_USER"]) ?? entry.username?.trim();
+  let username = c?.username ?? firstEnv(credEnv, ["CAPELLA_USER", "CAP_USER"]) ?? entry.username?.trim();
   // Secrets: personal first, else the shared values from the AWS secret.
-  let password = c?.password ?? firstEnv(env, ["CAPELLA_PASS", "CAP_PASS"]);
-  let apiKey = c?.apiKey ?? firstEnv(env, ["CAPELLA_API_KEY"]);
-  let apiSecret = c?.apiSecret ?? firstEnv(env, ["CAPELLA_API_SECRET"]);
+  let password = c?.password ?? firstEnv(credEnv, ["CAPELLA_PASS", "CAP_PASS"]);
+  let apiKey = c?.apiKey ?? firstEnv(credEnv, ["CAPELLA_API_KEY"]);
+  let apiSecret = c?.apiSecret ?? firstEnv(credEnv, ["CAPELLA_API_SECRET"]);
   let secret: Record<string, string> | undefined;
   if (!password || !apiKey || !apiSecret) {
     if (!entry.secretId) {
@@ -974,8 +1016,8 @@ export async function resolveCapellaConfig(
   // (i.e. some shared credential was needed); per [CONFIG2] we don't touch AWS Secrets
   // Manager at all when personal creds satisfy everything.
   const internalSupportToken =
-    firstEnv(env, ["CAPELLA_INTERNAL_SUPPORT_TOKEN"]) ?? secret?.internalSupportToken?.trim() ?? undefined;
-  const overrideToken = firstEnv(env, ["CAPELLA_OVERRIDE_TOKEN"]) ?? secret?.overrideToken?.trim() ?? undefined;
+    firstEnv(credEnv, ["CAPELLA_INTERNAL_SUPPORT_TOKEN"]) ?? secret?.internalSupportToken?.trim() ?? undefined;
+  const overrideToken = firstEnv(credEnv, ["CAPELLA_OVERRIDE_TOKEN"]) ?? secret?.overrideToken?.trim() ?? undefined;
 
   return {
     username,
@@ -991,12 +1033,78 @@ export async function resolveCapellaConfig(
 }
 
 /**
+ * Resolve a sandbox Capella environment, entirely from env vars. A sandbox is redeployed every few hours
+ * with fresh accounts, so neither the fit-cli config nor the shared AWS account applies to it.
+ * CAPELLA_V4_ENDPOINT, CAPELLA_OID, CAPELLA_API_KEY and CAPELLA_API_SECRET are required; CAPELLA_USER and
+ * CAPELLA_PASS are an optional v2 login for the few things v4 can't do. Only the support/override tokens,
+ * which survive a redeploy, come from its AWS secret, and only when they aren't in the env [CONFIG2].
+ */
+async function resolveSandboxCapellaConfig(
+  block: string,
+  entry: CapellaEnvironment,
+  env: NodeJS.ProcessEnv,
+  fetchSecret: (secretId: string) => Promise<Record<string, string>>,
+): Promise<ResolvedCapellaConfig> {
+  const givenV4Endpoint = firstEnv(env, ["CAPELLA_V4_ENDPOINT"]);
+  const { endpoint, v4Endpoint, oid } = capellaControlPlane(entry, env);
+  const apiKey = firstEnv(env, ["CAPELLA_API_KEY"]);
+  const apiSecret = firstEnv(env, ["CAPELLA_API_SECRET"]);
+  const username = firstEnv(env, ["CAPELLA_USER", "CAP_USER"]);
+  const password = firstEnv(env, ["CAPELLA_PASS", "CAP_PASS"]);
+  const missing = [
+    !givenV4Endpoint && "CAPELLA_V4_ENDPOINT",
+    !oid && "CAPELLA_OID",
+    !apiKey && "CAPELLA_API_KEY",
+    !apiSecret && "CAPELLA_API_SECRET",
+    username && !password && "CAPELLA_PASS",
+    password && !username && "CAPELLA_USER",
+  ].filter(Boolean);
+  if (!givenV4Endpoint || !oid || !apiKey || !apiSecret || missing.length > 0) {
+    throw new InvalidFitCliConfigError(
+      `"${block}" is a pre-deployed Capella sandbox, which fit-cli sets up from env vars only; missing ${missing.join(", ")}:\n` +
+        `    ${CAPELLA_SANDBOX_ENV_VAR_GUIDANCE}`,
+    );
+  }
+  if (!endpoint || !v4Endpoint) {
+    throw new InvalidFitCliConfigError(
+      `CAPELLA_V4_ENDPOINT must be one of the sandbox's https URLs, on its ui., api. or cloudapi. host ` +
+        `(e.g. https://cloudapi.sbx-25.sandbox.nonprod-project-avengers.com); got ${JSON.stringify(withoutUserinfo(givenV4Endpoint))}`,
+    );
+  }
+  assertTrustedCapellaHost(block, new URL(v4Endpoint).hostname, entry.endpointSuffixes);
+  if (!isCapellaOrganizationId(oid)) {
+    throw new InvalidFitCliConfigError(
+      `CAPELLA_OID must be just the id from the Capella UI URL's oid= parameter (a UUID); got ${JSON.stringify(oid)}`,
+    );
+  }
+
+  // Fetched like a standing environment's secret (not best-effort), so a real AWS failure fails fast
+  // rather than silently dropping cbcollect support.
+  const envSupportToken = firstEnv(env, ["CAPELLA_INTERNAL_SUPPORT_TOKEN"]);
+  const envOverrideToken = firstEnv(env, ["CAPELLA_OVERRIDE_TOKEN"]);
+  const secret = entry.secretId && !(envSupportToken && envOverrideToken) ? await fetchSecret(entry.secretId) : undefined;
+  const internalSupportToken = envSupportToken ?? (secret?.internalSupportToken?.trim() || undefined);
+  const overrideToken = envOverrideToken ?? (secret?.overrideToken?.trim() || undefined);
+
+  return {
+    ...(username && password ? { username, password } : {}),
+    endpoint,
+    v4Endpoint,
+    organizationId: oid,
+    apiKey,
+    apiSecret,
+    ...(internalSupportToken ? { internalSupportToken } : {}),
+    ...(overrideToken ? { overrideToken } : {}),
+  };
+}
+
+/**
  * Whether cbdinocluster can collect cbcollect diagnostics from a Capella-cloud cluster in
  * the given environment — it needs an internal support token (see
  * {@link ResolvedCapellaConfig}); cbdinocluster's internal-support API fails outright
- * without one. Only "dev" currently has a token (the Capella team can't issue one for
- * stage/prod), so this is effectively a dev-only check today, driven purely by what's
- * configured rather than a hardcoded environment name.
+ * without one. Only "dev" and the sandbox currently have a token (the Capella team can't
+ * issue one for stage/prod), driven purely by what's configured rather than a hardcoded
+ * environment name.
  */
 export async function capellaLogCollectionAvailable(
   block: string,
@@ -1014,7 +1122,7 @@ export async function capellaLogCollectionAvailable(
   if (!entry?.secretId) {
     return false;
   }
-  if (firstEnv(env, ["CAPELLA_INTERNAL_SUPPORT_TOKEN"])) {
+  if (firstEnv(credentialEnv(entry, env), ["CAPELLA_INTERNAL_SUPPORT_TOKEN"])) {
     return true;
   }
   const secret = await fetchSecret(entry.secretId).catch(() => undefined);

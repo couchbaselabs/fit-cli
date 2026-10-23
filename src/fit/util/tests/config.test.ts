@@ -252,6 +252,21 @@ const TEST_ENVIRONMENTS = {
 };
 const noFetch = (): Promise<Record<string, string>> => Promise.reject(new Error("should not fetch the AWS secret"));
 
+/** The registry with its sandbox entry, which pins nothing about the control plane. */
+const SANDBOX_ENVIRONMENTS = {
+  ...TEST_ENVIRONMENTS,
+  capella: {
+    ...TEST_ENVIRONMENTS.capella,
+    sandbox: { sandbox: true, secretId: "cap/sandbox", endpointSuffixes: [".sandbox.nonprod-project-avengers.com"] },
+  },
+};
+
+/** A sandbox's control plane, as a run passes it in. */
+const SANDBOX_PLANE_ENV = {
+  CAPELLA_V4_ENDPOINT: "https://cloudapi.sbx-25.sandbox.nonprod-project-avengers.com",
+  CAPELLA_OID: "4c1d8e6a-0b2f-4a1e-9f3c-5d6e7a8b9c01",
+};
+
 test("ignores results-database credentials in config (now resolved from AWS Secrets Manager)", () => {
   assert.deepEqual(parseFitCliConfig(`{ version: 1, output: { resultsDb: { password: 's' } } }`), {
     version: FIT_CLI_CONFIG_VERSION,
@@ -650,4 +665,222 @@ test("ensureFitCliConfigEnv returns without creating when the user declines", as
 
   assert.equal(result.loaded, false);
   assert.equal(result.created, false);
+});
+
+test("resolveCapellaConfig takes a sandbox environment entirely from env vars, and only its tokens from the secret", async () => {
+  const resolved = await resolveCapellaConfig({
+    block: "sandbox",
+    environments: SANDBOX_ENVIRONMENTS,
+    config: { version: FIT_CLI_CONFIG_VERSION },
+    env: { ...SANDBOX_PLANE_ENV, CAPELLA_USER: "sandbox@cb.com", CAPELLA_PASS: "sandbox-pw", CAPELLA_API_KEY: "sandbox-key", CAPELLA_API_SECRET: "sandbox-sec" },
+    fetchSecret: () => Promise.resolve({ password: "stale-pw", internalSupportToken: "support-tok", overrideToken: "override-tok" }),
+  });
+  assert.deepEqual(resolved, {
+    username: "sandbox@cb.com",
+    password: "sandbox-pw",
+    endpoint: "https://api.sbx-25.sandbox.nonprod-project-avengers.com",
+    v4Endpoint: "https://cloudapi.sbx-25.sandbox.nonprod-project-avengers.com",
+    organizationId: "4c1d8e6a-0b2f-4a1e-9f3c-5d6e7a8b9c01",
+    apiKey: "sandbox-key",
+    apiSecret: "sandbox-sec",
+    internalSupportToken: "support-tok",
+    overrideToken: "override-tok",
+  });
+});
+
+test("resolveCapellaConfig runs a sandbox on v4 alone, leaving out the optional v2 login", async () => {
+  const resolved = await resolveCapellaConfig({
+    block: "sandbox",
+    environments: SANDBOX_ENVIRONMENTS,
+    env: { ...SANDBOX_PLANE_ENV, CAPELLA_API_KEY: "k", CAPELLA_API_SECRET: "s", CAPELLA_INTERNAL_SUPPORT_TOKEN: "t", CAPELLA_OVERRIDE_TOKEN: "o" },
+    fetchSecret: noFetch,
+  });
+  assert.deepEqual(resolved, {
+    // Still forwarded without a v2 login: cbdinocluster sends the support/override tokens to it.
+    endpoint: "https://api.sbx-25.sandbox.nonprod-project-avengers.com",
+    v4Endpoint: "https://cloudapi.sbx-25.sandbox.nonprod-project-avengers.com",
+    organizationId: "4c1d8e6a-0b2f-4a1e-9f3c-5d6e7a8b9c01",
+    apiKey: "k",
+    apiSecret: "s",
+    internalSupportToken: "t",
+    overrideToken: "o",
+  });
+});
+
+test("resolveCapellaConfig names every missing sandbox env var, before touching AWS", async () => {
+  // The token-secret fetch would fail too, but the actionable message must win.
+  await assert.rejects(
+    resolveCapellaConfig({ block: "sandbox", environments: SANDBOX_ENVIRONMENTS, env: {}, fetchSecret: () => Promise.reject(new Error("access denied")) }),
+    /missing CAPELLA_V4_ENDPOINT, CAPELLA_OID, CAPELLA_API_KEY, CAPELLA_API_SECRET:\n.*export CAPELLA_V4_ENDPOINT=/s,
+  );
+});
+
+test("resolveCapellaConfig wants a sandbox's optional v2 login whole: user and password, or neither", async () => {
+  await assert.rejects(
+    resolveCapellaConfig({
+      block: "sandbox",
+      environments: SANDBOX_ENVIRONMENTS,
+      env: { ...SANDBOX_PLANE_ENV, CAPELLA_USER: "sandbox@cb.com", CAPELLA_API_KEY: "k", CAPELLA_API_SECRET: "s" },
+      fetchSecret: noFetch,
+    }),
+    /missing CAPELLA_PASS/,
+  );
+});
+
+test("resolveCapellaConfig: a sandbox ignores personal config credentials entirely", async () => {
+  await assert.rejects(
+    resolveCapellaConfig({
+      block: "sandbox",
+      environments: SANDBOX_ENVIRONMENTS,
+      config: {
+        version: FIT_CLI_CONFIG_VERSION,
+        capella: { username: "me@cb.com", password: "my-prod-pw", apiKey: "my-key", apiSecret: "my-sec" },
+      },
+      env: SANDBOX_PLANE_ENV,
+      fetchSecret: noFetch,
+    }),
+    /missing CAPELLA_API_KEY, CAPELLA_API_SECRET/,
+  );
+});
+
+test("resolveCapellaConfig: a personal config account still wins for a non-sandbox environment", async () => {
+  const resolved = await resolveCapellaConfig({
+    block: "dev",
+    environments: SANDBOX_ENVIRONMENTS,
+    config: {
+      version: FIT_CLI_CONFIG_VERSION,
+      capella: { username: "me@cb.com", password: "my-pw", apiKey: "my-key", apiSecret: "my-sec" },
+    },
+    env: { ...SANDBOX_PLANE_ENV, CAPELLA_USER: "env@cb.com", CAPELLA_PASS: "env-pw", CAPELLA_API_KEY: "env-key", CAPELLA_API_SECRET: "env-sec" },
+    fetchSecret: noFetch,
+  });
+  assert.equal(resolved.username, "me@cb.com");
+  assert.equal(resolved.password, "my-pw");
+  assert.notEqual(resolved.v4Endpoint, SANDBOX_PLANE_ENV.CAPELLA_V4_ENDPOINT, "a standing env's control plane is pinned");
+});
+
+test("resolveCapellaConfig: a standing environment ignores CAPELLA_* credentials meant for another control plane", async () => {
+  // The sandbox's vars are exported, but this group runs on dev: its shared account must be used, not the sandbox's.
+  const resolved = await resolveCapellaConfig({
+    block: "dev",
+    environments: SANDBOX_ENVIRONMENTS,
+    config: { version: FIT_CLI_CONFIG_VERSION },
+    env: {
+      ...SANDBOX_PLANE_ENV, CAPELLA_USER: "sbx@cb.com", CAPELLA_PASS: "sbx-pw", CAPELLA_API_KEY: "sbx-key", CAPELLA_API_SECRET: "sbx-sec",
+      CAPELLA_INTERNAL_SUPPORT_TOKEN: "sbx-tok",
+    },
+    fetchSecret: () => Promise.resolve({ password: "dev-pw", apiKey: "dev-key", apiSecret: "dev-sec", internalSupportToken: "dev-tok" }),
+  });
+  assert.equal(resolved.username, "sdk_qe@couchbase.com");
+  assert.equal(resolved.password, "dev-pw");
+  assert.equal(resolved.apiKey, "dev-key");
+  assert.equal(resolved.apiSecret, "dev-sec");
+  assert.equal(resolved.internalSupportToken, "dev-tok");
+});
+
+test("resolveCapellaConfig: CAPELLA_* credentials still apply when CAPELLA_V4_ENDPOINT names that environment", async () => {
+  const resolved = await resolveCapellaConfig({
+    block: "dev",
+    environments: TEST_ENVIRONMENTS,
+    config: { version: FIT_CLI_CONFIG_VERSION },
+    env: { CAPELLA_V4_ENDPOINT: "https://CLOUDAPI.dev.example/", CAPELLA_PASS: "envpass", CAPELLA_API_KEY: "envkey", CAPELLA_API_SECRET: "envsec" },
+    fetchSecret: noFetch,
+  });
+  assert.equal(resolved.apiKey, "envkey");
+  assert.equal(resolved.password, "envpass");
+});
+
+test("resolveCapellaConfig fails a sandbox when its token secret can't be read (fetched like a standing env)", async () => {
+  await assert.rejects(
+    resolveCapellaConfig({
+      block: "sandbox",
+      environments: SANDBOX_ENVIRONMENTS,
+      env: { ...SANDBOX_PLANE_ENV, CAPELLA_API_KEY: "k", CAPELLA_API_SECRET: "s" },
+      fetchSecret: () => Promise.reject(new Error("access denied")),
+    }),
+    /access denied/,
+  );
+});
+
+test("resolveCapellaConfig only sends a sandbox's credentials to its https origins, under its trusted domains", async () => {
+  const creds = { CAPELLA_OID: SANDBOX_PLANE_ENV.CAPELLA_OID, CAPELLA_API_KEY: "k", CAPELLA_API_SECRET: "s" };
+  const resolveWith = (v4Endpoint: string) =>
+    resolveCapellaConfig({ block: "sandbox", environments: SANDBOX_ENVIRONMENTS, env: { ...creds, CAPELLA_V4_ENDPOINT: v4Endpoint }, fetchSecret: noFetch });
+  for (const v4Endpoint of [
+    "http://cloudapi.sbx-25.sandbox.nonprod-project-avengers.com",
+    "https://sbx-25.sandbox.nonprod-project-avengers.com",
+  ]) {
+    await assert.rejects(resolveWith(v4Endpoint), /must be one of the sandbox's https URLs/, v4Endpoint);
+  }
+  await assert.rejects(resolveWith("https://cloudapi.sbx-25.evil.example"), /is not under sandbox\.nonprod-project-avengers\.com/);
+  await assert.rejects(resolveWith("https://cloudapi.dev.nonprod-project-avengers.com"), /is not under sandbox\.nonprod-project-avengers\.com/);
+  await assert.rejects(resolveWith("https://ui.dev.nonprod-project-avengers.com/sign-in"), /is not under sandbox\.nonprod-project-avengers\.com/);
+});
+
+test("resolveCapellaConfig takes whichever of a sandbox's URLs it's given, and derives its v4 and v2 endpoints", async () => {
+  for (const given of [
+    "https://ui.sbx-25.sandbox.nonprod-project-avengers.com/sign-in", // as `fit sandbox deploy` prints it
+    "https://api.sbx-25.sandbox.nonprod-project-avengers.com",
+    "https://cloudapi.sbx-25.sandbox.nonprod-project-avengers.com",
+  ]) {
+    const resolved = await resolveCapellaConfig({
+      block: "sandbox",
+      environments: SANDBOX_ENVIRONMENTS,
+      env: { CAPELLA_OID: SANDBOX_PLANE_ENV.CAPELLA_OID, CAPELLA_API_KEY: "k", CAPELLA_API_SECRET: "s", CAPELLA_V4_ENDPOINT: given },
+      fetchSecret: () => Promise.resolve({}),
+    });
+    assert.equal(resolved.v4Endpoint, "https://cloudapi.sbx-25.sandbox.nonprod-project-avengers.com", given);
+    assert.equal(resolved.endpoint, "https://api.sbx-25.sandbox.nonprod-project-avengers.com", given);
+  }
+});
+
+test("resolveCapellaConfig doesn't echo credentials embedded in a rejected CAPELLA_V4_ENDPOINT", async () => {
+  await assert.rejects(
+    resolveCapellaConfig({
+      block: "sandbox",
+      environments: SANDBOX_ENVIRONMENTS,
+      env: { ...SANDBOX_PLANE_ENV, CAPELLA_V4_ENDPOINT: "https://me:hunter2@cloudapi.sbx-25.sandbox.nonprod-project-avengers.com", CAPELLA_API_KEY: "k", CAPELLA_API_SECRET: "s" },
+      fetchSecret: noFetch,
+    }),
+    (err: Error) => err.message.includes("https://cloudapi.sbx-25") && !err.message.includes("hunter2"),
+  );
+});
+
+test("resolveCapellaConfig forwards a sandbox endpoint without a stray trailing ? or /", async () => {
+  const resolved = await resolveCapellaConfig({
+    block: "sandbox",
+    environments: SANDBOX_ENVIRONMENTS,
+    env: {
+      ...SANDBOX_PLANE_ENV, CAPELLA_V4_ENDPOINT: "https://cloudapi.sbx-25.sandbox.nonprod-project-avengers.com/?",
+      CAPELLA_API_KEY: "k", CAPELLA_API_SECRET: "s", CAPELLA_INTERNAL_SUPPORT_TOKEN: "t", CAPELLA_OVERRIDE_TOKEN: "o",
+    },
+    fetchSecret: noFetch,
+  });
+  assert.equal(resolved.v4Endpoint, "https://cloudapi.sbx-25.sandbox.nonprod-project-avengers.com");
+});
+
+test("resolveCapellaConfig rejects a sandbox CAPELLA_OID still carrying the UI URL's oid= prefix", async () => {
+  await assert.rejects(
+    resolveCapellaConfig({
+      block: "sandbox",
+      environments: SANDBOX_ENVIRONMENTS,
+      env: { ...SANDBOX_PLANE_ENV, CAPELLA_OID: `oid=${SANDBOX_PLANE_ENV.CAPELLA_OID}`, CAPELLA_API_KEY: "k", CAPELLA_API_SECRET: "s" },
+      fetchSecret: noFetch,
+    }),
+    /CAPELLA_OID must be just the id/,
+  );
+});
+
+test("resolveCapellaConfig: a sandbox skips AWS entirely when both support tokens are in the env", async () => {
+  const resolved = await resolveCapellaConfig({
+    block: "sandbox",
+    environments: SANDBOX_ENVIRONMENTS,
+    env: {
+      ...SANDBOX_PLANE_ENV, CAPELLA_API_KEY: "k", CAPELLA_API_SECRET: "s",
+      CAPELLA_INTERNAL_SUPPORT_TOKEN: "support", CAPELLA_OVERRIDE_TOKEN: "override",
+    },
+    fetchSecret: noFetch,
+  });
+  assert.equal(resolved.internalSupportToken, "support");
+  assert.equal(resolved.overrideToken, "override");
 });

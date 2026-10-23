@@ -124,8 +124,11 @@ export interface ResolvedCbdinocluster {
   config: CbdinoclusterDef;
   onClusterExists: ClusterExistsPolicy;
   deployer?: string;
-  /** Present when this is a Capella cloud cluster. */
-  capella?: CapellaClusterSetup;
+  /**
+   * Present when this is a Capella cloud cluster. Its `environment` is dropped here: it is already
+   * folded into {@link ResolvedClusterPlan.capellaEnvironment}, which is the one value to read.
+   */
+  capella?: Omit<CapellaClusterSetup, "environment">;
 }
 
 export interface ResolvedClusterPlan {
@@ -135,6 +138,8 @@ export interface ResolvedClusterPlan {
   cluster?: SelectedCluster;
   cbdinocluster?: ResolvedCbdinocluster;
   sessions: ResolvedSessionPlan[];
+  /** The Capella environment this cluster runs against: its own `capella.environment`, else its instance's. */
+  capellaEnvironment: string;
 }
 
 export interface ResolvedInstancePlan {
@@ -197,6 +202,7 @@ export interface ResolvedFunctionalExecutionGroup {
   cbdinocluster?: ResolvedCbdinocluster;
   /** Where to get the cbdinocluster binary. Absent means latest release. */
   cbdinoclusterSource?: CbdinoclusterSource;
+  /** See {@link ResolvedClusterPlan.capellaEnvironment}. */
   capellaEnvironment: string;
   sessions: ResolvedSessionGroup[];
 }
@@ -215,6 +221,24 @@ export interface ResolvedSituationalExecutionGroup {
 }
 
 export type ResolvedExecutionGroup = ResolvedFunctionalExecutionGroup | ResolvedSituationalExecutionGroup;
+
+/** True for a Capella Analytics (cloud) cbdino cluster group (cbdino `columnar: true`, cloud deployer). */
+export function isCapellaAnalyticsGroup(group: ResolvedExecutionGroup): boolean {
+  return group.type === "functional" && group.cbdinocluster?.config.columnar === true && group.cbdinocluster.deployer === "cloud";
+}
+
+export function isCapellaGroup(group: ResolvedExecutionGroup): boolean {
+  return group.type === "functional" && group.cbdinocluster?.capella !== undefined;
+}
+
+/** Whether the group allocates on Capella, and so authenticates against its `capellaEnvironment`. */
+export function usesCapella(group: ResolvedExecutionGroup): boolean {
+  // CNG situational runs deploy via CAO/ROSA, not Capella. Check per-run (not group.cng, which is true
+  // if *any* run is CNG) so a group mixing CNG and non-CNG runs still counts.
+  return (group.type === "situational" && group.runs.some((run) => !run.cng)) ||
+    isCapellaAnalyticsGroup(group) ||
+    isCapellaGroup(group);
+}
 
 export function resolveDefinitionRefs(def: FitDefinition): FitDefinition {
   const clusterConfigMap = new Map((def.clusterConfigs ?? []).map((c) => [c.id, c]));
@@ -448,6 +472,11 @@ export function resolveCbdinocluster(cluster: ClusterLifetime): ResolvedCbdinocl
   if (!cluster.cbdinocluster) {
     return undefined;
   }
+  let capella: ResolvedCbdinocluster["capella"];
+  if (cluster.cbdinocluster.capella !== undefined) {
+    const { environment: _environment, ...rest } = cluster.cbdinocluster.capella;
+    capella = rest;
+  }
   return {
     config: cluster.cbdinocluster.config,
     onClusterExists: cluster.cbdinocluster.onClusterExists ?? DEFAULT_CLUSTER_EXISTS_POLICY,
@@ -455,7 +484,7 @@ export function resolveCbdinocluster(cluster: ClusterLifetime): ResolvedCbdinocl
     ...(cluster.cbdinocluster.deployer !== undefined || cluster.cbdinocluster.config.deployer !== undefined
       ? { deployer: cluster.cbdinocluster.deployer ?? cluster.cbdinocluster.config.deployer }
       : {}),
-    ...(cluster.cbdinocluster.capella !== undefined ? { capella: cluster.cbdinocluster.capella } : {}),
+    ...(capella !== undefined ? { capella } : {}),
   };
 }
 
@@ -563,7 +592,11 @@ function resolveRunWithPath(
   return { ...resolved, path: pathWithRun };
 }
 
-export function resolveCluster(cluster: ClusterLifetime, path: DefinitionRunPath): ResolvedClusterPlan {
+export function resolveCluster(
+  cluster: ClusterLifetime,
+  path: DefinitionRunPath,
+  instanceCapellaEnvironment: string,
+): ResolvedClusterPlan {
   const connection = resolveConnectionCluster(cluster.connection);
   const cbdinocluster = resolveCbdinocluster(cluster);
   const useExisting = cluster.useExisting !== undefined;
@@ -594,6 +627,7 @@ export function resolveCluster(cluster: ClusterLifetime, path: DefinitionRunPath
     ...(cbdinocluster ? { cbdinocluster } : {}),
     sessions: cluster.sessions.map((session, sessionIndex) =>
       resolveSession(session, { ...pathWithCluster, sessionIndex }, clusterMode === "connection")),
+    capellaEnvironment: cluster.cbdinocluster?.capella?.environment ?? instanceCapellaEnvironment,
   };
 }
 
@@ -623,16 +657,17 @@ export function resolveInstancePlan(
     cbdinoclusterInit = {};
   }
 
+  const capellaEnvironment = instance.setup?.capellaEnvironment ?? DEFAULT_CAPELLA_ENV;
   return {
     path,
     instance: resolvedInstance,
     clusters: instance.clusters.map((cluster, clusterIndex) =>
-      resolveCluster(cluster, { instanceIndex, clusterIndex, dirSegments: { instance: instanceSeg } })),
+      resolveCluster(cluster, { instanceIndex, clusterIndex, dirSegments: { instance: instanceSeg } }, capellaEnvironment)),
     ...(cbdinoclusterInit !== undefined ? { cbdinoclusterInit } : {}),
     ...(cbdinoclusterSource !== undefined ? { cbdinoclusterSource } : {}),
     clusterlessSessions: (instance.clusterlessSessions ?? []).map((session, sessionIndex) =>
       resolveSession(session, { instanceIndex, sessionIndex, clusterlessSession: true, dirSegments: { instance: instanceSeg } }, false)),
-    capellaEnvironment: instance.setup?.capellaEnvironment ?? DEFAULT_CAPELLA_ENV,
+    capellaEnvironment,
   };
 }
 
@@ -669,7 +704,7 @@ export function buildExecutionGroups(instances: ResolvedInstancePlan[]): Resolve
           }
         : {}),
       ...(instance.cbdinoclusterSource ? { cbdinoclusterSource: instance.cbdinoclusterSource } : {}),
-      capellaEnvironment: instance.capellaEnvironment,
+      capellaEnvironment: cluster.capellaEnvironment,
       sessions: cluster.sessions.map((session) => ({
         sdk: session.sdk,
         performerPort: session.performerPort,

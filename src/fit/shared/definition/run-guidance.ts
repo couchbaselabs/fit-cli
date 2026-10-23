@@ -3,9 +3,20 @@
  * user how to run it locally and how to push it to CI.
  */
 import { runDefinitionPrefix } from "../../../util/non-fit/fit-cli-log.js";
+import { CAPELLA_SANDBOX_ENV_VAR_GUIDANCE } from "../../util/config.js";
 
-export function definitionRunGuidance(definitionPath: string): string {
+export function definitionRunGuidance(definitionPath: string, targetsSandbox = false): string {
   const prefix = runDefinitionPrefix();
+  // A sandbox has no CI recipe on purpose: its API key and login are personal and short-lived, and we
+  // don't want them passed in as GitHub Actions inputs.
+  if (targetsSandbox) {
+    return (
+      `\nThis definition targets a Capella sandbox. Set its details in your environment, then run it from your own machine:\n` +
+      `    ${CAPELLA_SANDBOX_ENV_VAR_GUIDANCE}\n` +
+      `    ${prefix} ${definitionPath}\n` +
+      `\nIt runs on a clean cloud instance, not localhost, and isn't supported on CI.`
+    );
+  }
   const ciInstructions =
     `\nTo run on CI via https://github.com/couchbaselabs/fit-cli, either:\n` +
     `\n` +
@@ -27,6 +38,6 @@ export function definitionRunGuidance(definitionPath: string): string {
   );
 }
 
-export function printDefinitionRunGuidance(definitionPath: string): void {
-  console.log(definitionRunGuidance(definitionPath));
+export function printDefinitionRunGuidance(definitionPath: string, targetsSandbox = false): void {
+  console.log(definitionRunGuidance(definitionPath, targetsSandbox));
 }

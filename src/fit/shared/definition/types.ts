@@ -63,14 +63,17 @@ export interface CbdinoclusterSource {
 /**
  * Declares that this cluster should be created as a Capella cloud cluster via
  * cbdinocluster's `cloud` deployer. `cloudProvider` specifies where Capella
- * should deploy the underlying infrastructure; `environment` selects the
- * Capella control-plane (a key under `capella` in environments.json5 — e.g.
- * "dev", "stage"). fit-cli derives the cbdinocluster init args and deployer
- * from this block at runtime; neither needs to appear in the definition file.
+ * should deploy the underlying infrastructure. fit-cli derives the cbdinocluster
+ * init args and deployer from this block at runtime; neither needs to appear in
+ * the definition file.
  */
 export interface CapellaClusterSetup {
   cloudProvider: CapellaCloudProvider;
-  /** Capella environment to create this cluster in. Defaults to "dev". */
+  /**
+   * Overrides the instance's {@link InstanceSetup.capellaEnvironment} for this cluster.
+   * Normally left unset, so functional and situational definitions pick the environment
+   * in the same place.
+   */
   environment?: string;
   /**
    * Set up a private endpoint (AWS PrivateLink or GCP PSC) connection to this
@@ -108,7 +111,8 @@ export interface InstanceSetup {
    * Capella environment this instance's clusters are created in (a key under
    * `capella` in environments.json5 — e.g. "dev", "stage"). Lives here because
    * `cbdinocluster init` configures one `~/.cbdinocluster` (and so one Capella
-   * identity) per instance/box. Defaults to "dev".
+   * identity) per instance/box. Defaults to environments.json5's
+   * `defaultCapellaEnvironment`.
    */
   capellaEnvironment?: string;
 }

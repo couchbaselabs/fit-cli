@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { capellaDebugLinks, printCapellaPreflightInfo } from "../capella-debug-links.js";
+import { capellaDebugLinks, capellaUiUrl, printCapellaPreflightInfo } from "../capella-debug-links.js";
 import type { EnvironmentsFile } from "../../../fit/util/environments.js";
 
 const environments: EnvironmentsFile = {
@@ -35,9 +35,10 @@ const environments: EnvironmentsFile = {
     FUNCTIONAL_SET_RELEASE: "all",
   },
   capella: {
-    prod: { endpoint: "https://api.cloud.couchbase.com", oid: "62488bdd-d416-467e-84f7-fc7c1583a083" },
+    prod: { endpoint: "https://api.cloud.couchbase.com", v4Endpoint: "https://cloudapi.cloud.couchbase.com", oid: "62488bdd-d416-467e-84f7-fc7c1583a083" },
     dev: { endpoint: "https://api.dev.nonprod-project-avengers.com", oid: "6af08c0a-8cab-4c1c-b257-b521575c16d0" },
     noOid: { endpoint: "https://api.no-oid.example.com" },
+    sandbox: { sandbox: true },
   },
   results: {},
   awsTenants: {},
@@ -74,7 +75,7 @@ test("capellaDebugLinks returns undefined for an unconfigured environment", () =
   assert.equal(capellaDebugLinks("staging", uuid, environments), undefined);
 });
 
-test("printCapellaPreflightInfo logs environment, org id, endpoint and the org UI link", () => {
+test("printCapellaPreflightInfo logs environment, org id, both endpoints and the org UI link", () => {
   const lines: string[] = [];
   const original = console.log;
   console.log = (line: string) => lines.push(line);
@@ -87,6 +88,7 @@ test("printCapellaPreflightInfo logs environment, org id, endpoint and the org U
     "  Capella environment: prod",
     "  Capella org id: 62488bdd-d416-467e-84f7-fc7c1583a083",
     "  Capella endpoint: https://api.cloud.couchbase.com",
+    "  Capella v4 endpoint: https://cloudapi.cloud.couchbase.com",
     "  Capella UI (prod): https://cloud.couchbase.com/databases?oid=62488bdd-d416-467e-84f7-fc7c1583a083",
   ]);
 });
@@ -101,4 +103,41 @@ test("printCapellaPreflightInfo is a no-op for an unconfigured environment", () 
     console.log = original;
   }
   assert.deepEqual(lines, []);
+});
+
+/** A sandbox's control plane comes from the env, not the registry. */
+const sandboxEnv = (v4Endpoint: string, oid = "4c1d8e6a-0b2f-4a1e-9f3c-5d6e7a8b9c01") => ({ CAPELLA_V4_ENDPOINT: v4Endpoint, CAPELLA_OID: oid });
+const SANDBOX_ENV = sandboxEnv("https://cloudapi.sbx-25.sandbox.nonprod-project-avengers.com");
+
+test("capellaDebugLinks points a sandbox at the ui. and fm. hosts beside its v4 cloudapi. host", () => {
+  const links = capellaDebugLinks("sandbox", uuid, environments, SANDBOX_ENV);
+  assert.equal(
+    links?.capellaUiUrl,
+    "https://ui.sbx-25.sandbox.nonprod-project-avengers.com/databases?oid=4c1d8e6a-0b2f-4a1e-9f3c-5d6e7a8b9c01",
+  );
+  assert.equal(links?.fleetManagerUrl, `https://fm.sbx-25.sandbox.nonprod-project-avengers.com/clusters/${uuid}`);
+});
+
+test("capellaDebugLinks gives a sandbox the DataDog link for env:sandbox, as Capella tags its logs", () => {
+  assert.equal(
+    capellaDebugLinks("sandbox", uuid, environments, SANDBOX_ENV)?.datadogLogsUrl,
+    `https://app.datadoghq.com/logs?query=env%3Asandbox%20%40clusterId%3A${uuid}`,
+  );
+});
+
+test("capellaUiUrl gives no sandbox link when the v4 endpoint has no cloudapi. label to swap", () => {
+  // Better no link than one pointing at the control-plane API host.
+  assert.equal(capellaUiUrl("sandbox", environments, sandboxEnv("https://sbx-25.example.com")), undefined);
+  assert.equal(capellaDebugLinks("sandbox", uuid, environments, sandboxEnv("https://sbx-25.example.com")), undefined);
+});
+
+test("capellaUiUrl matches the sandbox label case-insensitively, canonicalising to lower case", () => {
+  const links = capellaDebugLinks("sandbox", uuid, environments, sandboxEnv("HTTPS://CLOUDAPI.sbx-25.example.com", "abc"));
+  assert.equal(links?.capellaUiUrl, "https://ui.sbx-25.example.com/databases?oid=abc");
+  // The Fleet Manager host is derived the same way, so an uppercase endpoint still resolves.
+  assert.equal(links?.fleetManagerUrl, `https://fm.sbx-25.example.com/clusters/${uuid}`);
+});
+
+test("capellaDebugLinks gives a sandbox no links until its CAPELLA_V4_ENDPOINT is set", () => {
+  assert.equal(capellaDebugLinks("sandbox", uuid, environments, {}), undefined);
 });

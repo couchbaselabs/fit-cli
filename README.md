@@ -137,6 +137,23 @@ When running locally, we use Capella creds from your fit-cli config.  Generally 
 When running on CI, the user chooses what Capella environment to use (stage, dev, etc.) and we use previously-setup accounts for those. 
 cbdinocluster's cloud deployer authenticates with a Capella v4 organization API key.  By default the shared per-environment key is read from AWS Secrets Manager; override it with CAPELLA_API_KEY / CAPELLA_API_SECRET (or `config edit`).  The v2 username/password are still used for custom image deploys, server version changes, and columnar operations.
 
+### Pre-deployed sandboxes
+`sandbox` is a pre-deployed Capella environment (see `fit sandbox deploy`).  It's recreated every few hours, so its URL, org id and accounts aren't stored anywhere: each run takes them from env vars.  Only its internal support and override tokens, which survive a redeploy, are kept in the `fit-cli/capella/sandbox` AWS secret.
+
+```sh
+export CAPELLA_ENVIRONMENT=sandbox
+export CAPELLA_V4_ENDPOINT=https://cloudapi.sbx-25.sandbox.nonprod-project-avengers.com
+export CAPELLA_OID=...
+export CAPELLA_API_KEY=... CAPELLA_API_SECRET=...   # v4 organization API key
+export CAPELLA_USER=... CAPELLA_PASS=...            # optional v2 login: custom server images, server version changes, columnar
+fit run preset op-capella-sit-sanity --performer java-fit-performer:main
+```
+
+`CAPELLA_ENVIRONMENT` points every run at the sandbox, including presets that pin `prod`.  A definition file can instead name `sandbox` itself (the wizard offers it), and then needs only the other vars.
+`CAPELLA_V4_ENDPOINT` takes any of the sandbox's URLs, e.g. the UI one `fit sandbox deploy` prints (`https://ui.sbx-25.…`), and derives the v4 URL from it.
+
+Sandbox runs need a cloud instance (a fresh or an existing EC2 one), as that's where fit-cli writes a cbdinocluster config for the run; on localhost it uses your own `~/.cbdinocluster`.  They intentionally aren't supported on CI, so these credentials never become GitHub Actions inputs.
+
 ## Capabilities
 Each performer declares what it supports — a set of "caps" — over the `performerCapsFetch` gRPC call.
 There are three independent cap enums: SDK, transactions, and the performer harness itself.
