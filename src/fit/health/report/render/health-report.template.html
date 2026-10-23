@@ -21,6 +21,7 @@
   --series-1: #2a78d6;
   --series-2: #eb6834;
   --good: #0a8a0a;
+  --pass-bg: #e3f4ea;
   --bad: #c23232;
   --warn-bg: #fdf3e1;
   --warn-ink: #7a4a00;
@@ -45,6 +46,7 @@
     --series-1: #3987e5;
     --series-2: #d95926;
     --good: #3cc23c;
+    --pass-bg: #173326;
     --bad: #ef7a7a;
     --warn-bg: #2f2616;
     --warn-ink: #f0c67a;
@@ -67,6 +69,7 @@
   --series-1: #3987e5;
   --series-2: #d95926;
   --good: #3cc23c;
+  --pass-bg: #173326;
   --bad: #ef7a7a;
   --warn-bg: #2f2616;
   --warn-ink: #f0c67a;
@@ -249,6 +252,17 @@ details.dormant summary:focus-visible { outline: 2px solid var(--series-1); outl
 .tag { font: 500 11px/1 var(--mono); color: var(--muted); margin-left: 6px; }
 footer { color: var(--muted); font-size: 12.5px; border-top: 1px solid var(--rule); padding-top: 16px; display: flex; flex-direction: column; gap: 6px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+/* A clean night (clean.ts): said in green, with a tick or in words, never by colour alone. */
+.clean-banner { display: flex; gap: 14px; align-items: center; background: var(--pass-bg); border: 1px solid color-mix(in srgb, var(--good) 35%, transparent); border-radius: 10px; padding: 14px 18px; margin-top: 16px; }
+.clean-banner .tick { flex: none; width: 34px; height: 34px; border-radius: 50%; background: var(--good); display: grid; place-items: center; }
+.clean-banner .tick svg { width: 18px; height: 18px; }
+.clean-banner .what { font-size: 17px; font-weight: 600; color: var(--ink); }
+.clean-banner .sub { font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.quiet { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; padding: 14px 20px; }
+.quiet b { color: var(--good); }
+.tl-tests.ok, .tl-tests.ok b { color: var(--good); }
+.legend .pass { background: var(--pass-bg); outline: 1px solid var(--good); }
+.lede .bad { color: var(--bad); }
 </style>
 
 <div class="wrap">
@@ -258,6 +272,7 @@ footer { color: var(--muted); font-size: 12.5px; border-top: 1px solid var(--rul
     <h1>__SDK_NAME__ FIT Health</h1>
     <p class="lede" id="lede"></p>
     <div class="meta" id="meta"></div>
+    <div id="clean-banner"></div>
   </header>
 
   <section aria-labelledby="h-night" id="night" hidden>
@@ -364,13 +379,22 @@ const byId = Object.fromEntries(D.series.map((s) => [s.id, s]));
 const usableNights = D.dates.filter((d) => FUNC.some((s) => s.perNight[d] != null));
 const redNights = usableNights.filter((d) => FUNC.some((s) => s.perNight[d] > 0));
 const nightsText = `<b class="num">${redNights.length}</b> of the <b class="num">${usableNights.length}</b> nights with usable results`;
-$('lede').innerHTML = !usableNights.length
+// Last night first: clean, or how many tests failed, before the window's record.
+const CLEAN = new Set(D.digest.cleanNights);
+const lastNightLede = (() => {
+  const f = D.digest.failedLastNight;
+  if (CLEAN.has(D.end)) return `<b>Last night (${fmt(D.end)}) was clean:</b> every functional test passed.`;
+  if (!f) return `Last night (${fmt(D.end)}) gave no usable results.`;
+  if (!f.total) return `Last night (${fmt(D.end)}) no test failed, but not every functional preset gave full results.`;
+  return `<b>Last night (${fmt(D.end)}), <span class="bad">${f.atLeast ? 'at least ' : ''}${f.total}</span> test${f.total === 1 ? '' : 's'} failed</b> (${f.bySeries.map((x) => `${x.n} ${esc(x.series)}`).join(' · ')}).`;
+})();
+$('lede').innerHTML = (usableNights.length ? `${lastNightLede} ` : '') + (!usableNights.length
   ? 'There are no usable functional results in this window yet.'
   : !redNights.length
     ? `The nightly FIT run was green on all <b class="num">${usableNights.length}</b> nights with usable results.`
     : redNights.length === usableNights.length
       ? `The nightly FIT run was red on all <b class="num">${usableNights.length}</b> nights with usable results, so "did it pass?" says nothing. What matters is <em>which</em> tests fail, whether that set is shrinking, and whether a failure is ours at all.`
-      : `The nightly FIT run was red on ${nightsText}. What matters is <em>which</em> tests fail, whether that set is shrinking, and whether a failure is ours at all.`;
+      : `The nightly FIT run was red on ${nightsText}. What matters is <em>which</em> tests fail, whether that set is shrinking, and whether a failure is ours at all.`);
 $('trend-prose').textContent = redNights.length && redNights.length === usableNights.length
   ? 'A green nightly would be zero. Every usable night in this window was red, so the useful signal is the size of this set and which way it moves.'
   : 'A green nightly would be zero. The size of this set, and which way it moves, is the signal.';
@@ -413,13 +437,23 @@ function lastNightStat() {
   return `<div class="stat" title="${esc(title)}"><span class="label">Failed last night</span><span class="big ${f.total ? 'bad' : 'good'}">${f.atLeast ? '≥ ' : ''}${f.total}</span><span class="split">${ran}</span><span class="split">${kinds}</span><span class="split">${split(f)}</span></div>`;
 }
 
+// ----- clean banner: last night, when every functional preset ran with full results and passed
+if (CLEAN.has(D.end) && DG.lastNight) {
+  const l = DG.lastNight;
+  $('clean-banner').innerHTML = `<div class="clean-banner" role="status">
+    <span class="tick" aria-hidden="true"><svg viewBox="0 0 18 18"><path d="M3.5 9.5 7.5 13.5 14.5 5" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+    <div><div class="what">Last night was clean</div>
+    <div class="sub">${fmt(D.end)}: all ${num(l.tests)} functional tests passed (${l.bySeries.map((x) => `${esc(x.series)} ${num(x.tests)}`).join(' · ')}) · ${num(l.skipped)} skipped</div></div>
+  </div>`;
+}
+
 // ----- summary
 const split = (c) => c.bySeries.map((x) => `${x.n} ${esc(x.series)}`).join(' · ');
 $('summary').innerHTML = lastNightStat() + [
   [`Started failing, last ${RECENT} days`, DG.started, 'bad'],
   [`Stopped failing, last ${RECENT} days`, DG.stopped, 'good'],
   [`Intermittent, last ${WIN} days`, DG.intermittent, ''],
-].map(([l, n, c]) => `<div class="stat"><span class="label">${l}</span><span class="big ${c}">${n.total}</span><span class="split">${split(n)}</span></div>`).join('');
+].map(([l, n, c]) => `<div class="stat"><span class="label">${l}</span><span class="big ${n.total ? c : ''}">${n.total}</span><span class="split">${split(n)}</span></div>`).join('');
 
 // ----- what changed
 const groups = DG.startedGroups;
@@ -483,6 +517,10 @@ $('stopped-running').innerHTML = DG.stoppedRunning.map((t) => `<li><div class="t
   <div class="sub"><span class="num">last ran ${fmt(t.lastRan)} (${RESULT[t.lastResult]}) · not run since ${fmt(t.since)}</span><span>${esc(t.where)}</span></div></li>`).join('');
 // .panel sets display, which would override the hidden attribute: remove the empty panel instead.
 if (!DG.stoppedRunning.length) $('panel-stopped-running').remove();
+// Nothing moved: one line, not empty boxes.
+if (!DG.startedGroups.length && !DG.stoppedTests.length && !DG.stoppedRunning.length) {
+  document.querySelector('#sec-changed .changes').outerHTML = `<div class="panel quiet"><b>✓ No change</b><span class="sub">Nothing started or stopped failing in the last ${RECENT} days.</span></div>`;
+}
 
 // ----- tooltip
 const tip = $('tip');
@@ -513,6 +551,9 @@ let markChartNight = () => {};
   let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Distinct failing tests per night, per functional preset">`;
   [...bad].forEach((d) => { const i = D.dates.indexOf(d); if (i < 0) return; const w = iw / Math.max(1, N - 1);
     svg += `<rect x="${x(i) - w / 2}" y="${m.t}" width="${w}" height="${ih}" fill="var(--cell-unknown)" opacity=".28"/>`; });
+  // A clean night is shaded green, so it reads as more than a line at zero.
+  CLEAN.forEach((d) => { const i = D.dates.indexOf(d); if (i < 0) return; const w = iw / Math.max(1, N - 1);
+    svg += `<rect x="${x(i) - w / 2}" y="${m.t}" width="${w}" height="${ih}" fill="var(--pass-bg)"/>`; });
   svg += `<g class="grid">`; for (let v = 0; v <= top; v += 5) svg += `<line x1="${m.l}" x2="${m.l + iw}" y1="${y(v)}" y2="${y(v)}"/>`; svg += `</g>`;
   svg += `<g class="axis">`; for (let v = 0; v <= top; v += 5) svg += `<text x="${m.l - 8}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
   D.dates.forEach((d, i) => { if (d.endsWith('-01')) svg += `<text x="${x(i)}" y="${H - 6}" text-anchor="middle">${fmt(d)}</text>`; });
@@ -540,7 +581,7 @@ let markChartNight = () => {};
   svg += `<line id="xh" x1="0" x2="0" y1="${m.t}" y2="${m.t + ih}" stroke="var(--ink-2)" stroke-width="1" opacity="0"/>`;
   svg += `<rect id="hit" x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent"/></svg>`;
   $('chart').innerHTML = svg;
-  $('legend').innerHTML = FUNC.map((s, i) => `<span><i style="background:${COLORS[i % COLORS.length]}"></i>${esc(s.label)}</span>`).join('') + `<span><i class="band"></i>No usable results that night</span>`;
+  $('legend').innerHTML = FUNC.map((s, i) => `<span><i style="background:${COLORS[i % COLORS.length]}"></i>${esc(s.label)}</span>`).join('') + `<span><i class="band"></i>No usable results that night</span><span><i class="pass"></i>Clean night: every functional preset passed</span>`;
   const el = $('chart').querySelector('svg'), hit = el.querySelector('#hit'), xh = el.querySelector('#xh');
   hit.addEventListener('mousemove', (e) => {
     const r = el.getBoundingClientRect();
@@ -552,6 +593,7 @@ let markChartNight = () => {};
       if (vals[si][i] == null) return `<span class="k">${esc(s.short)}:</span> no results`;
       const t = s.testCounts && s.testCounts[d];
       const of = t && t.tests != null ? ` of ${num(t.passed + t.failing)} run · ${num(t.skipped)} skipped` : '';
+      if (t && t.tests != null && vals[si][i] === 0) return `<span class="k">${esc(s.short)}:</span> <b>✓ all ${num(t.passed)} passed</b> · ${num(t.skipped)} skipped`;
       return `<span class="k">${esc(s.short)}:</span> <b>${vals[si][i]}</b> failing${of}`;
     }).join('<br>');
     showTip(`<b>${fmt(d)}</b><br>${rows}${commitOn(d) ? `<br><span class="k">commit</span> ${commitOn(d)}` : ''}`, e.clientX, e.clientY);
@@ -606,12 +648,16 @@ function lastSeen(s) {
   if (!last) return 'No results yet: every run in the window aborted.';
   return days > 7 ? `Not run since ${fmt(last)}.` : '';
 }
+// A suite's latest night was clean: full results, nothing failed.
+const suiteClean = (s) => s.latest.tests != null && s.latest.failing === 0 && s.perNight[s.latest.date] === 0;
 function suite(s) {
   const live = s.tests.filter((t) => t.cls !== 'dormant');
   const dormant = s.tests.filter((t) => t.cls === 'dormant');
   const note = [clusterText(s) && `cluster ${clusterText(s)}`, s.ran.length ? `first reported ${fmt(s.ran[0])}` : 'no results yet: every run in the window aborted'].filter(Boolean).join(' · ');
   return `<div class="tl-card">
-    <div class="tl-head"><h3>${esc(s.label)}</h3><span class="preset">${esc(s.preset)} · ${s.ran.length} nights reported · ${esc(note)}</span>${s.latest ? `<span class="tl-tests">${fmt(s.latest.date)}: ${testsLine(s.latest)}</span>` : ''}</div>
+    <div class="tl-head"><h3>${esc(s.label)}</h3><span class="preset">${esc(s.preset)} · ${s.ran.length} nights reported · ${esc(note)}</span>${s.latest ? (suiteClean(s)
+      ? `<span class="tl-tests ok">✓ ${fmt(s.latest.date)}: all <b>${num(s.latest.passed)}</b> passed · ${num(s.latest.skipped)} skipped</span>`
+      : `<span class="tl-tests">${fmt(s.latest.date)}: ${testsLine(s.latest)}</span>`) : ''}</div>
     ${live.length ? grid(s, live) : `<p class="sub" style="padding:14px 20px">No failures in the last ${WIN} days.</p>`}
     ${dormant.length ? `<details class="dormant"><summary>${dormant.length} more tests failed earlier but not in the last ${WIN} days</summary>${grid(s, dormant)}</details>` : ''}
   </div>`;
