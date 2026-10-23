@@ -14,6 +14,7 @@
  */
 import type { ReportSeries } from "./build-report.js";
 import type { TestClass } from "./classify.js";
+import { isCounted } from "./clean.js";
 import { addDays } from "./dates.js";
 import { layoutSections, overviewDays, placeSdk, type OverviewDay, type OverviewInput, type OverviewNight, type OverviewSection } from "./overview.js";
 import type { HealthOptIn } from "../registry/health-opt-ins.js";
@@ -107,7 +108,7 @@ export interface Weekly {
 }
 
 const isOn = (cls: TestClass, ...c: TestClass[]) => c.includes(cls);
-const functional = (r: WeeklyInput) => r.series.filter((s) => s.active && s.kind === "functional");
+const functional = (r: WeeklyInput) => r.series.filter(isCounted);
 type Test = WeeklyInput["series"][number]["tests"][number];
 
 /** Tests in a current failure run: always failing, failing, or failing their last 1-2 nights. */

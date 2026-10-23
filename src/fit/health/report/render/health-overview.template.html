@@ -20,6 +20,8 @@
   --fail: #d03b3b;
   --total: #2a78d6;
   --unknown: #b9c0ca;
+  --pass: #1a7f45;
+  --pass-bg: #e3f4ea;
   --shadow: 0 1px 2px rgba(22, 26, 32, .06);
   --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -36,6 +38,8 @@
     --fail: #e66767;
     --total: #3987e5;
     --unknown: #4a525e;
+    --pass: #4cc47e;
+    --pass-bg: #173326;
     --shadow: none;
   }
 }
@@ -50,6 +54,8 @@
   --fail: #e66767;
   --total: #3987e5;
   --unknown: #4a525e;
+  --pass: #4cc47e;
+  --pass-bg: #173326;
   --shadow: none;
 }
 
@@ -106,21 +112,37 @@ svg text { font: 10px var(--mono); fill: var(--muted); }
 #tip .d { font-weight: 500; }
 #tip .f { color: var(--fail); }
 #tip .n { color: var(--muted); }
+#tip .p { color: var(--pass); }
+/* A clean night: said in green, with a tick or in words. A state dot names its state on hover and to
+   screen readers, and the summary above the charts says it in words. */
+.latest.ok, .latest.ok b { color: var(--pass); }
+.state { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; }
+.state.clean { background: var(--pass); }
+.state.failing { background: var(--fail); }
+.state.none { background: var(--unknown); }
+.summary { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 6px; box-shadow: var(--shadow); }
+.summary .head { font-size: 16px; font-weight: 600; }
+.summary .line { font-size: 14px; color: var(--ink-2); }
+.summary .clean { color: var(--pass); font-weight: 600; }
+.summary .failing { color: var(--fail); font-weight: 600; }
+.summary .none { color: var(--muted); font-weight: 600; }
 </style>
 
 <div class="wrap">
   <header>
     <h1>FIT Health</h1>
-    <p class="lede">Each SDK's nightly FIT runs over the last <span id="win">30</span> days, every environment added together, counted in tests (<code>Class.method</code>) rather than test cases. There is a row per language: its Couchbase SDK, then its Operational Insights and Columnar SDKs. Each chart has its own scales, so do not compare the heights of two charts. Select an SDK's name to open its report, or a night on its chart to open the report at that night.</p>
+    <p class="lede">Each SDK's nightly FIT runs over the last <span id="win">30</span> days, its functional presets added together, counted in tests (<code>Class.method</code>) rather than test cases. There is a row per language: its Couchbase SDK, then its Operational Insights and Columnar SDKs. Each chart has its own scales, so do not compare the heights of two charts. Select an SDK's name to open its report, or a night on its chart to open the report at that night.</p>
     <p class="meta" id="meta"></p>
   </header>
   <div class="key">
     <span><i class="sw" style="background:var(--fail)"></i>Failing tests (left scale)</span>
     <span><i class="sw line" style="background:var(--total)"></i>Tests run: passed + failing (right scale)</span>
     <span><i class="sw" style="background:var(--unknown)"></i>Nightly ran but gave no results</span>
+    <span><i class="sw" style="background:var(--pass-bg);outline:1px solid var(--pass)"></i>Clean night: full results, nothing failing</span>
   </div>
+  <div id="summary"></div>
   <div class="panels" id="panels"></div>
-  <p class="note">A night with no nightly run has no bar, and the line drops to 0. A night whose nightly ran but gave no results - every run aborted, or its log could not be read - is shaded, and the line breaks; open the night for the reason and the CI run. Where a run left only its CI log, its failures are counted but its passes are unknown, so the line breaks for that night. The two scales are independent: where the line meets a bar means nothing.</p>
+  <p class="note">A night with no nightly run has no bar, and the line drops to 0. A night whose nightly ran but gave no results - every run aborted, or its log could not be read - is shaded, and the line breaks; open the night for the reason and the CI run. Where a run left only its CI log, its failures are counted but its passes are unknown, so the line breaks for that night. The two scales are independent: where the line meets a bar means nothing. A clean night - every functional preset ran, with full results, and nothing failed (skipped tests don't count against it) - is shaded green. The situational presets (the Capella scenarios) are not counted here: they are on each SDK's page.</p>
 </div>
 <div id="tip" hidden></div>
 
@@ -166,6 +188,7 @@ function showTip(e, s, i) {
   else if (day === "aborted") body = `<div class="f">The nightly aborted</div><div class="n">No results</div>`;
   else if (day === "unreadable") body = `<div class="f">The nightly's log could not be read</div><div class="n">No results</div>`;
   else if (day === "unreported") body = `<div class="n">Not in this SDK's report</div>`;
+  else if (day.clean) body = `<div class="p">✓ All ${fmt(day.passed)} passed</div><div>${fmt(day.skipped)} skipped</div><div class="n">${day.runs} environment run${day.runs === 1 ? "" : "s"}</div>`;
   else body = `<div class="f">${fmt(day.failing)} failing</div><div>${fmt(day.passed)} passed</div><div>${fmt(day.skipped)} skipped</div>`
     + `<div class="n">${day.runs} environment run${day.runs === 1 ? "" : "s"}${day.logOnly ? `, ${day.logOnly} log only (passes unknown)` : ""}</div>`;
   const open = day === "unreported" ? "" : `<div class="n">Click to open this night</div>`;
@@ -197,9 +220,11 @@ function chart(s, link, W) {
   el("text", { x: L, y: -5 }, g).textContent = "failing";
   el("text", { x: W - R, y: -5, "text-anchor": "end" }, g).textContent = "tests run";
   const hl = el("rect", { y: 0, width: step, height: H, fill: "var(--ink)", opacity: 0 }, g);
-  // A night that ran but gave no results is shaded, so it doesn't read as a quiet night.
+  // A night that ran but gave no results is shaded, so it doesn't read as a quiet night; a clean
+  // night is shaded green, so it reads as more than no bar.
   s.days.forEach((d, i) => {
     if (d === "aborted" || d === "unreadable") el("rect", { x: L + i * step + 1, y: 0, width: bw, height: H, fill: "var(--unknown)", opacity: 0.45 }, g);
+    else if (typeof d === "object" && d.clean) el("rect", { x: L + i * step + 1, y: 0, width: bw, height: H, fill: "var(--pass-bg)" }, g);
   });
   s.days.forEach((d, i) => {
     if (typeof d !== "object") return;
@@ -258,18 +283,25 @@ function drawAt(s, link) {
   draw();
 }
 
+// How an SDK's own latest night went (overview.ts: state).
+const STATE = { clean: "Clean last night", failing: "Tests failed last night", none: "No full results last night" };
+const productLabel = (s) => (s.product === "SDK" ? `${s.name} SDK` : s.name);
+
 function panel(s) {
   const p = document.createElement("section");
   p.className = "panel";
   // The accessible name must contain the visible label (WCAG 2.5.3): "Java SDK", "Java Operational Insights".
-  const label = s.product === "SDK" ? `${s.name} SDK` : s.name;
-  const title = `<h4><a href="${encodeURIComponent(s.sdk)}/" aria-label="${esc(label)}">${esc(s.product)}</a></h4>`;
+  const label = productLabel(s);
+  const state = s.missing ? "" : `<i class="state ${s.state}" role="img" aria-label="${STATE[s.state]}" title="${STATE[s.state]}"></i>`;
+  const title = `<h4>${state}<a href="${encodeURIComponent(s.sdk)}/" aria-label="${esc(label)}">${esc(s.product)}</a></h4>`;
   if (s.missing) {
     p.innerHTML = `<div class="panel-head">${title}</div><p class="missing">No report data to chart. Open the SDK's page.</p>`;
     return p;
   }
   const l = s.latest;
-  const latest = l
+  const latest = l && l.clean
+    ? `<span class="latest ok">✓ ${longDate(l.date, { month: "short", day: "numeric" })}: all <b>${fmt(l.passed)}</b> passed · ${fmt(l.skipped)} skipped</span>`
+    : l
     ? `<span class="latest">${longDate(l.date, { month: "short", day: "numeric" })}: <b class="f">${fmt(l.failing)}</b> failing of <b>${fmt(l.passed + l.failing)}</b> run · ${fmt(l.skipped)} skipped${l.logOnly ? ` · ${l.logOnly} log only` : ""}</span>`
     : `<span class="latest">no nights</span>`;
   // An SDK whose nightly runs later in the day ends a night earlier than the rest: that's not stale.
@@ -322,6 +354,20 @@ for (const sec of D.sections) {
   }
   for (const r of sec.rows) box.appendChild(row(r, sec.title ? "h3" : "h2"));
   host.appendChild(box);
+}
+// What the latest nights came to, before any chart. Each SDK's own latest night: one whose
+// nightly runs later in the day is a night behind the rest.
+{
+  const by = { clean: [], failing: [], none: [] };
+  for (const s of D.sdks) by[s.state].push(s);
+  const names = (a) => a.map((s) => esc(productLabel(s))).join(", ");
+  const count = (k, text) => `<span class="${k}">${k === "clean" ? "✓ " : ""}${by[k].length} ${text}</span>`;
+  if (D.sdks.length) document.getElementById("summary").innerHTML = `<div class="summary">
+    <div class="head">Latest nights: ${[count("clean", "clean"), by.failing.length && count("failing", "failing"), by.none.length && count("none", "with no full results")].filter(Boolean).join(" · ")} <span class="meta">of ${D.sdks.length}</span></div>
+    ${by.clean.length ? `<div class="line"><span class="clean">Clean:</span> ${names(by.clean)}</div>` : ""}
+    ${by.failing.length ? `<div class="line"><span class="failing">Failing:</span> ${by.failing.map((s) => `${esc(productLabel(s))} (${fmt(s.latest.failing)})`).join(", ")}</div>` : ""}
+    ${by.none.length ? `<div class="line"><span class="none">No full results:</span> ${names(by.none)}</div>` : ""}
+  </div>`;
 }
 // Draw once every panel is in the page, so each chart knows its width.
 for (const d of draws) d();
