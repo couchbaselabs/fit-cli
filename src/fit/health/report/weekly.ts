@@ -9,13 +9,14 @@
  * in the same place and nothing reads as a ranking.
  *
  * Failing is one set: the tests in a current failure run at a week's end (always failing,
- * failing, or new), in the active functional series. Flaky is apart from it: intermittent tests
+ * failing, or new), in the counted series (clean.ts). Flaky is apart from it: intermittent tests
  * that failed during the week.
  */
 import type { ReportSeries } from "./build-report.js";
 import type { TestClass } from "./classify.js";
+import { isCounted } from "./clean.js";
 import { addDays } from "./dates.js";
-import { layoutSections, nightTotals, overviewDays, placeSdk, type OverviewDay, type OverviewInput, type OverviewNight, type OverviewSection } from "./overview.js";
+import { layoutSections, overviewDays, placeSdk, type OverviewDay, type OverviewInput, type OverviewNight, type OverviewSection } from "./overview.js";
 import { seriesBaseId } from "./series.js";
 import type { HealthOptIn } from "../registry/health-opt-ins.js";
 
@@ -82,9 +83,8 @@ export interface WeeklyCard {
   reported: boolean;
   /** The week's 7 nights, Monday first. */
   days: OverviewDay[];
+  /** Nights with results in the counted series (clean.ts): with none, the SDK has no state for the week. */
   nightsWithResults: number;
-  /** Nights with functional results: with none, the SDK has no state for the week, whatever else ran. */
-  functionalNights: number;
   /** Failing at this week's end and not last week's. */
   newlyFailing: WeeklyTest[];
   /** Failing at last week's end and not this week's: passing again, or `why` not. */
@@ -112,7 +112,7 @@ export interface Weekly {
 }
 
 const isOn = (cls: TestClass, ...c: TestClass[]) => c.includes(cls);
-const functional = (r: WeeklyInput) => r.series.filter((s) => s.active && s.kind === "functional");
+const counted = (r: WeeklyInput) => r.series.filter(isCounted);
 type Test = WeeklyInput["series"][number]["tests"][number];
 
 /** Tests in a current failure run: always failing, failing, or failing their last 1-2 nights. */
@@ -130,7 +130,7 @@ export function seriesKeys(now: WeeklyInput, before: WeeklyInput | undefined): S
   if (!before) return (id) => id;
   const split = (r: WeeklyInput) => {
     const out = new Map<string, boolean>();
-    for (const s of functional(r)) out.set(seriesBaseId(s.id), out.get(seriesBaseId(s.id)) || s.id !== seriesBaseId(s.id));
+    for (const s of counted(r)) out.set(seriesBaseId(s.id), out.get(seriesBaseId(s.id)) || s.id !== seriesBaseId(s.id));
     return out;
   };
   const a = split(now);
@@ -142,7 +142,7 @@ export function seriesKeys(now: WeeklyInput, before: WeeklyInput | undefined): S
 /** The tests failing at the end of `r`, keyed by series and test. */
 export function failingAtEnd(r: WeeklyInput, key: SeriesKey = (id) => id): Map<string, { s: WeeklyInput["series"][number]; t: Test }> {
   const out = new Map<string, { s: WeeklyInput["series"][number]; t: Test }>();
-  for (const s of functional(r)) for (const t of s.tests) if (isFailingAtEnd(t)) out.set(`${key(s.id)}\n${t.test}`, { s, t });
+  for (const s of counted(r)) for (const t of s.tests) if (isFailingAtEnd(t)) out.set(`${key(s.id)}\n${t.test}`, { s, t });
   return out;
 }
 
@@ -180,7 +180,7 @@ export function weekChanges(now: WeeklyInput, before: WeeklyInput | undefined, w
   }
   if (!was) return out;
   const tests = new Map<string, Test>();
-  for (const s of functional(now)) {
+  for (const s of counted(now)) {
     for (const t of s.tests) {
       const k = `${key(s.id)}\n${t.test}`;
       const had = tests.get(k);
@@ -208,7 +208,7 @@ export function typicalTestsRun(days: readonly OverviewDay[]): number | undefine
 
 /** The intermittent tests that failed during `week`, at the end of `r`. */
 export function flakyIn(r: WeeklyInput, week: IsoWeek): WeeklyTest[] {
-  return functional(r).flatMap((s) =>
+  return counted(r).flatMap((s) =>
     s.tests
       .filter((t) => t.cls === "intermittent" && t.lastFail && t.lastFail >= week.start && t.lastFail <= week.end)
       .map((t) => ({ test: t.test, series: s.id, where: s.short, last: t.lastFail })),
@@ -226,15 +226,12 @@ export function buildWeekly(
   const cards = sdks.map(({ sdk, name, current, previous }): WeeklyCard => {
     const days = current ? overviewDays(current, dates) : dates.map((): OverviewDay => "unreported");
     const nightsWithResults = days.filter((d) => typeof d !== "string").length;
-    // `failing`, its scale and the SDK's state come from the functional runs; the night strip shows them all.
-    const functionalDays = current ? overviewDays(current, dates, nightTotals(functional(current))) : [];
-    const functionalNights = functionalDays.filter((d) => typeof d !== "string").length;
     const key = current ? seriesKeys(current, previous) : undefined;
     const changes: WeekChanges = current ? weekChanges(current, previous, week, key) : { newlyFailing: [], noLongerFailing: [] };
     const failing = current ? failingAtEnd(current, key).size : 0;
     const failingBefore = previous ? failingAtEnd(previous, key).size : undefined;
     const moved = changes.newlyFailing.length + changes.noLongerFailing.length;
-    const testsRun = current ? typicalTestsRun(functionalDays) : undefined;
+    const testsRun = current ? typicalTestsRun(days) : undefined;
     return {
       sdk,
       name,
@@ -242,7 +239,6 @@ export function buildWeekly(
       reported: !!current,
       days,
       nightsWithResults,
-      functionalNights,
       ...changes,
       flaky: current ? flakyIn(current, week) : [],
       failing,

@@ -37,6 +37,8 @@ function report(sdk: string, failing: boolean): HealthReport {
         kind: "functional",
         active: true,
         tests,
+        ran: ["2026-10-02"],
+        perNight: { "2026-10-02": failing ? 1 : 0 },
         testCounts: { "2026-10-02": { testCases: 10, tests: 10, passed: failing ? 9 : 10, failing: failing ? 1 : 0, skipped: 0 } },
       },
     ],

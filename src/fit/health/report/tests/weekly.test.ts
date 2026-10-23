@@ -27,7 +27,7 @@ function report(end: string, tests: ReportTest[], testCounts: Record<string, Nig
     sdk: "go",
     start: "2026-07-01",
     end,
-    series: [{ id: "func", short: "on-prem", kind: "functional", active: true, tests, testCounts, aborted: [], ...more }],
+    series: [{ id: "func", short: "on-prem", kind: "functional", active: true, ran: Object.keys(testCounts).sort(), perNight: {}, tests, testCounts, aborted: [], ...more }],
   };
 }
 
@@ -124,6 +124,8 @@ function clusters(end: string, byCluster: Record<string, ReportTest[]>): WeeklyI
     short: cluster ? `on-prem ${cluster}` : "on-prem",
     kind: "functional" as const,
     active: true,
+    ran: [],
+    perNight: {},
     tests,
     testCounts: {},
     aborted: [],
@@ -160,7 +162,7 @@ test("a preset split by cluster in both weeks keeps its clusters apart", () => {
 });
 
 test("tests run is the median night's, over JUnit nights only", () => {
-  const night = (date: string, passed: number, logOnly = 0) => ({ date, passed, failing: 1, skipped: 5, runs: 1, logOnly });
+  const night = (date: string, passed: number, logOnly = 0) => ({ date, passed, failing: 1, skipped: 5, runs: 1, logOnly, clean: false });
   assert.equal(typicalTestsRun([night("a", 100), night("b", 300), night("c", 200), "none", night("d", 999, 1)]), 201);
   assert.equal(typicalTestsRun(["none", "aborted"]), undefined);
 });
@@ -171,19 +173,19 @@ test("tests run counts the functional runs only, like failing", () => {
   const logOnly = { "2026-10-19": { testCases: 0, failing: 3 }, "2026-10-20": { testCases: 0, failing: 3 }, "2026-10-21": { testCases: 0, failing: 3 } } as Record<string, NightTests>;
   for (const counts of [big, logOnly]) {
     const now = report("2026-10-25", [], week);
-    now.series.push({ id: "sit", short: "capella", kind: "situational", active: true, tests: [], testCounts: counts, aborted: [] });
+    now.series.push({ id: "sit", short: "capella", kind: "situational", active: true, ran: Object.keys(counts), perNight: {}, tests: [], testCounts: counts, aborted: [] });
     const c = buildWeekly([{ sdk: "go", name: "Go", current: now }], W43).cards[0];
     assert.equal(c.testsRun, 102);
-    assert.equal(c.nightsWithResults, 3, "the night strip still shows every run");
+    assert.equal(c.nightsWithResults, 3);
   }
 });
 
-test("functional nights count the functional runs only: the SDK's state needs them", () => {
+test("an SDK whose functional runs gave no results is not clean, whatever else ran", () => {
   const now = report("2026-10-25", [], {}, { aborted: [{ date: "2026-10-19" } as never] });
-  now.series.push({ id: "sit", short: "capella", kind: "situational", active: true, tests: [], testCounts: { "2026-10-20": full(50, 0, 0) }, aborted: [] });
+  now.series.push({ id: "sit", short: "capella", kind: "situational", active: true, ran: ["2026-10-20"], perNight: {}, tests: [], testCounts: { "2026-10-20": full(50, 0, 0) }, aborted: [] });
   const c = buildWeekly([{ sdk: "go", name: "Go", current: now }], W43).cards[0];
-  assert.equal(c.nightsWithResults, 1);
-  assert.equal(c.functionalNights, 0);
+  // Only the counted series (clean.ts) give the night strip results.
+  assert.equal(c.nightsWithResults, 0);
 });
 
 test("flaky is the intermittent tests that failed during the week, apart from failing", () => {
