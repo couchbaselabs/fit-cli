@@ -56,8 +56,9 @@ const DEFAULT_RESULTS_DB_USERNAME = "postgres";
 
 /** The env vars a sandbox Capella run takes everything from (see resolveSandboxCapellaConfig). */
 export const CAPELLA_SANDBOX_ENV_VAR_GUIDANCE =
-  "export CAPELLA_V4_ENDPOINT=https://cloudapi.<sbx-id>.sandbox.nonprod-project-avengers.com CAPELLA_OID=...   # its ui. or api. URL works too\n" +
-  "    export CAPELLA_API_KEY=... CAPELLA_API_SECRET=...   # v4 organization API key\n" +
+  "export CAPELLA_V4_ENDPOINT=https://ui.<sbx-id>.sandbox.nonprod-project-avengers.com   # any of its URLs, e.g. the one `fit sandbox deploy` prints\n" +
+  "    export CAPELLA_OID=...                              # the oid= in its UI URL\n" +
+  "    export CAPELLA_API_KEY=... CAPELLA_API_SECRET=...   # a v4 organization API key, created in its UI\n" +
   "    export CAPELLA_USER=... CAPELLA_PASS=...            # optional v2 login: custom server images, server version changes, columnar";
 
 export const FIT_CLI_CONFIG_VERSION = 1;

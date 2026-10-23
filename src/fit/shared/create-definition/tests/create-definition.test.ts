@@ -12,7 +12,8 @@ test("definitionRunGuidance names the sandbox env vars only when the definition 
   assert.match(sandbox, /Capella sandbox/);
   assert.match(sandbox, /CAPELLA_V4_ENDPOINT=.*CAPELLA_OID=.*CAPELLA_API_SECRET.*CAPELLA_USER.*optional v2 login/s);
   assert.ok(!sandbox.includes("gh workflow run"), "sandbox guidance must not offer the CI recipe");
-  assert.match(sandbox, /intentionally aren't supported on CI/);
+  assert.match(sandbox, /definition fit\.json5\n/, "sandbox guidance gives the command to run it");
+  assert.match(sandbox, /not localhost, and isn't supported on CI/);
 });
 
 const NODES = [{ count: 1, version: "8.1.0-2188", services: ["kv"] }];

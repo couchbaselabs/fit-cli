@@ -7,32 +7,32 @@ import { CAPELLA_SANDBOX_ENV_VAR_GUIDANCE } from "../../util/config.js";
 
 export function definitionRunGuidance(definitionPath: string, targetsSandbox = false): string {
   const prefix = runDefinitionPrefix();
-  const sandboxNote = targetsSandbox
-    ? `\nThis definition targets a Capella sandbox — set its control plane and accounts in your environment before running:\n` +
-      `    ${CAPELLA_SANDBOX_ENV_VAR_GUIDANCE}\n`
-    : "";
-  // Deliberately not offered for a sandbox: its API key and login are personal and short-lived, and we
-  // don't want them passed in as GitHub Actions inputs, so fit-cli.yaml has no way to take them.
-  const ciInstructions = targetsSandbox
-    ? `\nSandbox runs intentionally aren't supported on CI: a sandbox's credentials are personal and short-lived,\n` +
-      `and GitHub Actions inputs are no place for them. Start the run from your own machine instead (it still\n` +
-      `runs on a clean cloud instance).`
-    : `\nTo run on CI via https://github.com/couchbaselabs/fit-cli, either:\n` +
-      `\n` +
-      `  Option A — upload as a gist:\n` +
-      `    GIST_URL=$(gh gist create ${definitionPath} --desc "fit-cli FIT definition")\n` +
-      `    echo "Gist: $GIST_URL"\n` +
-      `    gh workflow run fit-cli.yaml --repo couchbaselabs/fit-cli --field definitionFile="\${GIST_URL/gist.github.com/gist.githubusercontent.com}/raw"\n` +
-      `\n` +
-      `  Option B — pass the file contents inline as base64 (no gist needed):\n` +
-      `    gh workflow run fit-cli.yaml --repo couchbaselabs/fit-cli \\\n` +
-      `      --field definitionBase64="$(base64 -w 0 ${definitionPath})"`;
+  // A sandbox has no CI recipe on purpose: its API key and login are personal and short-lived, and we
+  // don't want them passed in as GitHub Actions inputs.
+  if (targetsSandbox) {
+    return (
+      `\nThis definition targets a Capella sandbox. Set its details in your environment, then run it from your own machine:\n` +
+      `    ${CAPELLA_SANDBOX_ENV_VAR_GUIDANCE}\n` +
+      `    ${prefix} ${definitionPath}\n` +
+      `\nIt runs on a clean cloud instance, not localhost, and isn't supported on CI.`
+    );
+  }
+  const ciInstructions =
+    `\nTo run on CI via https://github.com/couchbaselabs/fit-cli, either:\n` +
+    `\n` +
+    `  Option A — upload as a gist:\n` +
+    `    GIST_URL=$(gh gist create ${definitionPath} --desc "fit-cli FIT definition")\n` +
+    `    echo "Gist: $GIST_URL"\n` +
+    `    gh workflow run fit-cli.yaml --repo couchbaselabs/fit-cli --field definitionFile="\${GIST_URL/gist.github.com/gist.githubusercontent.com}/raw"\n` +
+    `\n` +
+    `  Option B — pass the file contents inline as base64 (no gist needed):\n` +
+    `    gh workflow run fit-cli.yaml --repo couchbaselabs/fit-cli \\\n` +
+    `      --field definitionBase64="$(base64 -w 0 ${definitionPath})"`;
 
   return (
-    sandboxNote +
     `\nRun it later with:\n` +
     `  ${prefix} --interactive ${definitionPath}\n` +
-    `\nOr non-interactively${targetsSandbox ? "" : " (e.g. on CI)"}, taking the default answer to every prompt:\n` +
+    `\nOr non-interactively (e.g. on CI), taking the default answer to every prompt:\n` +
     `  ${prefix} ${definitionPath}` +
     ciInstructions
   );
