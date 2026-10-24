@@ -10,6 +10,7 @@ import {
   buildSituationalConfiguration,
   DEFAULT_CAPELLA_CLUSTER_VERSION,
   DEFAULT_CBDINO_SETTINGS,
+  SITUATIONAL_SERVER_LOGS_DEST_PATH,
 } from "../build-situational-configuration.js";
 
 test("the config carries the auto-generated marker and performer port", () => {
@@ -45,6 +46,7 @@ test("the cbdino and files blocks are merged under situational", () => {
     cbdino: {
       version: "7.2",
       cbDinoClusterAppPath: "/opt/cbdinocluster",
+      downloadServerLogsDestPath: SITUATIONAL_SERVER_LOGS_DEST_PATH,
       enablePrivateEndpoint: true,
     },
     files: { outputDirectory: "results" },
@@ -79,6 +81,7 @@ test("a gcp deployer and region are forwarded into the cbdino block", () => {
     cbdino: {
       version: "8.0",
       cbDinoClusterAppPath: "cbdinocluster",
+      downloadServerLogsDestPath: SITUATIONAL_SERVER_LOGS_DEST_PATH,
       enablePrivateEndpoint: true,
       deployer: "gcp",
       region: "us-west1",
@@ -91,7 +94,10 @@ test("cbdino settings default to a DEFAULT_CAPELLA_CLUSTER_VERSION cluster on th
   const config = buildSituationalConfiguration() as {
     situational: { cbdino: typeof DEFAULT_CBDINO_SETTINGS };
   };
-  assert.deepEqual(config.situational.cbdino, DEFAULT_CBDINO_SETTINGS);
+  assert.deepEqual(config.situational.cbdino, {
+    ...DEFAULT_CBDINO_SETTINGS,
+    downloadServerLogsDestPath: SITUATIONAL_SERVER_LOGS_DEST_PATH,
+  });
   assert.equal(config.situational.cbdino.version, DEFAULT_CAPELLA_CLUSTER_VERSION);
 });
 
