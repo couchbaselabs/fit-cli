@@ -15,7 +15,7 @@
 import type { ReportSeries } from "./build-report.js";
 import type { TestClass } from "./classify.js";
 import { addDays } from "./dates.js";
-import { layoutSections, overviewDays, placeSdk, type OverviewDay, type OverviewInput, type OverviewNight, type OverviewSection } from "./overview.js";
+import { layoutSections, nightTotals, overviewDays, placeSdk, type OverviewDay, type OverviewInput, type OverviewNight, type OverviewSection } from "./overview.js";
 import type { HealthOptIn } from "../registry/health-opt-ins.js";
 
 /** An ISO week: `2026-W43`, its Monday and its Sunday. */
@@ -63,6 +63,8 @@ export interface WeeklyTest {
   /** Newly failing: the first night of its current failure run, and how many nights it has failed. */
   since?: string;
   nights?: number;
+  /** Newly failing, but passing again: the clean nights since, too few yet to leave the set. */
+  passedLast?: number;
   /** Newly failing, and it never passed: new to the run. */
   neverPassed?: boolean;
   /** No longer failing, or flaky: the last night it failed. */
@@ -135,7 +137,18 @@ export function weekChanges(now: WeeklyInput, before: WeeklyInput | undefined, w
   const out: WeekChanges = { newlyFailing: [], noLongerFailing: [] };
   for (const [key, { s, t }] of is) {
     if (was ? was.has(key) : !(t.since && !t.sinceFirstNight && t.since >= week.start)) continue;
-    out.newlyFailing.push({ test: t.test, series: s.id, where: s.short, since: t.since, nights: t.streak, ...(t.lastGood ? {} : { neverPassed: true }) });
+    // A long run followed by 1-2 clean nights is still failing, with no trailing streak: give
+    // the run's length, and the clean nights since.
+    const passing = !t.streak && t.cleanTail > 0;
+    out.newlyFailing.push({
+      test: t.test,
+      series: s.id,
+      where: s.short,
+      since: t.since,
+      nights: passing ? (t.lastEpisode?.nights ?? t.windowFails) : t.streak,
+      ...(passing ? { passedLast: t.cleanTail } : {}),
+      ...(t.lastGood ? {} : { neverPassed: true }),
+    });
   }
   if (!was) return out;
   const tests = new Map<string, Test>(functional(now).flatMap((s) => s.tests.map((t): [string, Test] => [`${s.id}\n${t.test}`, t])));
@@ -182,7 +195,8 @@ export function buildWeekly(
     const failing = current ? failingAtEnd(current).size : 0;
     const failingBefore = previous ? failingAtEnd(previous).size : undefined;
     const moved = changes.newlyFailing.length + changes.noLongerFailing.length;
-    const testsRun = typicalTestsRun(days);
+    // The scale for `failing`, so from the same functional runs; the night strip shows them all.
+    const testsRun = current ? typicalTestsRun(overviewDays(current, dates, nightTotals(functional(current)))) : undefined;
     return {
       sdk,
       name,

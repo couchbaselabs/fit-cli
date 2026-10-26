@@ -9,7 +9,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { readWeeks, writeIndex, writeWeek } from "../weekly-command.js";
+import { readWeeks, reportsAt, writeIndex, writeWeek } from "../weekly-command.js";
 import { buildWeekly, isoWeek, isoWeekById, type WeekEntry } from "../weekly.js";
 
 const dirs: string[] = [];
@@ -69,4 +69,20 @@ test("a directory that isn't a week, or a week with no data, is left out of the 
   writeFileSync(join(dir, "notes.txt"), "x");
   rmSync(join(dir, "2026-W43", "week.json"));
   assert.deepEqual(readWeeks(dir), []);
+});
+
+test("an SDK whose every log was unreadable still reports, so its nights show as unreadable", () => {
+  const manifest = {
+    schema: 1 as const,
+    sdk: "go",
+    runId: 7,
+    runAttempt: 1,
+    date: "2026-10-21",
+    ci: { repo: "r", runId: 7, runAttempt: 1 },
+    status: "fetch_failed" as const,
+    records: [],
+  };
+  const r = reportsAt(["go", [], [manifest], {}], ["2026-10-25"]).get("2026-10-25");
+  assert.deepEqual(r?.source.unreadableRuns.map((u) => [u.date, u.status]), [["2026-10-21", "fetch_failed"]]);
+  assert.equal(reportsAt(["go", [], [], {}], ["2026-10-25"]).get("2026-10-25"), undefined);
 });

@@ -102,6 +102,14 @@ function reportAt(sdk: string, data: Parameters<typeof buildHealthReport>, end: 
   return report.dates.length ? report : undefined;
 }
 
+/**
+ * An SDK's report as of each of `ends`. One with no records but manifests (every log unreadable)
+ * still reports, so its nights show as unreadable, not as no data.
+ */
+export function reportsAt(data: Parameters<typeof buildHealthReport>, ends: readonly string[]): Map<string, HealthReport | undefined> {
+  return new Map(ends.map((end) => [end, reportAt(data[0], data, end)]));
+}
+
 export async function runWeeklyCommand(argv: string[], prefix: string): Promise<Partial<RunOutput>> {
   const { values, help } = parseHealthArgs(
     argv,
@@ -137,13 +145,9 @@ export async function runWeeklyCommand(argv: string[], prefix: string): Promise<
   if (todo.length) {
     const ends = [...new Set(todo.flatMap((w) => [w.end, addDays(w.start, -1)]))];
     for (const sdk of sdks) {
-      const at = new Map<string, HealthReport | undefined>();
-      reports.set(sdk, at);
       const { store, close } = await openStore(values.store, sdk, { skipRawLogs: true });
       try {
-        const records = store.readRecords(sdk);
-        const data: Parameters<typeof buildHealthReport> = [sdk, records, store.listManifests(sdk), { notes: readNotes(store, sdk) }];
-        for (const end of ends) at.set(end, records.length ? reportAt(sdk, data, end) : undefined);
+        reports.set(sdk, reportsAt([sdk, store.readRecords(sdk), store.listManifests(sdk), { notes: readNotes(store, sdk) }], ends));
       } finally {
         close();
       }

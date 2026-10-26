@@ -279,8 +279,9 @@ jobs:
           # The Slack message links to the page: the command asks GitHub for the site's address.
           GH_TOKEN: ${{ steps.gh-secret.outputs.token }}
           # Only the scheduled run, or a dispatch with weekly_slack ticked, posts; and only once
-          # the channel is set. `slack` is the daily digests' input, never this one's.
-          CHANNEL: ${{ (github.event_name == 'schedule' || inputs.weekly_slack) && vars.FIT_HEALTH_WEEKLY_SLACK_CHANNEL || '' }}
+          # the channel is set, and only when this run publishes the page the post links to.
+          # `slack` is the daily digests' input, never this one's.
+          CHANNEL: ${{ env.PUBLISH == 'true' && (github.event_name == 'schedule' || inputs.weekly_slack) && vars.FIT_HEALTH_WEEKLY_SLACK_CHANNEL || '' }}
         run: |
           if [ "$ASKED" != "true" ] && [ "$SCHEDULED" != "true" ]; then
             echo "Not asked for: no weekly wrap-up."

@@ -60,6 +60,15 @@ test("a test joining the failing set is newly failing, marked if it never passed
   assert.equal(c.newlyFailing[2].neverPassed, true);
 });
 
+test("a failure run now passing, not yet recovered, gives the run's length and the clean nights since", () => {
+  const now = report("2026-10-25", [
+    t("A.passing", "failing", { since: "2026-10-19", streak: 0, cleanTail: 2, windowFails: 4, lastEpisode: { from: "2026-10-19", to: "2026-10-23", nights: 5 }, lastGood: "2026-10-18" }),
+  ]);
+  assert.deepEqual(weekChanges(now, report("2026-10-18", []), W43).newlyFailing, [
+    { test: "A.passing", series: "func", where: "on-prem", since: "2026-10-19", nights: 5, passedLast: 2 },
+  ]);
+});
+
 test("a test leaving the failing set is no longer failing, with why when it doesn't pass", () => {
   const before = report("2026-10-18", [
     t("A.fixed", "failing"),
@@ -112,6 +121,19 @@ test("tests run is the median night's, over JUnit nights only", () => {
   const night = (date: string, passed: number, logOnly = 0) => ({ date, passed, failing: 1, skipped: 5, runs: 1, logOnly });
   assert.equal(typicalTestsRun([night("a", 100), night("b", 300), night("c", 200), "none", night("d", 999, 1)]), 201);
   assert.equal(typicalTestsRun(["none", "aborted"]), undefined);
+});
+
+test("tests run counts the functional runs only, like failing", () => {
+  const week = Object.fromEntries(["2026-10-19", "2026-10-20", "2026-10-21"].map((d) => [d, full(100, 2, 10)]));
+  const big = Object.fromEntries(["2026-10-19", "2026-10-20", "2026-10-21"].map((d) => [d, full(900, 0, 0)]));
+  const logOnly = { "2026-10-19": { testCases: 0, failing: 3 }, "2026-10-20": { testCases: 0, failing: 3 }, "2026-10-21": { testCases: 0, failing: 3 } } as Record<string, NightTests>;
+  for (const counts of [big, logOnly]) {
+    const now = report("2026-10-25", [], week);
+    now.series.push({ id: "sit", short: "capella", kind: "situational", active: true, tests: [], testCounts: counts, aborted: [] });
+    const c = buildWeekly([{ sdk: "go", name: "Go", current: now }], W43).cards[0];
+    assert.equal(c.testsRun, 102);
+    assert.equal(c.nightsWithResults, 3, "the night strip still shows every run");
+  }
 });
 
 test("flaky is the intermittent tests that failed during the week, apart from failing", () => {

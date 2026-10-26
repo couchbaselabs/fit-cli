@@ -246,13 +246,13 @@ function list(kind, title, tests, c) {
     const cls = dot < 0 ? t.test : t.test.slice(0, dot);
     const night = kind === "newly" ? t.since : t.last;
     const why = t.why ?? (t.neverPassed ? "never passed" : undefined);
-    let g = groups.find((x) => x.cls === cls && x.where === t.where && x.night === night && x.why === why);
-    if (!g) groups.push((g = { cls, where: t.where, night, nights: t.nights, why, methods: [] }));
+    let g = groups.find((x) => x.cls === cls && x.where === t.where && x.night === night && x.why === why && x.passedLast === t.passedLast);
+    if (!g) groups.push((g = { cls, where: t.where, night, nights: t.nights, passedLast: t.passedLast, why, methods: [] }));
     g.methods.push(dot < 0 ? "(whole class)" : t.test.slice(dot + 1));
   }
   const item = (g) => {
     const when = kind === "newly"
-      ? [`since ${day(g.night)} · ${g.nights} night${g.nights === 1 ? "" : "s"}`, g.why].filter(Boolean).join(" · ")
+      ? [`since ${day(g.night)} · ${g.nights} night${g.nights === 1 ? "" : "s"}${g.passedLast ? `, passed last ${g.passedLast}` : ""}`, g.why].filter(Boolean).join(" · ")
       : [g.why, g.night ? `last failed ${day(g.night)}` : ""].filter(Boolean).join(" · ");
     const name = g.methods.length === 1 && g.methods[0] !== "(whole class)" ? `${g.cls}.${g.methods[0]}` : g.cls;
     // A class with many methods names the first few: the SDK page has them all.
