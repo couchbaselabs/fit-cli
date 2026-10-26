@@ -39,6 +39,9 @@ export const DEFAULT_CAPELLA_CLUSTER_VERSION = "8.0";
  */
 export const SITUATIONAL_RESULTS_DIR_NAME = "results";
 
+/** Where the driver writes collected server logs, relative to its cwd as the results dir is. */
+export const SITUATIONAL_SERVER_LOGS_DEST_PATH = `${SITUATIONAL_RESULTS_DIR_NAME}/server-logs`;
+
 /** How cbdino should build the cluster the situational tests run against. */
 export interface CbdinoSettings {
   /** Couchbase Server version cbdino should deploy, e.g. "8.0-stable" or a pinned build like "8.0.2-5322". */
@@ -108,6 +111,8 @@ export function situationalConfigPiece(cbdino: CbdinoSettings, situationalRunId?
         cbdino: {
           version: cbdino.version,
           cbDinoClusterAppPath: cbdino.cbDinoClusterAppPath,
+          // The driver defaults this to "/", which it cannot write to, and swallows the failure at debug.
+          downloadServerLogsDestPath: SITUATIONAL_SERVER_LOGS_DEST_PATH,
           enablePrivateEndpoint: cbdino.enablePrivateEndpoint,
           ...(cbdino.deployer !== undefined ? { deployer: cbdino.deployer } : {}),
           ...(cbdino.region !== undefined ? { region: cbdino.region } : {}),

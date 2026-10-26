@@ -31,7 +31,7 @@
  * run state so `--resume-at` can pick it back up.
  */
 import { randomUUID } from "node:crypto";
-import { copyFileSync, cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   artifactFromPath,
@@ -105,7 +105,7 @@ import { generateSituationalConfiguration } from "../../situational/configuratio
 import { RESULTS_BUCKET, uploadSituationalResults } from "../../situational/upload-results/upload-results.js";
 import { parseScoresJson5 } from "../../ingest/parse.js";
 import { artifactUploadEnabled } from "../../util/aws/upload-run-artifacts.js";
-import { DEFAULT_CBDINO_SETTINGS, SITUATIONAL_RESULTS_DIR_NAME, type CbdinoSettings } from "../../situational/configuration/build-situational-configuration.js";
+import { DEFAULT_CBDINO_SETTINGS, SITUATIONAL_RESULTS_DIR_NAME, SITUATIONAL_SERVER_LOGS_DEST_PATH, type CbdinoSettings } from "../../situational/configuration/build-situational-configuration.js";
 import { loadEnvironments } from "../../util/environments.js";
 import {
   createFitExecutionContext,
@@ -1295,6 +1295,10 @@ export async function uploadCollectedResults(
     const collectedTar = await execution.collectFile(remoteTar, join(localRunDir, "results.tar"));
     mkdirSync(localResultsDir, { recursive: true, mode: 0o700 });
     await runLocalCommand("tar", ["-xf", collectedTar, "-C", localResultsDir]);
+    // Diagnostics, not results: move them beside the tar, so they outlive the
+    // cleanup below and the uploader never sees a dir it would skip.
+    const serverLogs = join(localRunDir, SITUATIONAL_SERVER_LOGS_DEST_PATH);
+    if (existsSync(serverLogs)) renameSync(serverLogs, join(localRunDir, basename(serverLogs)));
     artifacts.push(artifactFromPath(collectedTar, "Result files the FIT test-driver wrote for this run (archived)"));
   } finally {
     // A cleanup failure here must not fail the upload or hide the real error.
