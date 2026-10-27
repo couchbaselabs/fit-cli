@@ -52,6 +52,18 @@ test("a series that hadn't started yet isn't missing; situational series don't c
   assert.equal(isClean([capella], "d1"), false, "nothing counted, nothing clean");
 });
 
+test("a series that aborted has started: before its first results, or with none at all", () => {
+  const onprem = series({ d1: full(100, 0), d2: full(100, 0), d3: full(100, 0) });
+  const abort = (date: string) => ({ date }) as NonNullable<CleanSeries["aborted"]>[number];
+  const neverRan = series({}, { aborted: [abort("d2")] });
+  assert.equal(isClean([onprem, neverRan], "d1"), true, "not started yet");
+  assert.equal(isClean([onprem, neverRan], "d2"), false, "aborted, with no results ever");
+  assert.equal(isClean([onprem, neverRan], "d3"), false, "started, and missing since");
+  const lateFirst = series({ d3: full(50, 0) }, { aborted: [abort("d2")] });
+  assert.equal(isClean([onprem, lateFirst], "d2"), false, "aborted before its first results");
+  assert.equal(isClean([onprem, lateFirst], "d3"), true);
+});
+
 test("cleanNights keeps the clean ones, in order", () => {
   const s = [series({ d1: full(10, 0), d2: full(10, 2), d3: full(10, 0) })];
   assert.deepEqual(cleanNights(s, ["d1", "d2", "d3", "d4"]), ["d1", "d3"]);

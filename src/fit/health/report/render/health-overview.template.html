@@ -292,7 +292,9 @@ function panel(s) {
   p.className = "panel";
   // The accessible name must contain the visible label (WCAG 2.5.3): "Java SDK", "Java Operational Insights".
   const label = productLabel(s);
-  const state = s.missing ? "" : `<i class="state ${s.state}" role="img" aria-label="${STATE[s.state]}" title="${STATE[s.state]}"></i>`;
+  // An SDK with no report data has no latest night to judge: grey, as one with no full results.
+  const [st, about] = s.missing ? ["none", "No report data"] : [s.state, STATE[s.state]];
+  const state = `<i class="state ${st}" role="img" aria-label="${about}" title="${about}"></i>`;
   const title = `<h4>${state}<a href="${encodeURIComponent(s.sdk)}/" aria-label="${esc(label)}">${esc(s.product)}</a></h4>`;
   if (s.missing) {
     p.innerHTML = `<div class="panel-head">${title}</div><p class="missing">No report data to chart. Open the SDK's page.</p>`;
@@ -356,14 +358,17 @@ for (const sec of D.sections) {
   host.appendChild(box);
 }
 // What the latest nights came to, before any chart. Each SDK's own latest night: one whose
-// nightly runs later in the day is a night behind the rest.
+// nightly runs later in the day is a night behind the rest. An SDK with no report data has a
+// panel too, so it is counted, with no full results.
 {
   const by = { clean: [], failing: [], none: [] };
   for (const s of D.sdks) by[s.state].push(s);
+  by.none.push(...D.missing);
+  const all = D.sdks.length + D.missing.length;
   const names = (a) => a.map((s) => esc(productLabel(s))).join(", ");
   const count = (k, text) => `<span class="${k}">${k === "clean" ? "✓ " : ""}${by[k].length} ${text}</span>`;
-  if (D.sdks.length) document.getElementById("summary").innerHTML = `<div class="summary">
-    <div class="head">Latest nights: ${[count("clean", "clean"), by.failing.length && count("failing", "failing"), by.none.length && count("none", "with no full results")].filter(Boolean).join(" · ")} <span class="meta">of ${D.sdks.length}</span></div>
+  if (all) document.getElementById("summary").innerHTML = `<div class="summary">
+    <div class="head">Latest nights: ${[count("clean", "clean"), by.failing.length && count("failing", "failing"), by.none.length && count("none", "with no full results")].filter(Boolean).join(" · ")} <span class="meta">of ${all}</span></div>
     ${by.clean.length ? `<div class="line"><span class="clean">Clean:</span> ${names(by.clean)}</div>` : ""}
     ${by.failing.length ? `<div class="line"><span class="failing">Failing:</span> ${by.failing.map((s) => `${esc(productLabel(s))} (${fmt(s.latest.failing)})`).join(", ")}</div>` : ""}
     ${by.none.length ? `<div class="line"><span class="none">No full results:</span> ${names(by.none)}</div>` : ""}
