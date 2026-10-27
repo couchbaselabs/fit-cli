@@ -385,7 +385,14 @@ const lastNightLede = (() => {
   const f = D.digest.failedLastNight;
   if (CLEAN.has(D.end)) return `<b>Last night (${fmt(D.end)}) was clean:</b> every functional test passed.`;
   if (!f) return `Last night (${fmt(D.end)}) gave no usable results.`;
-  if (!f.total) return `Last night (${fmt(D.end)}) no test failed, but not every functional preset gave full results.`;
+  if (!f.total) {
+    // No failure named, yet a log-only night can still count some (an ambiguous name): the count
+    // is a minimum, as everywhere the log is the source.
+    const counted = FUNC.reduce((n, s) => n + (s.testCounts[D.end]?.failing ?? 0), 0);
+    if (counted) return `<b>Last night (${fmt(D.end)}), <span class="bad">at least ${counted}</span> test${counted === 1 ? '' : 's'} failed</b>, but the CI log didn't name ${counted === 1 ? 'it' : 'them'}.`;
+    if (f.atLeast) return `Last night (${fmt(D.end)}) the CI log reported no failed test, but passes aren't known for every functional preset.`;
+    return `Last night (${fmt(D.end)}) no test failed, but not every functional preset gave full results.`;
+  }
   return `<b>Last night (${fmt(D.end)}), <span class="bad">${f.atLeast ? 'at least ' : ''}${f.total}</span> test${f.total === 1 ? '' : 's'} failed</b> (${f.bySeries.map((x) => `${x.n} ${esc(x.series)}`).join(' · ')}).`;
 })();
 $('lede').innerHTML = (usableNights.length ? `${lastNightLede} ` : '') + (!usableNights.length
