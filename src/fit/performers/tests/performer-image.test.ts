@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { sdkByValue } from "../../../util/sdk/sdks.js";
+import { SDKS, sdkByValue } from "../../../util/sdk/sdks.js";
 import {
   analysePerformerImage,
   normalizePerformerVersion,
@@ -128,4 +128,50 @@ test("analysePerformerImage rejects an image for an SDK FIT doesn't know", () =>
   assert.ok("error" in result);
   if (!("error" in result)) return;
   assert.match(result.error, /Unknown SDK "php"/);
+});
+
+test("Quarkus performerImageName uses the couchbaselabs GHCR owner", () => {
+  const quarkus = sdkByValue("quarkus");
+  const quarkusNative = sdkByValue("quarkus-native");
+  assert.ok(quarkus);
+  assert.ok(quarkusNative);
+  assert.equal(performerImageName(quarkus), "ghcr.io/couchbaselabs/quarkus-fit-performer:main");
+  assert.equal(performerImageName(quarkusNative, "QUARK-29"), "ghcr.io/couchbaselabs/quarkus-native-fit-performer:QUARK-29");
+});
+
+test("Quarkus performerPackageUrl points at the couchbaselabs org-level GHCR package", () => {
+  const quarkus = sdkByValue("quarkus");
+  const quarkusNative = sdkByValue("quarkus-native");
+  assert.ok(quarkus);
+  assert.ok(quarkusNative);
+  assert.equal(
+    performerPackageUrl(quarkus),
+    "https://github.com/orgs/couchbaselabs/packages/container/package/quarkus-fit-performer",
+  );
+  assert.equal(
+    performerPackageUrl(quarkusNative),
+    "https://github.com/orgs/couchbaselabs/packages/container/package/quarkus-native-fit-performer",
+  );
+});
+
+test("analysePerformerImage parses the Quarkus performer images", () => {
+  const native = analysePerformerImage("quarkus-native-fit-performer:QUARK-29");
+  assert.ok(!("error" in native));
+  if ("error" in native) return;
+  assert.equal(native.sdk.value, "quarkus-native");
+  assert.equal(native.tag, "QUARK-29");
+
+  const jvm = analysePerformerImage("ghcr.io/couchbaselabs/quarkus-fit-performer:QUARK-29");
+  assert.ok(!("error" in jvm));
+  if ("error" in jvm) return;
+  assert.equal(jvm.sdk.value, "quarkus");
+  assert.equal(jvm.tag, "QUARK-29");
+});
+
+test("every SDK other than Quarkus keeps the couchbase GHCR owner", () => {
+  for (const sdk of SDKS) {
+    if (sdk.value === "quarkus" || sdk.value === "quarkus-native") continue;
+    assert.ok(performerImageName(sdk).startsWith("ghcr.io/couchbase/"), sdk.value);
+    assert.ok(performerPackageUrl(sdk).startsWith("https://github.com/orgs/couchbase/"), sdk.value);
+  }
 });

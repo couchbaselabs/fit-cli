@@ -3,15 +3,27 @@ import {
   sdkByPerformerImageBasename,
   sdkPerformerImageBasename,
   type Sdk,
+  type SdkValue,
 } from "../../../util/sdk/sdks.js";
 
 export const GHCR_REGISTRY = "ghcr.io";
 export const FIT_PERFORMER_IMAGE_OWNER = "couchbase";
 export const DEFAULT_PERFORMER_IMAGE_TAG = "main";
 
+// Published from couchbaselabs/quarkus-performer
+const PERFORMER_IMAGE_OWNER_EXCEPTIONS: Partial<Record<SdkValue, string>> = {
+  quarkus: "couchbaselabs",
+  "quarkus-native": "couchbaselabs",
+};
+
 /** The default Docker tag used for a given SDK's prebuilt GHCR image. */
 export function sdkDefaultPerformerTag(_sdk: Sdk): string {
   return DEFAULT_PERFORMER_IMAGE_TAG;
+}
+
+/** GHCR owner of the SDK performer image */
+export function performerImageOwner(sdk: Sdk): string {
+  return PERFORMER_IMAGE_OWNER_EXCEPTIONS[sdk.value] ?? FIT_PERFORMER_IMAGE_OWNER;
 }
 
 /** The GHCR package name that holds the prebuilt performer image for this SDK. */
@@ -21,7 +33,7 @@ export function performerPackageName(sdk: Sdk): string {
 
 /** The GitHub Packages URL for this SDK's prebuilt performer image. */
 export function performerPackageUrl(sdk: Sdk): string {
-  return `https://github.com/orgs/${FIT_PERFORMER_IMAGE_OWNER}/packages/container/package/${performerPackageName(sdk)}`;
+  return `https://github.com/orgs/${performerImageOwner(sdk)}/packages/container/package/${performerPackageName(sdk)}`;
 }
 
 /** Normalize a user-supplied tag; blank or the SDK's default tag means "use default". */
@@ -38,7 +50,7 @@ function performerImageTag(sdk: Sdk, version?: string): string {
 
 /** The fully-qualified GHCR image reference fit-cli pulls and runs for this performer. */
 export function performerImageName(sdk: Sdk, version?: string): string {
-  return `${GHCR_REGISTRY}/${FIT_PERFORMER_IMAGE_OWNER}/${performerPackageName(sdk)}:${performerImageTag(sdk, version)}`;
+  return `${GHCR_REGISTRY}/${performerImageOwner(sdk)}/${performerPackageName(sdk)}:${performerImageTag(sdk, version)}`;
 }
 
 /**
