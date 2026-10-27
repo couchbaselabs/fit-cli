@@ -237,6 +237,7 @@ function strip(c) {
 }
 
 // A list's tests, grouped by class, series and night: a class that broke at once is one line.
+// A group shows one night count, so tests that failed on different numbers of nights are apart.
 const SHOWN = 6;
 function list(kind, title, tests, c) {
   if (!tests.length) return "";
@@ -246,7 +247,7 @@ function list(kind, title, tests, c) {
     const cls = dot < 0 ? t.test : t.test.slice(0, dot);
     const night = kind === "newly" ? t.since : t.last;
     const why = t.why ?? (t.neverPassed ? "never passed" : undefined);
-    let g = groups.find((x) => x.cls === cls && x.where === t.where && x.night === night && x.why === why && x.passedLast === t.passedLast);
+    let g = groups.find((x) => x.cls === cls && x.where === t.where && x.night === night && x.why === why && x.passedLast === t.passedLast && x.nights === t.nights);
     if (!g) groups.push((g = { cls, where: t.where, night, nights: t.nights, passedLast: t.passedLast, why, methods: [] }));
     g.methods.push(dot < 0 ? "(whole class)" : t.test.slice(dot + 1));
   }
@@ -272,9 +273,9 @@ const STATES = {
   fail: { word: "Failing", about: "tests failing" },
   flaky: { word: "Flaky only", about: "no tests failing, some flaky" },
   pass: { word: "Clean", about: "no tests failing or flaky" },
-  none: { word: "No results", about: "no results all week" },
+  none: { word: "No results", about: "no functional results all week" },
 };
-const stateOf = (c) => (!c.reported || !c.nightsWithResults ? "none" : c.failing ? "fail" : c.flaky.length ? "flaky" : "pass");
+const stateOf = (c) => (!c.reported || !c.functionalNights ? "none" : c.failing ? "fail" : c.flaky.length ? "flaky" : "pass");
 const badge = (st) => `<span class="badge ${st}" title="${STATES[st].about}">${STATES[st].word}</span>`;
 const labelOf = (c) => (c.product === "SDK" ? `${c.name} SDK` : c.name);
 
@@ -283,7 +284,7 @@ function card(c) {
   const st = stateOf(c);
   const head = `<div class="card-head"><h4><a href="${sdkPage(c.sdk)}" title="Open the ${esc(label)} report">${esc(label)} →</a></h4>${badge(st)}</div>`;
   const open = (body) => `<section class="card ${st}" id="sdk-${esc(c.sdk)}">${head}${body}</section>`;
-  if (st === "none") return open(`${strip(c)}<p class="quiet">No results all week.</p>`);
+  if (st === "none") return open(`${strip(c)}<p class="quiet">No ${c.nightsWithResults ? "functional " : ""}results all week.</p>`);
   const b = c.failingBefore;
   const d = b === undefined ? undefined : c.failing - b;
   // The change is in words and the arrow's shape, in ink: color is only for where the SDK stands.

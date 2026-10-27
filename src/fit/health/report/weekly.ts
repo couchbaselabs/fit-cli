@@ -16,6 +16,7 @@ import type { ReportSeries } from "./build-report.js";
 import type { TestClass } from "./classify.js";
 import { addDays } from "./dates.js";
 import { layoutSections, nightTotals, overviewDays, placeSdk, type OverviewDay, type OverviewInput, type OverviewNight, type OverviewSection } from "./overview.js";
+import { seriesBaseId } from "./series.js";
 import type { HealthOptIn } from "../registry/health-opt-ins.js";
 
 /** An ISO week: `2026-W43`, its Monday and its Sunday. */
@@ -82,6 +83,8 @@ export interface WeeklyCard {
   /** The week's 7 nights, Monday first. */
   days: OverviewDay[];
   nightsWithResults: number;
+  /** Nights with functional results: with none, the SDK has no state for the week, whatever else ran. */
+  functionalNights: number;
   /** Failing at this week's end and not last week's. */
   newlyFailing: WeeklyTest[];
   /** Failing at last week's end and not this week's: passing again, or `why` not. */
@@ -115,12 +118,37 @@ type Test = WeeklyInput["series"][number]["tests"][number];
 /** Tests in a current failure run: always failing, failing, or failing their last 1-2 nights. */
 export const isFailingAtEnd = (t: Pick<Test, "cls">) => isOn(t.cls, "always", "failing", "new");
 
+/** A series' key when comparing two weeks (see seriesKeys). */
+export type SeriesKey = (id: string) => string;
+
+/**
+ * How to key the series of `now` and `before` so the two weeks compare. A preset that ran two
+ * clusters on one night is split by cluster (series.ts), but only in a report whose window has
+ * that night. Where the two weeks split a preset differently, both key it by the preset alone.
+ */
+export function seriesKeys(now: WeeklyInput, before: WeeklyInput | undefined): SeriesKey {
+  if (!before) return (id) => id;
+  const split = (r: WeeklyInput) => {
+    const out = new Map<string, boolean>();
+    for (const s of functional(r)) out.set(seriesBaseId(s.id), out.get(seriesBaseId(s.id)) || s.id !== seriesBaseId(s.id));
+    return out;
+  };
+  const a = split(now);
+  const b = split(before);
+  const merged = new Set([...a].filter(([base, isSplit]) => b.has(base) && b.get(base) !== isSplit).map(([base]) => base));
+  return (id) => (merged.has(seriesBaseId(id)) ? seriesBaseId(id) : id);
+}
+
 /** The tests failing at the end of `r`, keyed by series and test. */
-export function failingAtEnd(r: WeeklyInput): Map<string, { s: WeeklyInput["series"][number]; t: Test }> {
+export function failingAtEnd(r: WeeklyInput, key: SeriesKey = (id) => id): Map<string, { s: WeeklyInput["series"][number]; t: Test }> {
   const out = new Map<string, { s: WeeklyInput["series"][number]; t: Test }>();
-  for (const s of functional(r)) for (const t of s.tests) if (isFailingAtEnd(t)) out.set(`${s.id}\n${t.test}`, { s, t });
+  for (const s of functional(r)) for (const t of s.tests) if (isFailingAtEnd(t)) out.set(`${key(s.id)}\n${t.test}`, { s, t });
   return out;
 }
+
+// Where clusters are keyed as one (seriesKeys), a test flaky on one is flaky, and a test that
+// stopped on one but runs on another has not stopped running.
+const whyRank = (t: Test) => (t.cls === "intermittent" ? 0 : t.cls === "stopped" ? 2 : 1);
 
 export interface WeekChanges {
   newlyFailing: WeeklyTest[];
@@ -131,9 +159,9 @@ export interface WeekChanges {
  * How the failing set changed from the end of `before` to the end of `now`. With no report for
  * last week, a test counts as joining only if its failure run began this week (`week`).
  */
-export function weekChanges(now: WeeklyInput, before: WeeklyInput | undefined, week: IsoWeek): WeekChanges {
-  const was = before ? failingAtEnd(before) : undefined;
-  const is = failingAtEnd(now);
+export function weekChanges(now: WeeklyInput, before: WeeklyInput | undefined, week: IsoWeek, key = seriesKeys(now, before)): WeekChanges {
+  const was = before ? failingAtEnd(before, key) : undefined;
+  const is = failingAtEnd(now, key);
   const out: WeekChanges = { newlyFailing: [], noLongerFailing: [] };
   for (const [key, { s, t }] of is) {
     if (was ? was.has(key) : !(t.since && !t.sinceFirstNight && t.since >= week.start)) continue;
@@ -151,7 +179,14 @@ export function weekChanges(now: WeeklyInput, before: WeeklyInput | undefined, w
     });
   }
   if (!was) return out;
-  const tests = new Map<string, Test>(functional(now).flatMap((s) => s.tests.map((t): [string, Test] => [`${s.id}\n${t.test}`, t])));
+  const tests = new Map<string, Test>();
+  for (const s of functional(now)) {
+    for (const t of s.tests) {
+      const k = `${key(s.id)}\n${t.test}`;
+      const had = tests.get(k);
+      if (!had || whyRank(t) < whyRank(had)) tests.set(k, t);
+    }
+  }
   for (const [key, { s }] of was) {
     if (is.has(key)) continue;
     const t = tests.get(key);
@@ -191,12 +226,15 @@ export function buildWeekly(
   const cards = sdks.map(({ sdk, name, current, previous }): WeeklyCard => {
     const days = current ? overviewDays(current, dates) : dates.map((): OverviewDay => "unreported");
     const nightsWithResults = days.filter((d) => typeof d !== "string").length;
-    const changes: WeekChanges = current ? weekChanges(current, previous, week) : { newlyFailing: [], noLongerFailing: [] };
-    const failing = current ? failingAtEnd(current).size : 0;
-    const failingBefore = previous ? failingAtEnd(previous).size : undefined;
+    // `failing`, its scale and the SDK's state come from the functional runs; the night strip shows them all.
+    const functionalDays = current ? overviewDays(current, dates, nightTotals(functional(current))) : [];
+    const functionalNights = functionalDays.filter((d) => typeof d !== "string").length;
+    const key = current ? seriesKeys(current, previous) : undefined;
+    const changes: WeekChanges = current ? weekChanges(current, previous, week, key) : { newlyFailing: [], noLongerFailing: [] };
+    const failing = current ? failingAtEnd(current, key).size : 0;
+    const failingBefore = previous ? failingAtEnd(previous, key).size : undefined;
     const moved = changes.newlyFailing.length + changes.noLongerFailing.length;
-    // The scale for `failing`, so from the same functional runs; the night strip shows them all.
-    const testsRun = current ? typicalTestsRun(overviewDays(current, dates, nightTotals(functional(current)))) : undefined;
+    const testsRun = current ? typicalTestsRun(functionalDays) : undefined;
     return {
       sdk,
       name,
@@ -204,6 +242,7 @@ export function buildWeekly(
       reported: !!current,
       days,
       nightsWithResults,
+      functionalNights,
       ...changes,
       flaky: current ? flakyIn(current, week) : [],
       failing,

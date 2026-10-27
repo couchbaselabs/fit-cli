@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { NightTests, ReportTest } from "../build-report.js";
 import type { TestClass } from "../classify.js";
-import { buildWeekly, flakyIn, isoWeek, lastFullWeek, typicalTestsRun, weekChanges, type WeeklyInput } from "../weekly.js";
+import { buildWeekly, flakyIn, isoWeek, lastFullWeek, seriesKeys, typicalTestsRun, weekChanges, type WeeklyInput } from "../weekly.js";
 
 const W43 = isoWeek("2026-10-19");
 
@@ -117,6 +117,48 @@ test("situational and inactive series are left out", () => {
   assert.deepEqual(weekChanges(report("2026-10-25", broke, {}, { active: false }), report("2026-10-18", []), W43).newlyFailing, []);
 });
 
+// A preset split by cluster in one week's report (it ran two clusters on a night in that window) and not the other's.
+function clusters(end: string, byCluster: Record<string, ReportTest[]>): WeeklyInput {
+  const series = Object.entries(byCluster).map(([cluster, tests]) => ({
+    id: cluster ? `op|functional|${cluster}` : "op|functional",
+    short: cluster ? `on-prem ${cluster}` : "on-prem",
+    kind: "functional" as const,
+    active: true,
+    tests,
+    testCounts: {},
+    aborted: [],
+  }));
+  return { sdk: "go", start: "2026-07-01", end, series };
+}
+
+test("a preset split by cluster in one week only is compared as one series", () => {
+  const before = clusters("2026-10-18", { "8.0": [t("A.still", "always"), t("A.fixed", "failing")], "7.6": [t("A.still", "always")] });
+  const now = clusters("2026-10-25", { "": [t("A.still", "always"), t("A.fixed", "recovered", { lastFail: "2026-10-20" })] });
+  for (const [a, b] of [[now, before], [before, now]]) assert.equal(seriesKeys(a, b)("op|functional|8.0"), "op|functional");
+  const c = weekChanges(now, before, W43);
+  assert.deepEqual(names(c.newlyFailing), []);
+  assert.deepEqual(c.noLongerFailing.map((x) => [x.test, x.why]), [["A.fixed", undefined]]);
+  const card = buildWeekly([{ sdk: "go", name: "Go", current: now, previous: before }], W43).cards[0];
+  assert.deepEqual([card.failingBefore, card.failing], [2, 1]);
+});
+
+test("merged clusters: flaky on one is flaky, stopped on one but run on another has not stopped", () => {
+  const before = clusters("2026-10-18", { "": [t("A.flips", "failing"), t("A.moved", "failing")] });
+  const now = clusters("2026-10-25", {
+    "8.0": [t("A.flips", "intermittent"), t("A.moved", "recovered")],
+    "7.6": [t("A.flips", "recovered"), t("A.moved", "stopped")],
+  });
+  assert.deepEqual(weekChanges(now, before, W43).noLongerFailing.map((x) => [x.test, x.why]), [["A.flips", "now flaky"], ["A.moved", undefined]]);
+});
+
+test("a preset split by cluster in both weeks keeps its clusters apart", () => {
+  const before = clusters("2026-10-18", { "8.0": [t("A.x", "failing")], "7.6": [] });
+  const now = clusters("2026-10-25", { "8.0": [t("A.x", "recovered")], "7.6": [t("A.x", "failing", { since: "2026-10-21", streak: 5, lastGood: "2026-10-20" })] });
+  const c = weekChanges(now, before, W43);
+  assert.deepEqual(c.newlyFailing.map((x) => x.series), ["op|functional|7.6"]);
+  assert.deepEqual(c.noLongerFailing.map((x) => x.series), ["op|functional|8.0"]);
+});
+
 test("tests run is the median night's, over JUnit nights only", () => {
   const night = (date: string, passed: number, logOnly = 0) => ({ date, passed, failing: 1, skipped: 5, runs: 1, logOnly });
   assert.equal(typicalTestsRun([night("a", 100), night("b", 300), night("c", 200), "none", night("d", 999, 1)]), 201);
@@ -134,6 +176,14 @@ test("tests run counts the functional runs only, like failing", () => {
     assert.equal(c.testsRun, 102);
     assert.equal(c.nightsWithResults, 3, "the night strip still shows every run");
   }
+});
+
+test("functional nights count the functional runs only: the SDK's state needs them", () => {
+  const now = report("2026-10-25", [], {}, { aborted: [{ date: "2026-10-19" } as never] });
+  now.series.push({ id: "sit", short: "capella", kind: "situational", active: true, tests: [], testCounts: { "2026-10-20": full(50, 0, 0) }, aborted: [] });
+  const c = buildWeekly([{ sdk: "go", name: "Go", current: now }], W43).cards[0];
+  assert.equal(c.nightsWithResults, 1);
+  assert.equal(c.functionalNights, 0);
 });
 
 test("flaky is the intermittent tests that failed during the week, apart from failing", () => {

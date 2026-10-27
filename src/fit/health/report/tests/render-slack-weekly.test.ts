@@ -20,6 +20,7 @@ function card(sdk: string, name: string, more: Partial<WeeklyCard> = {}): Weekly
     reported: true,
     days: [],
     nightsWithResults: 7,
+    functionalNights: 7,
     newlyFailing: [],
     noLongerFailing: [],
     flaky: [],
@@ -81,6 +82,12 @@ test("a failing SDK with no failure last week says nothing of a change; missing 
   const text = renderSlackWeekly(w);
   assert.match(text, /^• Go: \*2 failing\* · 5\/7 nights$/m);
   assert.match(text, /^:warning: \*Flaky only:\* \.NET \(1, 6\/7 nights\)$/m);
+});
+
+test("an SDK whose functional runs gave no results all week is not clean, whatever else ran", () => {
+  const text = renderSlackWeekly(weekly([card("go", "Go", { nightsWithResults: 3, functionalNights: 0 })]));
+  assert.match(text, /^\*FIT weekly · 2026-W43\*: :heavy_minus_sign: 1 no results all week$/m);
+  assert.doesNotMatch(text, /clean/);
 });
 
 test("names are escaped for Slack, and Operational Insights is shortened", () => {
