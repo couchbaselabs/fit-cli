@@ -57,6 +57,9 @@ function seriesBaseKey(r: RunRecord): string {
   return `${r.preset}${r.variant ? `+${r.variant}` : ""}|${r.kind}`;
 }
 
+/** A series' id without its cluster: a split series' id is its base key, then `|<cluster>`. */
+export const seriesBaseId = (id: string) => id.split("|").slice(0, 2).join("|");
+
 /** Only each night's latest run attempt counts: a re-run replaces the run it re-ran. */
 export function latestAttempts(records: RunRecord[]): RunRecord[] {
   const latest = new Map<string, number>();
