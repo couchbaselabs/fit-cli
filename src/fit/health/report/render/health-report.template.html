@@ -553,7 +553,10 @@ let markChartNight = () => {};
   // couldn't use shows as a break in that preset's line, not as a shaded night.
   const bad = new Set(D.blackout);
   const max = Math.max(1, ...vals.flat().filter((v) => v != null));
-  const top = Math.ceil((max + 1) / 5) * 5;
+  // At most about five gridlines: a fixed step of 5 crowds the axis once a night fails 100+.
+  const p = 10 ** Math.floor(Math.log10((max + 1) / 5));
+  const step = Math.max(5, [1, 2, 2.5, 5, 10].map((k) => k * p).find((s) => s * 5 >= max + 1));
+  const top = Math.ceil((max + 1) / step) * step;
   const y = (v) => m.t + ih - (v / top) * ih;
   let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Distinct failing tests per night, per functional preset">`;
   [...bad].forEach((d) => { const i = D.dates.indexOf(d); if (i < 0) return; const w = iw / Math.max(1, N - 1);
@@ -561,8 +564,8 @@ let markChartNight = () => {};
   // A clean night is shaded green, so it reads as more than a line at zero.
   CLEAN.forEach((d) => { const i = D.dates.indexOf(d); if (i < 0) return; const w = iw / Math.max(1, N - 1);
     svg += `<rect x="${x(i) - w / 2}" y="${m.t}" width="${w}" height="${ih}" fill="var(--pass-bg)"/>`; });
-  svg += `<g class="grid">`; for (let v = 0; v <= top; v += 5) svg += `<line x1="${m.l}" x2="${m.l + iw}" y1="${y(v)}" y2="${y(v)}"/>`; svg += `</g>`;
-  svg += `<g class="axis">`; for (let v = 0; v <= top; v += 5) svg += `<text x="${m.l - 8}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
+  svg += `<g class="grid">`; for (let v = 0; v <= top; v += step) svg += `<line x1="${m.l}" x2="${m.l + iw}" y1="${y(v)}" y2="${y(v)}"/>`; svg += `</g>`;
+  svg += `<g class="axis">`; for (let v = 0; v <= top; v += step) svg += `<text x="${m.l - 8}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
   D.dates.forEach((d, i) => { if (d.endsWith('-01')) svg += `<text x="${x(i)}" y="${H - 6}" text-anchor="middle">${fmt(d)}</text>`; });
   svg += `<line x1="${m.l}" x2="${m.l + iw}" y1="${y(0)}" y2="${y(0)}" style="stroke:var(--rule-strong)"/></g>`;
   // cluster (server version) changes, per series
