@@ -12,6 +12,9 @@ export const SDKS = [
   { name: "Python", value: "python", family: "operational", cng: false },
   { name: "Ruby", value: "ruby", family: "operational", cng: true },
   { name: "Rust", value: "rust", family: "operational", cng: false },
+  // Java performer in Quarkus not yet tested over CNG
+  { name: "Quarkus (JVM)", value: "quarkus", family: "operational", cng: false },
+  { name: "Quarkus (native)", value: "quarkus-native", family: "operational", cng: false },
   // Analytics SDKs — tested via the columnar-test-driver (`analytics-functional`
   // runs). Two families exist: "Columnar SDK" (recommended for Capella Analytics) and
   // "Enterprise Analytics SDK" (recommended for Enterprise Analytics + a load balancer).
