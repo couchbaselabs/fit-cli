@@ -7,6 +7,18 @@ Only some SDKs support CNG, marked with `cng: true` in `src/util/sdk/sdks.ts`. T
 
 CNG is not currently supported on localhost testing, only on clean cloud instances, though it might be possible to get it working.  It has a dependency on at least the OpenShift tooling (`oc`).
 
+## TLS
+cbdinocluster can make a CNG cluster created on ROSA accessible via two modes:
+
+Route mode is the default, and opens an OpenShift route like cng-cbdc2-<id>.apps.rosa.sdkqe-rosa…openshiftapps.com.
+This is TLS passthrough, and CNG only has a self-signed cert, so the SDK can't validate it and has to run insecure.
+Some SDKs (Ruby) cannot support this as they cannot enable insecure mode in their GRPC libraries.
+
+So we use the alternative gateway mode.  Here CNG runs a shared istio gateway on ROSA (cbdc-shared/cbdc-shared).  
+It holds a Let's Encrypt wildcard certificate for *.sdkqe.cbqeoc.com, and each cluster is given a hostname under it
+like cng-<id>.sdkqe.cbqeoc.com:443.  The SDK's TLS connection is terminated there and a new one created to CNG.
+This is a publicly trusted cert and the SDK can validate it as normal.
+
 # Docker images
 ## Server
 Server images we run on ROSA OpenShift need to come from `cb-rhcc` rather than usual `cb-vanilla` repo.  [source](https://couchbase.slack.com/archives/C04DB7P157T/p1781783413258219)

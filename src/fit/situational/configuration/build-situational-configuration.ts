@@ -65,6 +65,12 @@ export interface CbdinoSettings {
   cao?: {
     operatorVersion: string;
     gatewayVersion: string;
+    /**
+     * How the cluster is exposed on OpenShift (cbdinocluster's `cao.ingress`). With
+     * `gateway` the driver verifies TLS; otherwise it uses cbdinocluster's default
+     * route and insecure TLS. Drivers that predate this field ignore it.
+     */
+    ingress?: "route" | "gateway";
   };
 }
 
@@ -117,7 +123,12 @@ export function situationalConfigPiece(cbdino: CbdinoSettings, situationalRunId?
           ...(cbdino.deployer !== undefined ? { deployer: cbdino.deployer } : {}),
           ...(cbdino.region !== undefined ? { region: cbdino.region } : {}),
           ...(cbdino.cao
-            ? { deployer: "cao", operatorVersion: cbdino.cao.operatorVersion, gatewayVersion: cbdino.cao.gatewayVersion }
+            ? {
+                deployer: "cao",
+                operatorVersion: cbdino.cao.operatorVersion,
+                gatewayVersion: cbdino.cao.gatewayVersion,
+                ...(cbdino.cao.ingress !== undefined ? { ingress: cbdino.cao.ingress } : {}),
+              }
             : {}),
         },
         files: { outputDirectory: SITUATIONAL_RESULTS_DIR_NAME },
