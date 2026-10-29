@@ -20,22 +20,29 @@ const full = (passed: number, failing: number, skipped: number): NightTests => (
 });
 const logOnly = (failing: number): NightTests => ({ testCases: 500, failing });
 
-function input(sdk: string, start: string, end: string, series: Record<string, NightTests>[]): OverviewInput {
-  return { sdk, start, end, series: series.map((testCounts) => ({ testCounts })) };
+/** A functional series with these nights; `more` makes it situational, inactive, and so on. */
+const series = (testCounts: Record<string, NightTests>, more: Partial<OverviewInput["series"][number]> = {}): OverviewInput["series"][number] => ({
+  kind: "functional",
+  active: true,
+  ran: Object.keys(testCounts).sort(),
+  perNight: Object.fromEntries(Object.entries(testCounts).map(([d, c]) => [d, c.failing])),
+  testCounts,
+  ...more,
+});
+
+function input(sdk: string, start: string, end: string, nights: Record<string, NightTests>[]): OverviewInput {
+  return { sdk, start, end, series: nights.map((testCounts) => series(testCounts)) };
 }
 
 test("nightTotals adds every series' night together", () => {
-  const n = nightTotals([
-    { testCounts: { "2026-09-30": full(100, 2, 10), "2026-10-01": full(100, 0, 10) } },
-    { testCounts: { "2026-09-30": full(50, 1, 5) } },
-  ]);
-  assert.deepEqual(n.get("2026-09-30"), { date: "2026-09-30", passed: 150, failing: 3, skipped: 15, runs: 2, logOnly: 0 });
-  assert.deepEqual(n.get("2026-10-01"), { date: "2026-10-01", passed: 100, failing: 0, skipped: 10, runs: 1, logOnly: 0 });
+  const n = nightTotals([series({ "2026-09-30": full(100, 2, 10), "2026-10-01": full(100, 0, 10) }), series({ "2026-09-30": full(50, 1, 5) })]);
+  assert.deepEqual(n.get("2026-09-30"), { date: "2026-09-30", passed: 150, failing: 3, skipped: 15, runs: 2, logOnly: 0, clean: false });
+  assert.deepEqual(n.get("2026-10-01"), { date: "2026-10-01", passed: 100, failing: 0, skipped: 10, runs: 1, logOnly: 0, clean: false });
 });
 
 test("a log-only series counts its failures but not passes or skips", () => {
-  const n = nightTotals([{ testCounts: { "2026-09-30": full(100, 2, 10) } }, { testCounts: { "2026-09-30": logOnly(4) } }]);
-  assert.deepEqual(n.get("2026-09-30"), { date: "2026-09-30", passed: 100, failing: 6, skipped: 10, runs: 2, logOnly: 1 });
+  const n = nightTotals([series({ "2026-09-30": full(100, 2, 10) }), series({ "2026-09-30": logOnly(4) })]);
+  assert.deepEqual(n.get("2026-09-30"), { date: "2026-09-30", passed: 100, failing: 6, skipped: 10, runs: 2, logOnly: 1, clean: false });
 });
 
 test("the window is the last N calendar days to the newest report's end", () => {
@@ -173,4 +180,38 @@ test("a report is marked carried over only when the site kept it, not when its n
     { input: input("go", "2026-09-01", "2026-10-16", []), name: "Go", carried: true },
   ]);
   assert.deepEqual(o.sdks.map((s) => [s.sdk, s.carried ?? false]), [["dotnet", false], ["go", true], ["insights-node", false]]);
+});
+
+test("only the counted series add up: situational and inactive ones stay out", () => {
+  const n = nightTotals([
+    series({ "2026-09-30": full(100, 0, 10) }),
+    series({ "2026-09-30": full(5, 3, 0) }, { kind: "situational" }),
+    series({ "2026-09-30": full(40, 2, 0) }, { active: false }),
+  ]);
+  assert.deepEqual(n.get("2026-09-30"), { date: "2026-09-30", passed: 100, failing: 0, skipped: 10, runs: 1, logOnly: 0, clean: true });
+  // A situational abort doesn't shade a night either.
+  const go = input("go", "2026-09-29", "2026-09-29", []);
+  go.series.push(series({}, { kind: "situational", aborted: [{ date: "2026-09-29", runId: 1, attempt: 1 }] }));
+  assert.deepEqual(buildOverview([{ input: go, name: "Go" }], [], new Date(), 1).sdks[0].days, ["none"]);
+});
+
+test("an SDK's state is how its own latest night went", () => {
+  const o = buildOverview(
+    [
+      { input: input("dotnet", "2026-09-01", "2026-10-02", [{ "2026-10-01": full(10, 1, 0), "2026-10-02": full(10, 0, 4) }]), name: ".NET" },
+      { input: input("go", "2026-09-01", "2026-10-02", [{ "2026-10-02": full(10, 2, 0) }]), name: "Go" },
+      // Ends a night early (its nightly runs later): judged on its own end, which is clean.
+      { input: input("insights-go", "2026-09-01", "2026-10-01", [{ "2026-10-01": full(10, 0, 0) }]), name: "Go Operational Insights" },
+      // Its last night came only from the CI log: no failures named, but not clean.
+      { input: input("java", "2026-09-01", "2026-10-02", [{ "2026-10-02": logOnly(0) }]), name: "Java" },
+      // Didn't run on its end date.
+      { input: input("scala", "2026-09-01", "2026-10-02", [{ "2026-10-01": full(10, 0, 0) }]), name: "Scala" },
+    ],
+    [],
+    new Date(),
+    2,
+  );
+  assert.deepEqual(Object.fromEntries(o.sdks.map((s) => [s.sdk, s.state])), { dotnet: "clean", go: "failing", "insights-go": "clean", java: "none", scala: "none" });
+  const dotnet = o.sdks.find((s) => s.sdk === "dotnet")!;
+  assert.deepEqual(dotnet.days.map((d) => typeof d === "object" && d.clean), [false, true]);
 });

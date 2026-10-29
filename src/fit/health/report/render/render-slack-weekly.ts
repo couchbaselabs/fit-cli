@@ -26,7 +26,7 @@ export function pageOrder(w: Pick<Weekly, "sections" | "cards">): WeeklyCard[] {
 
 /** Where an SDK stands at the week's end, as the page's badges say it. */
 export type WeeklyState = "fail" | "flaky" | "pass" | "none";
-export const stateOf = (c: WeeklyCard): WeeklyState => (!c.reported || !c.functionalNights ? "none" : c.failing ? "fail" : c.flaky.length ? "flaky" : "pass");
+export const stateOf = (c: WeeklyCard): WeeklyState => (!c.reported || !c.nightsWithResults ? "none" : c.failing ? "fail" : c.flaky.length ? "flaky" : "pass");
 
 /** Each state's emoji and word. The emoji differ in shape as well as color, so they read without color. */
 const STATES: Record<WeeklyState, { emoji: string; word: string }> = {

@@ -8,22 +8,24 @@
  * SDKs share a core (the JVM, the C++ core) are grouped into a section for that core.
  *
  * Built from each SDK's published report alone - the per-night counts every series already
- * carries (`testCounts`) - so it needs nothing beyond what the SDK pages publish.
+ * carries (`testCounts`) - so it needs nothing beyond what the SDK pages publish. It counts the
+ * series the SDK pages lead with (clean.ts), so its numbers are theirs.
  */
 import type { HealthReport, ReportSeries } from "./build-report.js";
 import { FAMILY_SECTIONS, type HealthOptIn } from "../registry/health-opt-ins.js";
 import { SDKS, sdkByValue } from "../../../util/sdk/sdks.js";
 import { addDays } from "./dates.js";
 import { WINDOW_DAYS } from "./classify.js";
+import { isClean, isCounted, type CleanSeries } from "./clean.js";
 
 /** The parts of a report the overview reads. */
 export type OverviewInput = Pick<HealthReport, "sdk" | "start" | "end"> & {
-  series: (Pick<ReportSeries, "testCounts"> & Partial<Pick<ReportSeries, "aborted">>)[];
+  series: (CleanSeries & Partial<Pick<ReportSeries, "aborted">>)[];
   source?: Pick<HealthReport["source"], "unreadableRuns">;
 };
 
 /**
- * One night of one SDK, every series (environment) added together, counted in tests.
+ * One night of one SDK, every counted series (environment) added together, counted in tests.
  * `logOnly` series left only their CI log: their failures are counted, but their passes and
  * skips are unknown, so `passed` and `skipped` cover the other series only.
  */
@@ -36,6 +38,8 @@ export interface OverviewNight {
   runs: number;
   /** Of those, how many have no JUnit (passes unknown). */
   logOnly: number;
+  /** Nothing to fix: every counted series ran, gave full results and failed nothing (clean.ts). */
+  clean: boolean;
 }
 
 /**
@@ -60,7 +64,14 @@ export interface OverviewSdk {
   days: OverviewDay[];
   /** The newest night the SDK ran, in or before the window. */
   latest?: OverviewNight;
+  /**
+   * How the SDK's own latest night (`end`) went: "clean", "failing" (a test failed), or "none"
+   * (no full results that night: it didn't run, aborted, or some of it came only from the log).
+   */
+  state: OverviewState;
 }
+
+export type OverviewState = "clean" | "failing" | "none";
 
 export interface Overview {
   /** When the page was built, shown in its header. */
@@ -158,13 +169,13 @@ export function layoutSections(sdks: string[], place: (sdk: string) => Placement
   return [...sections, ...alone.sort((a, b) => byText(a.name, b.name)).map((row) => ({ rows: [row] }))];
 }
 
-/** Every series' counts for each night, added together. */
+/** Every counted series' counts for each night, added together. */
 export function nightTotals(series: OverviewInput["series"]): Map<string, OverviewNight> {
   const nights = new Map<string, OverviewNight>();
-  for (const s of series) {
+  for (const s of series.filter(isCounted)) {
     for (const [date, c] of Object.entries(s.testCounts)) {
       let n = nights.get(date);
-      if (!n) nights.set(date, (n = { date, passed: 0, failing: 0, skipped: 0, runs: 0, logOnly: 0 }));
+      if (!n) nights.set(date, (n = { date, passed: 0, failing: 0, skipped: 0, runs: 0, logOnly: 0, clean: isClean(series, date) }));
       n.runs++;
       n.failing += c.failing;
       if (c.tests === undefined) {
@@ -180,7 +191,7 @@ export function nightTotals(series: OverviewInput["series"]): Map<string, Overvi
 
 /** Each of `dates` for one SDK: its night's counts, or why there are none. */
 export function overviewDays(input: OverviewInput, dates: readonly string[], nights = nightTotals(input.series)): OverviewDay[] {
-  const aborted = new Set(input.series.flatMap((s) => (s.aborted ?? []).map((a) => a.date)));
+  const aborted = new Set(input.series.filter(isCounted).flatMap((s) => (s.aborted ?? []).map((a) => a.date)));
   const unreadable = new Set((input.source?.unreadableRuns ?? []).map((r) => r.date));
   return dates.map((d): OverviewDay => {
     if (d < input.start || d > input.end) return "unreported";
@@ -204,6 +215,7 @@ export function buildOverview(
     const nights = nightTotals(input.series);
     const days = overviewDays(input, dates, nights);
     const latestDate = [...nights.keys()].filter((d) => d <= input.end).sort().at(-1);
+    const last = nights.get(input.end);
     return {
       sdk: input.sdk,
       name,
@@ -212,6 +224,7 @@ export function buildOverview(
       ...(carried ? { carried: true as const } : {}),
       days,
       latest: latestDate ? nights.get(latestDate) : undefined,
+      state: last?.clean ? "clean" : last && last.failing > 0 ? "failing" : "none",
     };
   });
   return {
