@@ -148,6 +148,19 @@ test("a CNG cluster uses a flat couchbase2 connectionString (no driver/performer
   assert.equal(config.skipBucketCreation, true);
 });
 
+test("a CNG cluster behind the shared gateway gets verified TLS (tls: {})", () => {
+  const config = buildFitConfiguration({
+    scheme: "couchbases",
+    defaultHostname: "ui-host:443",
+    flavour: "self-managed",
+    credentials,
+    tls: { insecure: true },
+    cng: { performerConnectionString: "couchbase2://cng-host:443", tls: {} },
+  });
+  // The test-driver reads {} as TLS with the default trust store; null would mean no TLS.
+  assert.deepEqual((config.clusterAccess as Record<string, unknown>).tls, {});
+});
+
 test("a definition fitConfig piece can override defaults while runtime fields still win", () => {
   const config = buildFitConfiguration(
     {

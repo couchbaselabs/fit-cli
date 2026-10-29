@@ -51,6 +51,7 @@ test("CNG support adds the cao block with the operator and gateway versions", ()
   assert.match(def, /cao:/);
   assert.match(def, new RegExp(`operator-version: "${CAO_OPERATOR_VERSION}"`));
   assert.match(def, new RegExp(`gateway-version: "${CNG_VERSION}"`));
+  assert.match(def, /ingress: "gateway"/);
 });
 
 test("without CNG there is no cao block", () => {
@@ -100,6 +101,7 @@ test("buildClusterDefObject uses cao (not docker) for CNG clusters", () => {
   });
   assert.equal(def.docker, undefined);
   assert.equal(def.cao?.["operator-version"], CAO_OPERATOR_VERSION);
+  assert.equal(def.cao?.ingress, "gateway");
 });
 
 test("buildClusterDefObject emits cbdino columnar:true + an nginx load balancer for a self-managed Enterprise Analytics cluster", () => {

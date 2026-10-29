@@ -105,7 +105,7 @@ function capellaCluster() {
 function cngCluster() {
   return {
     ...cluster(),
-    cng: { performerConnectionString: "couchbase2://localhost:18098", tls: null },
+    cng: { performerConnectionString: "couchbase2://localhost:18098", tls: {} },
   };
 }
 
@@ -354,6 +354,11 @@ test("situationalCbdinoSettings ignores a version override for a CNG run (CNG pi
   const withOverride = situationalCbdinoSettings(true, false, "8.0-stable");
   const withoutOverride = situationalCbdinoSettings(true, false);
   assert.equal(withOverride.version, withoutOverride.version);
+});
+
+test("situationalCbdinoSettings asks for gateway ingress for a CNG run, so the driver verifies TLS", () => {
+  assert.equal(situationalCbdinoSettings(true, false).cao?.ingress, "gateway");
+  assert.equal(situationalCbdinoSettings(false, false).cao, undefined);
 });
 
 test("situationalCbdinoSettings leaves deployer unset for an aws instance (driver defaults to aws)", () => {

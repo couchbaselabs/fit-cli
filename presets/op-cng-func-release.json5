@@ -87,6 +87,7 @@
           cao: {
             'operator-version': '{{environments.defaults.caoOperatorVersion}}',
             'gateway-version': '{{environments.defaults.cngVersion}}',
+            ingress: 'gateway',
           },
         },
         onClusterExists: 'useExisting',
@@ -106,6 +107,7 @@
           cao: {
             'operator-version': '{{environments.defaults.caoOperatorVersion}}',
             'gateway-version': '{{environments.defaults.cngVersion}}',
+            ingress: 'gateway',
           },
         },
         onClusterExists: 'useExisting',
@@ -117,7 +119,6 @@
       id: 'fit-config-0',
       connection: {
         scheme: 'couchbase2',
-        tls: { insecure: true },
       },
       config: {
         excludeTests: ['ssh', 'openshift'],

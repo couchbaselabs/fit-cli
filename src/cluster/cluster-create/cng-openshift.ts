@@ -43,6 +43,7 @@ import { ssmStartSessionCommand } from "../../fit/util/aws/lifecycle-warning.js"
 import { prepareAwsCli } from "../../cloud/util/aws/aws-cli.js";
 import { resolveRosaCredentials, type ResolvedRosaCredentials } from "../../fit/util/config.js";
 import { CAO_TOOLS_VERSION, installCaoToolsRemote } from "./install-cao-tools.js";
+import type { CngTls } from "../cluster-select/cluster-select.js";
 
 export { CAO_TOOLS_VERSION } from "./install-cao-tools.js";
 
@@ -356,8 +357,8 @@ export async function assertNoRosaNodeLeak(execution: OpenShiftExecutor): Promis
 
 /**
  * `oc login` to the ROSA cluster. The password is kept out of the echoed command
- * via `display`. `--insecure-skip-tls-verify` matches the self-signed serving cert
- * the shared ROSA cluster presents (CNG itself also runs with `tls.insecure`).
+ * via `display`. Still passes `--insecure-skip-tls-verify`, though the ROSA API
+ * server's certificate does verify against a standard trust store.
  */
 export async function ocLogin(execution: OpenShiftExecutor, creds: ResolvedRosaCredentials): Promise<void> {
   console.log(`→ setup-cluster: oc login to ${creds.url} as ${creds.username} on ${execution.description}…`);
@@ -387,6 +388,15 @@ export async function currentOcContext(execution: OpenShiftExecutor): Promise<st
 }
 
 /**
+ * The shared istio gateway on the ROSA cluster (`<namespace>/<name>`, the form
+ * `cbdinocluster init` writes when it discovers it). It terminates TLS for
+ * `*.sdkqe.cbqeoc.com` with a Let's Encrypt certificate, which is what lets CNG
+ * clusters allocated with `cao.ingress: gateway` be tested with verified TLS.
+ * Managed in https://github.com/couchbaselabs/sdkqe-rosa-tf (rosa-cbdc/shared-gateway.tf).
+ */
+export const ROSA_SHARED_GATEWAY = "cbdc-shared/cbdc-shared";
+
+/**
  * The `k8s` block fit-cli adds to the ~/.cbdinocluster it uploads to the box,
  * pointing cbdinocluster at the OpenShift cluster `oc login` selected. `home` is
  * the remote login user's home (e.g. /home/ubuntu); `context` is the kube context
@@ -399,8 +409,25 @@ export function buildOpenShiftK8sBlock(home: string, context: string): PieceData
       "cao-tools": `${home}/.dinotools/cao/${CAO_TOOLS_VERSION}`,
       kubeconfig: `${home}/.kube/config`,
       context,
+      "shared-gateway": ROSA_SHARED_GATEWAY,
     },
   };
+}
+
+/**
+ * Pick the CNG performer's TLS from how the cluster is exposed. Only an OpenShift
+ * cluster allocated with `cao.ingress: gateway` sits behind the shared gateway's
+ * publicly-trusted certificate; route ingress (cbdinocluster's default, so also any
+ * older definition without `ingress`) and k3d both present CNG's self-signed
+ * certificate, so those stay insecure. Pure logic.
+ */
+export function cngPerformerTls(ingress: string | undefined, backend: CngKubernetesBackend): CngTls {
+  return backend === "openshift" && ingress === "gateway" ? {} : { insecure: true };
+}
+
+/** A short human-readable label for a {@link CngTls}, for logs. Pure logic. */
+export function describeCngTls(tls: CngTls): string {
+  return "insecure" in tls ? "TLS without certificate verification" : "TLS verified against the default trust store";
 }
 
 /** Merge the OpenShift k8s block into an existing cbdinocluster init config. */

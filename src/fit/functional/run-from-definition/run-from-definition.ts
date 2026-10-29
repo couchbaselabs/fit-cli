@@ -1043,7 +1043,12 @@ export function situationalCbdinoSettings(
   return {
     ...DEFAULT_CBDINO_SETTINGS,
     version: cngClusterVersion,
-    cao: { operatorVersion: caoOperatorVersion, gatewayVersion: cngVersion },
+    cao: {
+      operatorVersion: caoOperatorVersion,
+      gatewayVersion: cngVersion,
+      // Expose the cluster through ROSA's shared gateway, so the driver can verify TLS (see specs/cng.md).
+      ...(cngKubernetesBackend() === "openshift" ? { ingress: "gateway" } : {}),
+    },
     enablePrivateEndpoint: privateEndpoint,
   };
 }

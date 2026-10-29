@@ -25,7 +25,7 @@ import { posixQuote } from "../../util/non-fit/remote-target.js";
 import { findOnPath } from "../../util/non-fit/which.js";
 import { CAPELLA_DEFAULT_CREDENTIALS, DEFAULT_CREDENTIALS } from "../cluster-select/ask-credentials.js";
 import { classifyConnectionString } from "../cluster-select/classify-connection-string.js";
-import type { SelectedCluster } from "../cluster-select/cluster-select.js";
+import type { CngTls, SelectedCluster } from "../cluster-select/cluster-select.js";
 import { parseClusterIds, type CbdinoCluster } from "../cluster-select/parse-cluster-ids.js";
 import { parseConnstr } from "../cluster-select/parse-connstr.js";
 import {
@@ -37,8 +37,7 @@ import { CBDINOCLUSTER_URL, DEFAULT_CAPELLA_ENV } from "../../fit/util/config.js
 import { printCapellaDebugLinks } from "./capella-debug-links.js";
 import { buildCbdinoclusterFromPr, installCbdinoclusterRemote } from "./install-cbdinocluster.js";
 import { installCaoCrdsAndAdmission } from "./install-cao-tools.js";
-import { cngKubernetesBackend, logOpenShiftCapacity } from "./cng-openshift.js";
-import { enableIngresses } from "./cao-ingress.js";
+import { cngKubernetesBackend, cngPerformerTls, describeCngTls, logOpenShiftCapacity } from "./cng-openshift.js";
 import { type ClusterExistsPolicy } from "./cluster-exists-policy.js";
 import { loadEnvironments } from "../../fit/util/environments.js";
 import { cngServerImageRef, type CbdinoclusterDef } from "./build-cluster-def.js";
@@ -604,6 +603,7 @@ async function selectedClusterFor(
   loadBalanced = false,
   privateEndpoint = false,
   privateConnectionString?: string,
+  cngTls: CngTls = { insecure: true },
 ): Promise<SelectedCluster | undefined> {
   // CAO/OpenShift clusters: build connstrs from the parsed route hostnames
   // instead of calling `cbdinocluster connstr` (which returns "no endpoint available").
@@ -614,12 +614,12 @@ async function selectedClusterFor(
     // cngHost comes from `cbdinocluster connstr --couchbase2` with port already included.
     const performerConnectionString = `couchbase2://${caoHosts.cngHost}`;
     console.log(`→ setup-cluster: CNG cluster ${id} management at ${managementConnstr}`);
-    console.log(`→ setup-cluster: CNG performer connects over ${performerConnectionString}`);
+    console.log(`→ setup-cluster: CNG performer connects over ${performerConnectionString} (${describeCngTls(cngTls)})`);
     const cluster = buildSelectedClusterFromConnstr(managementConnstr);
     if (!cluster) {
       return undefined;
     }
-    return { ...cluster, cng: { performerConnectionString, tls: { insecure: true } } };
+    return { ...cluster, cng: { performerConnectionString, tls: cngTls } };
   }
 
   // Private endpoint mode: connect over the PrivateLink connection string instead of
@@ -666,10 +666,10 @@ async function selectedClusterFor(
     console.error(`✗ setup-cluster: CNG cluster ${id} has no couchbase2 connection string for the performer.`);
     return undefined;
   }
-  console.log(`→ setup-cluster: CNG performer connects over ${performerConnectionString}`);
+  console.log(`→ setup-cluster: CNG performer connects over ${performerConnectionString} (${describeCngTls(cngTls)})`);
   return {
     ...cluster,
-    cng: { performerConnectionString, tls: { insecure: true } },
+    cng: { performerConnectionString, tls: cngTls },
   };
 }
 
@@ -994,6 +994,7 @@ async function allocate(
   loadBalanced: boolean,
   privateEndpoint = false,
   capellaEnvironment?: string,
+  cngTls?: CngTls,
 ): Promise<SetupDeclarativeClusterResult> {
   const resolvedConfig = {
     ...config,
@@ -1040,12 +1041,6 @@ async function allocate(
     }
   }
 
-  // cao (CNG) clusters need their ingresses enabled before the data/REST planes —
-  // and so the performer's couchbase2 connection string — become reachable.
-  if (cng) {
-    await enableIngresses(cbdinocluster, allocated.clusterId, execution);
-  }
-
   const privateEndpointResult =
     deployer === "cloud" && privateEndpoint
       ? await setupPrivateEndpoint(cbdinocluster, allocated.clusterId, execution, allocated.couchbaseClusterUuid)
@@ -1064,6 +1059,7 @@ async function allocate(
     loadBalanced,
     deployer === "cloud" && privateEndpoint,
     privateEndpointResult?.connectionString,
+    cngTls,
   );
 
   if (cng && allocated.caoHosts) {
@@ -1148,6 +1144,7 @@ export async function setupDeclarativeCluster(plan: {
   // balancer (docker `passive-load-balancer`); its Analytics SDK performer must
   // connect through that single LB host, not the driver's multi-seed node list.
   const loadBalanced = plan.config.docker?.["passive-load-balancer"] === true;
+  const cngTls = cng ? cngPerformerTls(plan.config.cao?.ingress, cngKubernetesBackend()) : undefined;
   const cbdinocluster = await resolveCbdinoclusterCommand(execution, plan.source);
   if (!cbdinocluster) {
     console.error(
@@ -1229,6 +1226,7 @@ export async function setupDeclarativeCluster(plan: {
       loadBalanced,
       reusedPrivateEndpoint,
       privateConnectionString,
+      cngTls,
     );
     if (cluster && plan.deployer === "cloud" && plan.config?.columnar) {
       cluster = { ...cluster, capellaAnalytics: true };
@@ -1285,6 +1283,7 @@ export async function setupDeclarativeCluster(plan: {
     loadBalanced,
     plan.capella?.privateEndpoint !== undefined,
     effectiveDeployer === "cloud" ? (plan.capellaEnvironment ?? DEFAULT_CAPELLA_ENV) : undefined,
+    cngTls,
   );
   return { ...allocated, ...poolResult };
 }
