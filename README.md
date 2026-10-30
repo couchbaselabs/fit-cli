@@ -133,7 +133,7 @@ For development (from source with Bun):
 - `bun run test` — run the unit tests.  Note - these always need to be kept instant - business logic only.  If it's slow, just don't test it.
 
 ## Capella
-When running locally, we use Capella creds from your fit-cli config.  Generally you just need to provide your email address.  We default to using Capella's production environment.
+When running locally, we use Capella creds from your fit-cli config.  Generally you just need to provide your email address.  We default to the Capella environment set by `defaults.defaultCapellaEnvironment` in environments.json5.
 When running on CI, the user chooses what Capella environment to use (stage, dev, etc.) and we use previously-setup accounts for those. 
 cbdinocluster's cloud deployer authenticates with a Capella v4 organization API key.  By default the shared per-environment key is read from AWS Secrets Manager; override it with CAPELLA_API_KEY / CAPELLA_API_SECRET (or `config edit`).  The v2 username/password are still used for custom image deploys, server version changes, and columnar operations.
 
