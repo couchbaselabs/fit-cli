@@ -8,9 +8,6 @@
   instances: [
     {
       aws: {},
-      setup: {
-        capellaEnvironment: 'prod',
-      },
       clusters: [],
       clusterlessSessions: [
         {
@@ -40,9 +37,6 @@
     // to run release sign-off on. Restore `gcp: {}` once it is reliable.
     {
       aws: {},
-      setup: {
-        capellaEnvironment: 'prod',
-      },
       clusters: [],
       clusterlessSessions: [
         {

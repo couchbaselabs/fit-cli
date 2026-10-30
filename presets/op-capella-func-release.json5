@@ -72,7 +72,6 @@
         onClusterExists: 'useExisting',
         capella: {
           cloudProvider: 'aws',
-          environment: 'prod',
         },
       },
     },
@@ -93,7 +92,6 @@
         onClusterExists: 'useExisting',
         capella: {
           cloudProvider: 'aws',
-          environment: 'prod',
         },
       },
     },
