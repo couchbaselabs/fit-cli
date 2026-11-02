@@ -1,10 +1,10 @@
 /**
  * Which series the headlines count, and when a night is clean.
  *
- * Every view that leads with a number - the digest, the top page, the weekly wrap-up - counts the
- * active functional series. The situational presets (today, the Capella scenarios) stay out until
- * their infrastructure is stable enough for a failure to say something about the SDK: they are
- * still on each SDK's page. To count them, change `isCounted`.
+ * Every view that leads with a number - the digest, the top page, the weekly wrap-up - counts every
+ * active series: functional and situational (today, the Capella scenarios) alike. A failed Capella
+ * scenario spoils a night as much as a failed functional test. An inactive series (none in the
+ * window) is still on its SDK's page, but counts nowhere. To change what counts, change `isCounted`.
  *
  * A clean night is one with nothing to fix: every counted series that had started by then (had
  * results, or aborted trying) ran, gave full results (JUnit, not only the CI log, and not degraded) and failed nothing. Skipped
@@ -13,7 +13,7 @@
 import type { ReportSeries } from "./build-report.js";
 
 /** A series the headlines count. */
-export const isCounted = (s: Pick<ReportSeries, "kind" | "active">): boolean => s.active && s.kind === "functional";
+export const isCounted = (s: Pick<ReportSeries, "active">): boolean => s.active;
 
 /** The parts of a series `isClean` reads. */
 export type CleanSeries = Pick<ReportSeries, "kind" | "active" | "ran" | "testCounts" | "perNight"> & Partial<Pick<ReportSeries, "aborted">>;

@@ -9,6 +9,7 @@
  */
 import type { ChangeAnalysis, DriverChanges, SdkChanges } from "./changes.js";
 import type { CrossSdk } from "./cross.js";
+import { isCounted } from "./clean.js";
 import { buildDigest, type Digest } from "./digest.js";
 import { sdkCommitOf, type RunManifest } from "../record/run-manifest.js";
 import type { RunRecord } from "../record/run-record.js";
@@ -196,7 +197,7 @@ export interface HealthReport {
   start: string;
   end: string;
   dates: string[];
-  /** Nights with no functional results at all (every functional run aborted or missing). */
+  /** Nights with no results at all from the counted series (clean.ts): every run aborted or missing. */
   blackout: string[];
   /**
    * `windowDays`: the days a test is classified over. `recentDays`: how far back "started" and
@@ -422,10 +423,10 @@ export function buildHealthReport(
   const series = built
     .map((s) => reportSeries(s, end, notes, manifestOf, repo))
     .sort((a, b) => rank(a) - rank(b) || a.id.localeCompare(b.id));
-  const functional = series.filter((s) => s.kind === "functional");
-  // No usable functional results from any preset: none ran, or every one that did was
+  const counted = series.filter(isCounted);
+  // No usable results from any counted preset (clean.ts): none ran, or every one that did was
   // degraded or truncated that night (perNight is null for those).
-  const blackout = dates.filter((d) => !functional.some((s) => d in s.perNight && s.perNight[d] !== null));
+  const blackout = dates.filter((d) => !counted.some((s) => d in s.perNight && s.perNight[d] !== null));
 
   const report: Omit<HealthReport, "digest"> = {
     sdk,

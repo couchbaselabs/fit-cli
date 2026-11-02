@@ -20,7 +20,7 @@ export function renderTerminal(report: HealthReport): string {
     lines.push(`${s.label.padEnd(width)}${shown.map((c) => String(s.counts[c] || "·").padStart(col)).join("")}`);
   }
 
-  // The functional series' changes, as the page and Slack list them (report.digest).
+  // The counted series' changes, as the page and Slack list them (report.digest).
   const d = report.digest;
   lines.push("", `Started failing, last ${report.classes.recentDays} days (${d.started.total}):`);
   for (const g of d.startedGroups) for (const t of g.tests) lines.push(`  ${g.where.padEnd(26)} since ${g.since}  ${t}`);

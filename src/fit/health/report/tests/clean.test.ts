@@ -22,10 +22,9 @@ const series = (testCounts: Record<string, NightTests>, more: Partial<CleanSerie
   ...more,
 });
 
-test("the counted series are the active functional ones", () => {
-  assert.equal(isCounted({ kind: "functional", active: true }), true);
-  assert.equal(isCounted({ kind: "situational", active: true }), false);
-  assert.equal(isCounted({ kind: "functional", active: false }), false);
+test("the counted series are the active ones, functional and situational", () => {
+  assert.equal(isCounted({ active: true }), true);
+  assert.equal(isCounted({ active: false }), false);
 });
 
 test("a night is clean when every counted series ran, gave full results and failed nothing", () => {
@@ -43,13 +42,16 @@ test("a night is not clean when a counted series didn't run, or left only its lo
   assert.equal(isClean([onprem], "d9"), false, "no results at all");
 });
 
-test("a series that hadn't started yet isn't missing; situational series don't count either way", () => {
+test("a series that hadn't started yet isn't missing; a situational failure spoils the night", () => {
   const onprem = series({ d1: full(100, 0), d2: full(100, 0) });
   const cng = series({ d2: full(50, 0) });
   assert.equal(isClean([onprem, cng], "d1"), true);
-  const capella = series({ d1: full(5, 3) }, { kind: "situational" });
-  assert.equal(isClean([onprem, capella], "d1"), true);
-  assert.equal(isClean([capella], "d1"), false, "nothing counted, nothing clean");
+  const capella = series({ d1: full(4, 1), d2: full(5, 0) }, { kind: "situational" });
+  assert.equal(isClean([onprem, capella], "d1"), false, "a Capella scenario failed");
+  assert.equal(isClean([onprem, capella], "d2"), true);
+  const old = series({ d1: full(5, 3) }, { kind: "situational", active: false });
+  assert.equal(isClean([onprem, old], "d1"), true, "an inactive series counts nowhere");
+  assert.equal(isClean([old], "d1"), false, "nothing counted, nothing clean");
 });
 
 test("a series that aborted has started: before its first results, or with none at all", () => {

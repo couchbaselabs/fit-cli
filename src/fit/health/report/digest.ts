@@ -1,18 +1,16 @@
 /**
  * The digest of a health report: the lists and counts every view leads with - what failed
  * last night, what keeps failing, what started and stopped failing, what stopped running, last night's test counts, and what
- * the data can't vouch for. Built once here, over the active functional series, and carried in
- * report.json; the page, Slack, Markdown and terminal renderers only format it.
- *
- * Situational presets are kept out: they run a handful of scored scenarios, and the page shows
- * them on their own.
+ * the data can't vouch for. Built once here, over the counted series (clean.ts: every active one,
+ * functional and situational), and carried in report.json; the page, Slack, Markdown and terminal
+ * renderers only format it.
  */
 import type { HealthReport, NightTests, ReportSeries } from "./build-report.js";
 import type { TestClass } from "./classify.js";
 import { cleanNights, isCounted } from "./clean.js";
 import { addDays, daysBetween } from "./dates.js";
 
-/** A total over the functional series, and each one's part of it by short name. */
+/** A total over the counted series, and each one's part of it by short name. */
 export interface DigestCount {
   total: number;
   bySeries: { series: string; n: number }[];
@@ -102,7 +100,7 @@ export interface FailedLastNight extends DigestCount {
 export interface Digest {
   /** Failing every night they ran in the window, or 3+ nights in a row: what keeps failing. */
   persistent: DigestCount;
-  /** Absent when no functional series ran on the report's end date. */
+  /** Absent when no counted series ran on the report's end date. */
   failedLastNight?: FailedLastNight;
   started: DigestCount;
   stopped: DigestCount;
@@ -118,6 +116,8 @@ export interface Digest {
    * absent when none is.
    */
   lastNight?: { tests: number; skipped: number; testCases: number; bySeries: { series: string; tests: number }[] };
+  /** The ids of the series the digest counts (clean.ts), so a renderer needn't repeat the rule. */
+  counted: string[];
   /** The report's clean nights (clean.ts), oldest first. */
   cleanNights: string[];
   /** In the classification window: nights with no usable results, and runs with no readable log. */
@@ -198,6 +198,7 @@ export function buildDigest(report: Omit<HealthReport, "digest">): Digest {
           },
         }
       : {}),
+    counted: func.map((s) => s.id),
     cleanNights: cleanNights(report.series, report.dates),
     gaps: report.blackout.filter((d) => d >= windowStart),
     unreadableRuns: report.source.unreadableRuns.filter((r) => r.date >= windowStart),
