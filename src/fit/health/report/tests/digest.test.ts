@@ -52,10 +52,10 @@ test("started tests group by class, night and series, newest first, situational 
       ["Other", ["Other.c"], "2026-09-25", "on-prem"],
       ["LockTest", ["LockTest.a", "LockTest.b"], "2026-09-21", "on-prem"],
       ["LockTest", ["LockTest.a"], "2026-09-21", "CNG"],
-      ["Scenario", ["Scenario.x"], "2026-09-21", "Capella · public endpoint"],
+      ["Scenario", ["Scenario.x"], "2026-09-21", "Capella"],
     ],
   );
-  assert.deepEqual(digest.started, { total: 5, bySeries: [{ series: "on-prem", n: 3 }, { series: "CNG", n: 1 }, { series: "Capella · public endpoint", n: 1 }] });
+  assert.deepEqual(digest.started, { total: 5, bySeries: [{ series: "on-prem", n: 3 }, { series: "CNG", n: 1 }, { series: "Capella", n: 1 }] });
   assert.equal(digest.persistent.total, 5);
 });
 

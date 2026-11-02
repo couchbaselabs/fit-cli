@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { RUN_RECORD_SCHEMA, addOutcome, type RunRecord } from "../../record/run-record.js";
-import { buildHealthReport, presetWhere, RECENT_DAYS, reportFindings } from "../build-report.js";
+import { buildHealthReport, presetShort, presetWhere, RECENT_DAYS, reportFindings } from "../build-report.js";
 import { startedTests, stoppedRunningTests, stoppedTests } from "../digest.js";
 import { buildSeries, testHistories } from "../series.js";
 
@@ -134,6 +134,9 @@ test("a series that last ran before the window is not active", () => {
 test("labels say where a preset runs", () => {
   assert.equal(presetWhere("op-capella-pe-sit-lite", {}), "Capella · private endpoint");
   assert.equal(presetWhere("op-capella-sit-lite", {}), "Capella · public endpoint");
+  assert.equal(presetShort("op-capella-pe-sit-lite", {}), "Capella PE");
+  assert.equal(presetShort("op-capella-sit-lite", {}), "Capella");
+  assert.equal(presetShort("op-cng-func-lite", {}), "CNG");
   assert.equal(presetWhere("op-cng-func-lite", {}), "CNG");
   assert.equal(presetWhere("op-onprem-func-lite", {}), "on-prem");
   assert.equal(presetWhere("qe-set", {}), "qe-set preset");

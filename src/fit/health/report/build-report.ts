@@ -148,6 +148,7 @@ export function nightTests(record: RunRecord): NightTests {
 export interface ReportSeries {
   id: string;
   label: string;
+  /** For a count's split: "on-prem", "CNG", "Capella", "Capella PE" (presetShort). */
   short: string;
   preset: string;
   kind: RunRecord["kind"];
@@ -229,6 +230,15 @@ export function presetWhere(preset: string, params: Record<string, unknown>): st
   if (/^op-cng-/.test(preset) || params.gateway === "cng") return "CNG";
   if (/^op-onprem-/.test(preset)) return "on-prem";
   return `${preset} preset`;
+}
+
+/**
+ * Where a preset runs, in the few characters a count's split has ("0 on-prem · 1 Capella PE"):
+ * the Capella presets are "Capella" and "Capella PE". Labels and headings keep presetWhere.
+ */
+export function presetShort(preset: string, params: Record<string, unknown>): string {
+  const where = presetWhere(preset, params);
+  return where === "Capella · private endpoint" ? "Capella PE" : where === "Capella · public endpoint" ? "Capella" : where;
 }
 
 type Manifests = ReadonlyMap<string, RunManifest>;
@@ -323,7 +333,7 @@ function reportSeries(s: Series, end: string, notes: ReportNotes, manifests: Man
   return {
     id: s.id,
     label: `${kind} · ${where}${s.variant ? ` · ${s.variant}` : ""}${multiCluster && clusters[0] ? ` (${clusters[0].cluster})` : ""}`,
-    short: where,
+    short: presetShort(s.preset, s.params),
     preset: s.preset,
     kind: s.kind,
     params: s.params,
