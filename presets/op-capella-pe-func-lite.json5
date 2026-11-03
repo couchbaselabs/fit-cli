@@ -51,6 +51,7 @@
         onClusterExists: 'useExisting',
         capella: {
           cloudProvider: 'aws',
+          environment: 'dev',
           privateEndpoint: {},
         },
       },
