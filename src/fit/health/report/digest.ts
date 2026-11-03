@@ -7,7 +7,7 @@
  */
 import type { HealthReport, NightTests, ReportSeries } from "./build-report.js";
 import type { TestClass } from "./classify.js";
-import { cleanNights, isCounted } from "./clean.js";
+import { cleanNights, isCounted, notFullOn, type NotFull } from "./clean.js";
 import { addDays, daysBetween } from "./dates.js";
 
 /** A total over the counted series, and each one's part of it by short name. */
@@ -120,6 +120,11 @@ export interface Digest {
   counted: string[];
   /** The report's clean nights (clean.ts), oldest first. */
   cleanNights: string[];
+  /**
+   * The counted series that should have run on the end date but gave no full results, by short
+   * name: why "0 failed" can still be a night that isn't clean.
+   */
+  notFullLastNight: { series: string; why: NotFull }[];
   /** In the classification window: nights with no usable results, and runs with no readable log. */
   gaps: string[];
   unreadableRuns: HealthReport["source"]["unreadableRuns"];
@@ -200,6 +205,7 @@ export function buildDigest(report: Omit<HealthReport, "digest">): Digest {
       : {}),
     counted: func.map((s) => s.id),
     cleanNights: cleanNights(report.series, report.dates),
+    notFullLastNight: notFullOn(report.series, end).map((x) => ({ series: x.series.short, why: x.why })),
     gaps: report.blackout.filter((d) => d >= windowStart),
     unreadableRuns: report.source.unreadableRuns.filter((r) => r.date >= windowStart),
   };

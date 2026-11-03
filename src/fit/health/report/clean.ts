@@ -21,19 +21,32 @@ export type CleanSeries = Pick<ReportSeries, "kind" | "active" | "ran" | "testCo
 /** The first night a series ran, with results or not: an abort before any results is a start. */
 const started = (s: CleanSeries): string | undefined => [...s.ran.slice(0, 1), ...(s.aborted ?? []).map((a) => a.date)].sort()[0];
 
-/** Whether `date` was a clean night across the counted series. */
-export function isClean(series: readonly CleanSeries[], date: string): boolean {
-  const counted = series.filter(isCounted);
+/** Why a counted series gave no full results on a night: none at all, only its CI log, or degraded. */
+export type NotFull = "none" | "log" | "degraded";
+
+/** The counted series due on `date` (they had started by then), and those of them without full results. */
+function dueOn<S extends CleanSeries>(series: readonly S[], date: string): { due: S[]; notFull: { series: S; why: NotFull }[] } {
   // A series that hadn't started by then isn't missing from that night.
-  const due = counted.filter((s) => {
+  const due = series.filter(isCounted).filter((s) => {
     const from = started(s);
     return from !== undefined && from <= date;
   });
-  if (!due.length) return false;
-  return due.every((s) => {
+  const notFull = due.flatMap((s) => {
     const c = s.testCounts[date];
-    return !!c && c.tests !== undefined && c.failing === 0 && s.perNight[date] === 0;
+    const why: NotFull | undefined = !c ? "none" : s.perNight[date] === null ? "degraded" : c.tests === undefined ? "log" : undefined;
+    return why ? [{ series: s, why }] : [];
   });
+  return { due, notFull };
+}
+
+/** The counted series that should have run on `date` but gave no full results: each keeps the night from being clean. */
+export const notFullOn = <S extends CleanSeries>(series: readonly S[], date: string) => dueOn(series, date).notFull;
+
+/** Whether `date` was a clean night across the counted series. */
+export function isClean(series: readonly CleanSeries[], date: string): boolean {
+  const { due, notFull } = dueOn(series, date);
+  if (!due.length || notFull.length) return false;
+  return due.every((s) => s.testCounts[date].failing === 0 && s.perNight[date] === 0);
 }
 
 /** The clean nights among `dates`. */
