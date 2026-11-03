@@ -145,7 +145,7 @@ export interface ResolvedInstancePlan {
   /** Where to get the cbdinocluster binary. Absent means latest release. */
   cbdinoclusterSource?: CbdinoclusterSource;
   clusterlessSessions: ResolvedSessionPlan[];
-  /** Resolved Capella environment for this instance (instance.setup.capellaEnvironment → "prod"). */
+  /** Resolved Capella environment for this instance (instance.setup.capellaEnvironment → "dev"). */
   capellaEnvironment: string;
 }
 
