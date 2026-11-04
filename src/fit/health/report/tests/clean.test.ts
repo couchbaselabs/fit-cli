@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { NightTests } from "../build-report.js";
-import { cleanNights, isClean, isCounted, type CleanSeries } from "../clean.js";
+import { cleanNights, isClean, isCounted, isCountedOn, type CleanSeries } from "../clean.js";
 
 const full = (passed: number, failing: number, skipped = 0): NightTests => ({ testCases: passed + failing + skipped, tests: passed + failing + skipped, passed, failing, skipped });
 const logOnly = (failing: number): NightTests => ({ testCases: 500, failing });
@@ -69,4 +69,15 @@ test("a series that aborted has started: before its first results, or with none 
 test("cleanNights keeps the clean ones, in order", () => {
   const s = [series({ d1: full(10, 0), d2: full(10, 2), d3: full(10, 0) })];
   assert.deepEqual(cleanNights(s, ["d1", "d2", "d3", "d4"]), ["d1", "d3"]);
+});
+
+test("a series that stopped counting still counts on its own nights, and not after its last try", () => {
+  const onprem = series({ d1: full(100, 0), d2: full(100, 0), d3: full(100, 0) });
+  const gone = series({ d1: full(50, 2), d2: full(50, 0) }, { active: false, countedUntil: "d2" });
+  assert.equal(isCountedOn(gone, "d1"), true);
+  assert.equal(isCountedOn(gone, "d3"), false);
+  assert.equal(isCountedOn(series({ d1: full(1, 0) }, { active: false }), "d1"), false, "no countedUntil, never counted");
+  assert.equal(isClean([onprem, gone], "d1"), false, "its failure that night still spoils it");
+  assert.equal(isClean([onprem, gone], "d2"), true);
+  assert.equal(isClean([onprem, gone], "d3"), true, "after its last try it isn't missing");
 });

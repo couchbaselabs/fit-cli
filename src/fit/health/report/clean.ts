@@ -3,8 +3,10 @@
  *
  * Every view that leads with a number - the digest, the top page, the weekly wrap-up - counts every
  * active series: functional and situational (today, the Capella scenarios) alike. A failed Capella
- * scenario spoils a night as much as a failed functional test. An inactive series (none in the
- * window) is still on its SDK's page, but counts nowhere. To change what counts, change `isCounted`.
+ * scenario spoils a night as much as a failed functional test. A series that stopped counting (not
+ * tried in the SDK's last few nightly runs: build-report.ts ACTIVE_RUNS) counts on the nights up to
+ * its last try, when it was in the nightly, so a night's numbers don't change after it; today's
+ * lists leave it out. To change what counts, change `isCounted` and `isCountedOn`.
  *
  * A clean night is one with nothing to fix: every counted series that had started by then (had
  * results, or aborted trying) ran, gave full results (JUnit, not only the CI log, and not degraded) and failed nothing. Skipped
@@ -12,11 +14,15 @@
  */
 import type { ReportSeries } from "./build-report.js";
 
-/** A series the headlines count. */
+/** A series the headlines count now: today's lists, last night, what is failing at the end. */
 export const isCounted = (s: Pick<ReportSeries, "active">): boolean => s.active;
 
+/** A series counted on `date`: an active one, or one that stopped counting, up to its last try. */
+export const isCountedOn = (s: Pick<ReportSeries, "active"> & Partial<Pick<ReportSeries, "countedUntil">>, date: string): boolean =>
+  s.active || (s.countedUntil !== undefined && date <= s.countedUntil);
+
 /** The parts of a series `isClean` reads. */
-export type CleanSeries = Pick<ReportSeries, "kind" | "active" | "ran" | "testCounts" | "perNight"> & Partial<Pick<ReportSeries, "aborted">>;
+export type CleanSeries = Pick<ReportSeries, "kind" | "active" | "ran" | "testCounts" | "perNight"> & Partial<Pick<ReportSeries, "aborted" | "countedUntil">>;
 
 /** The first night a series ran, with results or not: an abort before any results is a start. */
 const started = (s: CleanSeries): string | undefined => [...s.ran.slice(0, 1), ...(s.aborted ?? []).map((a) => a.date)].sort()[0];
@@ -27,7 +33,7 @@ export type NotFull = "none" | "log" | "degraded";
 /** The counted series due on `date` (they had started by then), and those of them without full results. */
 function dueOn<S extends CleanSeries>(series: readonly S[], date: string): { due: S[]; notFull: { series: S; why: NotFull }[] } {
   // A series that hadn't started by then isn't missing from that night.
-  const due = series.filter(isCounted).filter((s) => {
+  const due = series.filter((s) => isCountedOn(s, date)).filter((s) => {
     const from = started(s);
     return from !== undefined && from <= date;
   });

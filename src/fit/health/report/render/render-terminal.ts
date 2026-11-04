@@ -31,6 +31,11 @@ export function renderTerminal(report: HealthReport): string {
     for (const t of d.stoppedRunning) lines.push(`  ${t.where.padEnd(26)} not run since ${t.since}  ${t.test}`);
   }
 
+  if (d.stoppedCounting.length) {
+    lines.push("", `Stopped counting, not tried in the last ${report.activeRuns} nightly runs (${d.stoppedCounting.length}):`);
+    for (const x of d.stoppedCounting) lines.push(`  ${x.series.padEnd(26)} last tried ${x.last}`);
+  }
+
   if (d.failedLastNight) {
     const f = d.failedLastNight;
     lines.push("", `Failed last night (${f.atLeast ? "at least " : ""}${f.total}: ${f.persistent} persistent, ${f.new} new, ${f.intermittent} intermittent):`);

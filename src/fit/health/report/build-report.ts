@@ -9,7 +9,7 @@
  */
 import type { ChangeAnalysis, DriverChanges, SdkChanges } from "./changes.js";
 import type { CrossSdk } from "./cross.js";
-import { isCounted } from "./clean.js";
+import { isCountedOn } from "./clean.js";
 import { buildDigest, type Digest } from "./digest.js";
 import { sdkCommitOf, type RunManifest } from "../record/run-manifest.js";
 import type { RunRecord } from "../record/run-record.js";
@@ -186,6 +186,11 @@ export interface ReportSeries {
    * nightly runs, or not in the window at all: shown, but kept out of the headline.
    */
   active: boolean;
+  /**
+   * For a series that stopped counting: the last night it was tried. It still counts on the
+   * nights up to then (clean.ts isCountedOn) - it was in the nightly - so its history stays.
+   */
+  countedUntil?: string;
 }
 
 export interface ParamComparison {
@@ -215,6 +220,8 @@ export interface HealthReport {
    * "stopped failing" (and "stopped running") look.
    */
   classes: { order: readonly TestClass[]; labels: Record<TestClass, string>; blurbs: Record<TestClass, string>; windowDays: number; recentDays: number };
+  /** A series counts while the SDK's last this-many nightly runs tried it (ACTIVE_RUNS). */
+  activeRuns: number;
   /** Every SDK's display name by its value ("dotnet" -> ".NET"), for naming other SDKs. */
   sdkNames: Record<string, string>;
   series: ReportSeries[];
@@ -341,6 +348,7 @@ function reportSeries(s: Series, end: string, notes: ReportNotes, manifests: Man
   const multiCluster = s.id.split("|").length > 2;
   const tried = [...s.ran, ...s.aborted.map((a) => a.date)].sort();
   const lastTried = tried.at(-1);
+  const active = !!lastTried && daysBetween(lastTried, end) < WINDOW_DAYS && tried.some((d) => recentRuns.has(d));
   return {
     id: s.id,
     label: `${kind} · ${where}${s.variant ? ` · ${s.variant}` : ""}${multiCluster && clusters[0] ? ` (${clusters[0].cluster})` : ""}`,
@@ -360,7 +368,8 @@ function reportSeries(s: Series, end: string, notes: ReportNotes, manifests: Man
     counts,
     tests,
     stoppedRunningEarlier,
-    active: !!lastTried && daysBetween(lastTried, end) < WINDOW_DAYS && tried.some((d) => recentRuns.has(d)),
+    active,
+    ...(!active && lastTried ? { countedUntil: lastTried } : {}),
   };
 }
 
@@ -451,10 +460,9 @@ export function buildHealthReport(
   const series = built
     .map((s) => reportSeries(s, end, notes, manifestOf, repo, recentRuns))
     .sort((a, b) => rank(a) - rank(b) || a.id.localeCompare(b.id));
-  const counted = series.filter(isCounted);
-  // No usable results from any counted preset (clean.ts): none ran, or every one that did was
-  // degraded or truncated that night (perNight is null for those).
-  const blackout = dates.filter((d) => !counted.some((s) => d in s.perNight && s.perNight[d] !== null));
+  // No usable results from any preset counted that night (clean.ts): none ran, or every one that
+  // did was degraded or truncated (perNight is null for those).
+  const blackout = dates.filter((d) => !series.some((s) => isCountedOn(s, d) && d in s.perNight && s.perNight[d] !== null));
 
   const report: Omit<HealthReport, "digest"> = {
     sdk,
@@ -465,6 +473,7 @@ export function buildHealthReport(
     dates,
     blackout,
     classes: { order: CLASS_ORDER, labels: CLASS_LABELS, blurbs: CLASS_BLURBS, windowDays: WINDOW_DAYS, recentDays: RECENT_DAYS },
+    activeRuns: ACTIVE_RUNS,
     sdkNames: Object.fromEntries(SDKS.map((s) => [s.value, s.name])),
     series,
     comparisons: paramComparisons(series, historyOf),

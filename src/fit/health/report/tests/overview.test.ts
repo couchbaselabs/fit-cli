@@ -218,3 +218,12 @@ test("an SDK's state is how its own latest night went", () => {
   const dotnet = o.sdks.find((s) => s.sdk === "dotnet")!;
   assert.deepEqual(dotnet.days.map((d) => typeof d === "object" && d.clean), [false, true]);
 });
+
+test("a series that stopped counting adds to the nights up to its last try, so they don't change", () => {
+  const n = nightTotals([
+    series({ "2026-09-29": full(100, 0, 0), "2026-09-30": full(100, 0, 0) }),
+    series({ "2026-09-29": full(40, 2, 0) }, { active: false, countedUntil: "2026-09-29" }),
+  ]);
+  assert.deepEqual([n.get("2026-09-29")!.failing, n.get("2026-09-29")!.runs, n.get("2026-09-29")!.clean], [2, 2, false]);
+  assert.deepEqual([n.get("2026-09-30")!.failing, n.get("2026-09-30")!.runs, n.get("2026-09-30")!.clean], [0, 1, true]);
+});

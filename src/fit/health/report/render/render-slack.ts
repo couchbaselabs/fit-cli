@@ -85,6 +85,9 @@ export function renderSlackDigest(report: HealthReport, sdkName: string, reportU
   const headline = [
     `*${slackEscape(sdkName)} FIT health* · nightly run of ${weekdayDate(report.end)} (UTC date) · updated ${slackLocalTime(report.generatedAt)} · last ${report.classes.windowDays} days`,
     ...lastNight,
+    ...(d.stoppedCounting.length
+      ? [`• Stopped counting, not tried in the last ${report.activeRuns} nightly runs: ${d.stoppedCounting.map((x) => `${x.series} (last ${shortDate(x.last)})`).join(" · ")}`]
+      : []),
     `• Last ${recent} days: *${d.started.total}* started failing · *${d.stopped.total}* stopped · last ${report.classes.windowDays} days: *${d.intermittent.total}* intermittent`,
     ...(caveats.length ? [`_Data: ${caveats.join("; ")}._`] : []),
     ...(reportUrl ? [`<${reportUrl}|Full report>`] : []),

@@ -376,6 +376,11 @@ const SIT = D.series.filter((s) => s.kind === 'situational' && s.active);
 const OLD = D.series.filter((s) => !s.active);
 // The series every headline number counts (clean.ts), as the digest names them.
 const COUNTED = D.series.filter((s) => D.digest.counted.includes(s.id));
+// A night counts each series active now, and one that stopped counting up to its last try, when
+// it was still in the nightly (clean.ts isCountedOn): a night's numbers don't change after it.
+const countedOn = (s, d) => s.active || (s.countedUntil != null && d <= s.countedUntil);
+// The series counted on some night here: the chart draws a line for each.
+const CHARTED = D.series.filter((s) => s.active || D.dates.some((d) => countedOn(s, d) && d in s.perNight));
 // A series is active by its last results, so an older one can still have aborted in the window.
 const WIN_START = new Date(Date.parse(`${D.end}T00:00:00Z`) - (WIN - 1) * 864e5).toISOString().slice(0, 10);
 const abortsInWindow = (s) => (s.aborted || []).filter((a) => a.date >= WIN_START).length;
@@ -383,9 +388,9 @@ const COLORS = ['var(--series-1)', 'var(--series-2)', 'var(--series-3)', 'var(--
 const byId = Object.fromEntries(D.series.map((s) => [s.id, s]));
 
 // ----- header
-// A night is red if any counted series named a failure; usable if any had a total.
-const usableNights = D.dates.filter((d) => COUNTED.some((s) => s.perNight[d] != null));
-const redNights = usableNights.filter((d) => COUNTED.some((s) => s.perNight[d] > 0));
+// A night is red if any series counted that night named a failure; usable if any had a total.
+const usableNights = D.dates.filter((d) => CHARTED.some((s) => countedOn(s, d) && s.perNight[d] != null));
+const redNights = usableNights.filter((d) => CHARTED.some((s) => countedOn(s, d) && s.perNight[d] > 0));
 const nightsText = `<b class="num">${redNights.length}</b> of the <b class="num">${usableNights.length}</b> nights with usable results`;
 // Last night first: clean, or how many tests failed, before the window's record.
 const CLEAN = new Set(D.digest.cleanNights);
@@ -403,13 +408,18 @@ const lastNightLede = (() => {
   }
   return `<b>Last night (${fmt(D.end)}), <span class="bad">${f.atLeast ? 'at least ' : ''}${f.total}</span> test${f.total === 1 ? '' : 's'} failed</b> (${f.bySeries.map((x) => `${x.n} ${esc(x.series)}`).join(' · ')}).`;
 })();
+// A preset that left the nightly stops counting: say so while it's recent, as the counts change.
+const STOPPED_COUNTING = D.digest.stoppedCounting;
+const stoppedCounting = STOPPED_COUNTING.length
+  ? ` <b>No longer counted</b>, as the last ${D.activeRuns} nightly runs didn't try ${STOPPED_COUNTING.length === 1 ? 'it' : 'them'}: ${STOPPED_COUNTING.map((x) => `${esc(x.series)} (last ${fmt(x.last)})`).join(', ')}.`
+  : '';
 $('lede').innerHTML = (usableNights.length ? `${lastNightLede} ` : '') + (!usableNights.length
   ? 'There are no usable results in this window yet.'
   : !redNights.length
     ? `The nightly FIT run was green on all <b class="num">${usableNights.length}</b> nights with usable results.`
     : redNights.length === usableNights.length
       ? `The nightly FIT run was red on all <b class="num">${usableNights.length}</b> nights with usable results, so "did it pass?" says nothing. What matters is <em>which</em> tests fail, whether that set is shrinking, and whether a failure is ours at all.`
-      : `The nightly FIT run was red on ${nightsText}. What matters is <em>which</em> tests fail, whether that set is shrinking, and whether a failure is ours at all.`);
+      : `The nightly FIT run was red on ${nightsText}. What matters is <em>which</em> tests fail, whether that set is shrinking, and whether a failure is ours at all.`) + stoppedCounting;
 $('trend-prose').textContent = redNights.length && redNights.length === usableNights.length
   ? 'A green nightly would be zero. Every usable night in this window was red, so the useful signal is the size of this set and which way it moves.'
   : 'A green nightly would be zero. The size of this set, and which way it moves, is the signal.';
@@ -556,7 +566,7 @@ let markChartNight = () => {};
   const iw = W - m.l - m.r, ih = H - m.t - m.b;
   const N = D.dates.length;
   const x = (i) => m.l + (N > 1 ? (i / (N - 1)) * iw : iw / 2);
-  const vals = COUNTED.map((s) => D.dates.map((d) => (d in s.perNight ? s.perNight[d] : null)));
+  const vals = CHARTED.map((s) => D.dates.map((d) => (d in s.perNight && countedOn(s, d) ? s.perNight[d] : null)));
   // The band is for nights with no usable results at all; a night only one preset
   // couldn't use shows as a break in that preset's line, not as a shaded night.
   const bad = new Set(D.blackout);
@@ -577,7 +587,7 @@ let markChartNight = () => {};
   D.dates.forEach((d, i) => { if (d.endsWith('-01')) svg += `<text x="${x(i)}" y="${H - 6}" text-anchor="middle">${fmt(d)}</text>`; });
   svg += `<line x1="${m.l}" x2="${m.l + iw}" y1="${y(0)}" y2="${y(0)}" style="stroke:var(--rule-strong)"/></g>`;
   // cluster (server version) changes, per series
-  COUNTED.forEach((s) => s.clusters.slice(1).forEach((c) => {
+  CHARTED.forEach((s) => s.clusters.slice(1).forEach((c) => {
     const i = D.dates.indexOf(c.from); if (i < 0) return;
     svg += `<line x1="${x(i)}" x2="${x(i)}" y1="${m.t}" y2="${m.t + ih}" stroke="var(--muted)" stroke-dasharray="3 3"/>
       <text x="${x(i) - 5}" y="${m.t + 10}" text-anchor="end" style="fill:var(--muted);font:11px var(--sans)">${esc(s.short)} → ${esc(c.cluster)}</text>`;
@@ -590,7 +600,7 @@ let markChartNight = () => {};
     const li = vs.length - 1 - [...vs].reverse().findIndex((v) => v != null);
     if (li >= vs.length || vs[li] == null) return;
     svg += `<circle cx="${x(li)}" cy="${y(vs[li])}" r="4" fill="${COLORS[si % COLORS.length]}" stroke="var(--surface)" stroke-width="2"/>`;
-    ends.push({ x: x(li) + 9, y: y(vs[li]) + 4, text: `${COUNTED[si].short} ${vs[li]}` });
+    ends.push({ x: x(li) + 9, y: y(vs[li]) + 4, text: `${CHARTED[si].short} ${vs[li]}` });
   });
   // keep end labels apart
   ends.sort((a, b) => a.y - b.y).forEach((e, i, all) => { if (i && e.y - all[i - 1].y < 14) e.y = all[i - 1].y + 14; });
@@ -599,7 +609,7 @@ let markChartNight = () => {};
   svg += `<line id="xh" x1="0" x2="0" y1="${m.t}" y2="${m.t + ih}" stroke="var(--ink-2)" stroke-width="1" opacity="0"/>`;
   svg += `<rect id="hit" x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent"/></svg>`;
   $('chart').innerHTML = svg;
-  $('legend').innerHTML = COUNTED.map((s, i) => `<span><i style="background:${COLORS[i % COLORS.length]}"></i>${esc(s.label)}</span>`).join('') + `<span><i class="band"></i>No usable results that night</span><span><i class="pass"></i>Clean night: every preset passed</span>`;
+  $('legend').innerHTML = CHARTED.map((s, i) => `<span><i style="background:${COLORS[i % COLORS.length]}"></i>${esc(s.label)}${s.active ? '' : ` (until ${fmt(s.countedUntil)})`}</span>`).join('') + `<span><i class="band"></i>No usable results that night</span><span><i class="pass"></i>Clean night: every preset passed</span>`;
   const el = $('chart').querySelector('svg'), hit = el.querySelector('#hit'), xh = el.querySelector('#xh');
   hit.addEventListener('mousemove', (e) => {
     const r = el.getBoundingClientRect();
@@ -607,13 +617,14 @@ let markChartNight = () => {};
     const i = Math.max(0, Math.min(N - 1, Math.round(((px - m.l) / iw) * (N - 1))));
     const d = D.dates[i];
     xh.setAttribute('x1', x(i)); xh.setAttribute('x2', x(i)); xh.setAttribute('opacity', '.5');
-    const rows = COUNTED.map((s, si) => {
+    const rows = CHARTED.map((s, si) => {
+      if (!countedOn(s, d)) return '';
       if (vals[si][i] == null) return `<span class="k">${esc(s.short)}:</span> no results`;
       const t = s.testCounts && s.testCounts[d];
       const of = t && t.tests != null ? ` of ${num(t.passed + t.failing)} run · ${num(t.skipped)} skipped` : '';
       if (t && t.tests != null && vals[si][i] === 0) return `<span class="k">${esc(s.short)}:</span> <b>✓ all ${num(t.passed)} passed</b> · ${num(t.skipped)} skipped`;
       return `<span class="k">${esc(s.short)}:</span> <b>${vals[si][i]}</b> failing${of}`;
-    }).join('<br>');
+    }).filter(Boolean).join('<br>');
     showTip(`<b>${fmt(d)}</b><br>${rows}${commitOn(d) ? `<br><span class="k">commit</span> ${commitOn(d)}` : ''}`, e.clientX, e.clientY);
   });
   hit.addEventListener('mouseleave', () => { xh.setAttribute('opacity', '0'); hideTip(); });
@@ -790,7 +801,7 @@ function showNight(d) {
     : 'SDK commit not known';
   const body = i < 0
     ? `<p class="sub">This report covers ${fmtY(D.start)} to ${fmtY(D.end)}, so it has nothing for this night.</p>`
-    : [...FUNC, ...SIT, ...OLD.filter((s) => (s.aborted || []).some((a) => a.date === d))].map((s) => nightSeries(s, d)).join('') + unreadableRunsOn(d);
+    : [...FUNC, ...SIT, ...OLD.filter((s) => countedOn(s, d) && (d in s.perNight || (s.aborted || []).some((a) => a.date === d)))].map((s) => nightSeries(s, d)).join('') + unreadableRunsOn(d);
   $('night-body').innerHTML = `<div class="night-head"><h2 id="h-night">The night of ${esc(fmtY(d))}</h2><a href="#">Close</a></div>
     ${i < 0 ? '' : `<p class="sub">${commit}${D.blackout.includes(d) ? ' · no usable results this night' : ''}</p>`}${body}`;
   $('night').hidden = false;
@@ -809,7 +820,7 @@ $('footer').innerHTML = [
   `<span>Generated by <code>fit health report ${esc(D.sdk)}</code> on ${localTime(D.generatedAt)}, from ${D.source.records} run records over ${D.dates.length} nights.</span>`,
   D.blackout.length ? `<span>Nights with no usable results: ${D.blackout.map(fmt).join(', ')}.</span>` : '',
   (() => { const n = COUNTED.reduce((a, s) => a + (s.stoppedRunningEarlier || 0), 0); return n ? `<span>${n} test${n > 1 ? 's' : ''} that failed and then stopped running more than ${RECENT} days ago ${n > 1 ? 'are' : 'is'} no longer shown.</span>` : ''; })(),
-  OLD.length ? `<span>Older series not shown (no results in the last ${WIN} days): ${OLD.map((s) => { const n = abortsInWindow(s); return `${esc(s.label)} (${s.ran.length ? `${fmt(s.ran[0])}–${fmt(s.ran[s.ran.length - 1])}` : 'no results'}${n ? `; aborted on ${n} night${n > 1 ? 's' : ''} in the last ${WIN} days` : ''})`; }).join('; ')}.</span>` : '',
+  OLD.length ? `<span>Series no longer counted (not tried in the last ${D.activeRuns} nightly runs; a night before then still counts them): ${OLD.map((s) => { const n = abortsInWindow(s); return `${esc(s.label)} (${s.ran.length ? `${fmt(s.ran[0])}–${fmt(s.ran[s.ran.length - 1])}` : 'no results'}${n ? `; aborted on ${n} night${n > 1 ? 's' : ''} in the last ${WIN} days` : ''})`; }).join('; ')}.</span>` : '',
   D.source.unreadableRuns.length ? `<span>Runs with no usable log: ${D.source.unreadableRuns.map((r) => `${D.repo ? `<a href="https://github.com/${esc(D.repo)}/actions/runs/${r.runId}">${fmt(r.date)}</a>` : fmt(r.date)} (${esc(r.status)})`).join(', ')}.</span>` : '',
 ].filter(Boolean).join('');
 </script>

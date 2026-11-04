@@ -106,6 +106,12 @@ test("a night with no usable results is stated, not left out", () => {
   assert.doesNotMatch(d.headline, /Failed last night|was clean/);
 });
 
+test("a series that stopped counting is said in the headline", () => {
+  const rs = [...days(28).map((d) => rec(d)), ...days(20).map((d) => rec(d, [], { preset: "op-cng-func-lite" }))];
+  const d = renderSlackDigest(buildHealthReport("dotnet", rs, [], { end: "2026-09-28" }), ".NET");
+  assert.match(d.headline, /• Stopped counting, not tried in the last 3 nightly runs: CNG \(last 20 Sep\)/);
+});
+
 test("long lists are cut short, and Slack's control characters are escaped", () => {
   const many = Array.from({ length: 20 }, (_, i) => `C${i}.t`);
   const rs = days(28).map((d, i) => rec(d, i >= 25 ? many : []));

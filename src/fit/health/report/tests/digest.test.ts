@@ -125,3 +125,16 @@ test("the clean nights are those every series, functional and situational, passe
   assert.deepEqual(digest.cleanNights, ["2026-09-01", "2026-09-06"]);
   assert.equal(digest.counted.length, 3, "every active series is counted");
 });
+
+test("a series that stopped counting is named for the recent window, with its last try", () => {
+  // CNG left the nightly after the 10th; on-prem ran on.
+  const rs = [...days(28).map((d) => rec(d, [])), ...days(10).map((d) => rec(d, ["Cng.x"], { preset: "op-cng-func-lite" }))];
+  const at = (end: string) => buildHealthReport("dotnet", rs, [], { end }).digest;
+  assert.deepEqual(at("2026-09-12").stoppedCounting, [], "2 runs without it: still counted");
+  assert.deepEqual(at("2026-09-13").stoppedCounting, [{ series: "CNG", last: "2026-09-10" }]);
+  assert.equal(at("2026-09-13").counted.length, 1);
+  assert.deepEqual(at("2026-09-24").stoppedCounting, [], "named for RECENT_DAYS after its last try");
+  // Its nights still count: the 10th failed, so it isn't clean after the fact.
+  assert.ok(!at("2026-09-13").cleanNights.includes("2026-09-10"));
+  assert.ok(at("2026-09-13").cleanNights.includes("2026-09-11"));
+});

@@ -125,6 +125,11 @@ export interface Digest {
    * name: why "0 failed" can still be a night that isn't clean.
    */
   notFullLastNight: { series: string; why: NotFull }[];
+  /**
+   * The series that stopped counting (not tried in the SDK's last ACTIVE_RUNS nightly runs) and
+   * were last tried in the recent window, by short name: a change in what the counts cover is said.
+   */
+  stoppedCounting: { series: string; last: string }[];
   /** In the classification window: nights with no usable results, and runs with no readable log. */
   gaps: string[];
   unreadableRuns: HealthReport["source"]["unreadableRuns"];
@@ -206,6 +211,9 @@ export function buildDigest(report: Omit<HealthReport, "digest">): Digest {
     counted: func.map((s) => s.id),
     cleanNights: cleanNights(report.series, report.dates),
     notFullLastNight: notFullOn(report.series, end).map((x) => ({ series: x.series.short, why: x.why })),
+    stoppedCounting: report.series
+      .filter((s): s is ReportSeries & { countedUntil: string } => !s.active && s.countedUntil !== undefined && daysBetween(s.countedUntil, end) < recent)
+      .map((s) => ({ series: s.short, last: s.countedUntil })),
     gaps: report.blackout.filter((d) => d >= windowStart),
     unreadableRuns: report.source.unreadableRuns.filter((r) => r.date >= windowStart),
   };
