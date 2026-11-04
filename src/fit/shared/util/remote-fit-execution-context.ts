@@ -266,7 +266,7 @@ export async function createRemoteFitExecutionContext(
       const pid = (await target.capture("bash", ["-lc", backgroundShellCommand(fullCommand, targetPath)], cwd, {
         quiet: true,
       })).trim();
-      console.log(`Streaming performer logs to:\n  ${targetPath}  (on ${target.description})`);
+      console.log(`Streaming logs to:\n  ${targetPath}  (on ${target.description})`);
       return {
         drain: async () => {
           // Wait for the background process to exit (docker logs --follow exits when its container stops).

@@ -737,7 +737,7 @@ export function streamToFileInBackground(
 
   const log = createWriteStream(logFile, { flags: "a", mode: 0o600 });
   log.write(`# ${new Date().toISOString()} ${command} ${args.join(" ")}\n`);
-  console.log(`Streaming performer logs to:\n  ${logFile}`);
+  console.log(`Streaming logs to:\n  ${logFile}`);
 
   const child = spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
   // A background stream is meant to outlive whatever's convenient for the
