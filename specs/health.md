@@ -13,6 +13,8 @@ Records come from two sources, recorded on each record as `source`:
 - `run-archive-junit` - rebuilt from the JUnit reports in each run's S3 archive (`s3://fit-cli/runs/`, kept 180 days). Almost every record comes from here.
 - `run-log-scrape` - read from the run's GitHub Actions log (kept 90 days), only when there is no usable archive. Logs name only failing tests, and at most 3 per Java package, so these records undercount failures.
 
+A preset that died before any results is an aborted record, with fit-cli's fatal error as its `abortedAt` and `abortReason`; one that ran but printed no results and no fatal error is aborted too (`NoResults`): a broken night, not a skipped one. A preset fit-cli skipped on purpose (an SDK that doesn't support CNG) gets no record, only a warning on the run's manifest: it wasn't tried.
+
 A situational record also reads the scenario scores in the run's `results.tar`, and a test whose score fails it is recorded as failed, in `scoreFailures`.
 
 Nothing here changes how a test run behaves: records are built afterwards, by reading each nightly's log and archive. (A third source, `fit-cli`, is reserved for records `fit run` may one day write itself at the end of a run.)
