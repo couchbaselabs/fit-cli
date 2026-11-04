@@ -218,7 +218,7 @@ async function removeStaleContainers(execution: FitExecutionContext, names: read
 async function removeStackResources(execution: FitExecutionContext): Promise<void> {
   await execution.run(execution.dockerCommand, ["rm", "-f", ...Object.values(OTEL_CONTAINER_NAMES)]).catch(() => {});
   await execution.run(execution.dockerCommand, ["network", "rm", OTEL_NETWORK]).catch(() => {});
-  await execution.run(execution.dockerCommand, ["volume", "rm", OTEL_BADGER_VOLUME]).catch(() => {});
+  await execution.run(execution.dockerCommand, ["volume", "rm", "-f", OTEL_BADGER_VOLUME]).catch(() => {});
 }
 
 /**
@@ -265,7 +265,9 @@ export async function removeOtelStackRemnants(execution: FitExecutionContext): P
  * Removed and recreated rather than reused: the volume name is fixed per box, so a
  * leaked one would show a previous run's traces in this run's dump. Must be called
  * after the stale containers are removed, or `docker volume rm` refuses while one
- * still references it.
+ * still references it. `-f` so the usual fresh-box case, where there is no volume
+ * yet, exits 0 rather than printing a "no such volume" error that looks like a
+ * failure in the log.
  *
  * `chmodImage` only has to be some image with a shell utility and a non-distroless
  * base; the Prometheus image is used because it is already being pulled for this
@@ -274,7 +276,7 @@ export async function removeOtelStackRemnants(execution: FitExecutionContext): P
  * permitted".
  */
 export async function ensureBadgerVolume(execution: FitExecutionContext, chmodImage: string): Promise<void> {
-  await execution.run(execution.dockerCommand, ["volume", "rm", OTEL_BADGER_VOLUME]).catch(() => {});
+  await execution.run(execution.dockerCommand, ["volume", "rm", "-f", OTEL_BADGER_VOLUME]).catch(() => {});
   await execution.runHiddenUntilFailure(execution.dockerCommand, ["volume", "create", OTEL_BADGER_VOLUME]);
   await execution.run(
     execution.dockerCommand,
