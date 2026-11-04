@@ -39,7 +39,7 @@ test("a test id's class and method; a bare class name is a class-level error", (
   assert.deepEqual([testClass("LockTest"), testMethod("LockTest")], ["LockTest", "(whole class)"]);
 });
 
-test("started tests group by class, night and series, newest first, and situational series stay out", () => {
+test("started tests group by class, night and series, newest first, situational series too", () => {
   const rs = days(28).flatMap((d, i) => [
     rec(d, [...(i >= 20 ? ["LockTest.a", "LockTest.b"] : []), ...(i >= 24 ? ["Other.c"] : [])]),
     rec(d, i >= 20 ? ["LockTest.a"] : [], { preset: "op-cng-func-lite" }),
@@ -52,10 +52,11 @@ test("started tests group by class, night and series, newest first, and situatio
       ["Other", ["Other.c"], "2026-09-25", "on-prem"],
       ["LockTest", ["LockTest.a", "LockTest.b"], "2026-09-21", "on-prem"],
       ["LockTest", ["LockTest.a"], "2026-09-21", "CNG"],
+      ["Scenario", ["Scenario.x"], "2026-09-21", "Capella"],
     ],
   );
-  assert.deepEqual(digest.started, { total: 4, bySeries: [{ series: "on-prem", n: 3 }, { series: "CNG", n: 1 }] });
-  assert.equal(digest.persistent.total, 4);
+  assert.deepEqual(digest.started, { total: 5, bySeries: [{ series: "on-prem", n: 3 }, { series: "CNG", n: 1 }, { series: "Capella", n: 1 }] });
+  assert.equal(digest.persistent.total, 5);
 });
 
 test("the caveats cover only the classification window", () => {
@@ -113,13 +114,27 @@ test("there is no failed-last-night count when no functional series ran on the e
   assert.equal(digest.failedLastNight, undefined);
 });
 
-test("the clean nights are those every functional series passed with full results; situational ones don't count", () => {
-  const rs = days(5).flatMap((d, i) => [
+test("the clean nights are those every series, functional and situational, passed with full results", () => {
+  const rs = days(6).flatMap((d, i) => [
     rec(d, i === 1 ? ["A.x"] : [], i === 3 ? { source: "run-log-scrape", passesKnown: false } : {}),
     ...(i === 2 ? [] : [rec(d, [], { preset: "op-cng-func-lite" })]),
-    rec(d, ["Scenario.s"], { preset: "op-capella-sit-lite", kind: "situational" }),
+    rec(d, i === 4 ? ["Scenario.s"] : [], { preset: "op-capella-sit-lite", kind: "situational" }),
   ]);
-  const { digest } = buildHealthReport("dotnet", rs, [], { end: "2026-09-05" });
-  // 2: on-prem failed; 3: CNG didn't run; 4: on-prem only from the log.
-  assert.deepEqual(digest.cleanNights, ["2026-09-01", "2026-09-05"]);
+  const { digest } = buildHealthReport("dotnet", rs, [], { end: "2026-09-06" });
+  // 2: on-prem failed; 3: CNG didn't run; 4: on-prem only from the log; 5: a Capella scenario failed.
+  assert.deepEqual(digest.cleanNights, ["2026-09-01", "2026-09-06"]);
+  assert.equal(digest.counted.length, 3, "every active series is counted");
+});
+
+test("a series that stopped counting is named for the recent window, with its last try", () => {
+  // CNG left the nightly after the 10th; on-prem ran on.
+  const rs = [...days(28).map((d) => rec(d, [])), ...days(10).map((d) => rec(d, ["Cng.x"], { preset: "op-cng-func-lite" }))];
+  const at = (end: string) => buildHealthReport("dotnet", rs, [], { end }).digest;
+  assert.deepEqual(at("2026-09-12").stoppedCounting, [], "2 runs without it: still counted");
+  assert.deepEqual(at("2026-09-13").stoppedCounting, [{ series: "CNG", last: "2026-09-10" }]);
+  assert.equal(at("2026-09-13").counted.length, 1);
+  assert.deepEqual(at("2026-09-24").stoppedCounting, [], "named for RECENT_DAYS after its last try");
+  // Its nights still count: the 10th failed, so it isn't clean after the fact.
+  assert.ok(!at("2026-09-13").cleanNights.includes("2026-09-10"));
+  assert.ok(at("2026-09-13").cleanNights.includes("2026-09-11"));
 });

@@ -111,9 +111,9 @@ test("with no report for last week, only failure runs that began this week join"
   assert.deepEqual(c.noLongerFailing, []);
 });
 
-test("situational and inactive series are left out", () => {
+test("situational series count; inactive series are left out", () => {
   const broke = [t("A.x", "failing", { since: "2026-10-21", lastGood: "2026-10-20" })];
-  assert.deepEqual(weekChanges(report("2026-10-25", broke, {}, { kind: "situational" }), report("2026-10-18", []), W43).newlyFailing, []);
+  assert.deepEqual(names(weekChanges(report("2026-10-25", broke, {}, { kind: "situational" }), report("2026-10-18", []), W43).newlyFailing), ["A.x"]);
   assert.deepEqual(weekChanges(report("2026-10-25", broke, {}, { active: false }), report("2026-10-18", []), W43).newlyFailing, []);
 });
 
@@ -167,25 +167,47 @@ test("tests run is the median night's, over JUnit nights only", () => {
   assert.equal(typicalTestsRun(["none", "aborted"]), undefined);
 });
 
-test("tests run counts the functional runs only, like failing", () => {
+test("tests run counts every counted series, like failing, over JUnit nights only", () => {
   const week = Object.fromEntries(["2026-10-19", "2026-10-20", "2026-10-21"].map((d) => [d, full(100, 2, 10)]));
-  const big = Object.fromEntries(["2026-10-19", "2026-10-20", "2026-10-21"].map((d) => [d, full(900, 0, 0)]));
+  const capella = Object.fromEntries(["2026-10-19", "2026-10-20", "2026-10-21"].map((d) => [d, full(5, 0, 0)]));
   const logOnly = { "2026-10-19": { testCases: 0, failing: 3 }, "2026-10-20": { testCases: 0, failing: 3 }, "2026-10-21": { testCases: 0, failing: 3 } } as Record<string, NightTests>;
-  for (const counts of [big, logOnly]) {
+  for (const [counts, run] of [[capella, 107], [logOnly, undefined]] as const) {
     const now = report("2026-10-25", [], week);
     now.series.push({ id: "sit", short: "capella", kind: "situational", active: true, ran: Object.keys(counts), perNight: {}, tests: [], testCounts: counts, aborted: [] });
     const c = buildWeekly([{ sdk: "go", name: "Go", current: now }], W43).cards[0];
-    assert.equal(c.testsRun, 102);
+    assert.equal(c.testsRun, run);
     assert.equal(c.nightsWithResults, 3);
   }
 });
 
-test("an SDK whose functional runs gave no results is not clean, whatever else ran", () => {
+test("a situational run's results are a night with results; an inactive series' are not", () => {
   const now = report("2026-10-25", [], {}, { aborted: [{ date: "2026-10-19" } as never] });
   now.series.push({ id: "sit", short: "capella", kind: "situational", active: true, ran: ["2026-10-20"], perNight: {}, tests: [], testCounts: { "2026-10-20": full(50, 0, 0) }, aborted: [] });
+  now.series.push({ id: "old", short: "old", kind: "functional", active: false, ran: ["2026-10-21"], perNight: {}, tests: [], testCounts: { "2026-10-21": full(50, 0, 0) }, aborted: [] });
   const c = buildWeekly([{ sdk: "go", name: "Go", current: now }], W43).cards[0];
-  // Only the counted series (clean.ts) give the night strip results.
-  assert.equal(c.nightsWithResults, 0);
+  assert.equal(c.nightsWithResults, 1);
+});
+
+test("a clean week is seven clean nights; nothing failing at the end, short of that, is passing", () => {
+  const all = ["2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23", "2026-10-24", "2026-10-25"];
+  const nights = (f: (d: string) => NightTests | undefined) => Object.fromEntries(all.flatMap((d) => (f(d) ? [[d, f(d)!]] : [])));
+  const card = (counts: Record<string, NightTests>, capella: Record<string, NightTests> = nights(() => full(5, 0, 0))) => {
+    const perNight = (c: Record<string, NightTests>) => Object.fromEntries(Object.entries(c).map(([d, n]) => [d, n.failing]));
+    const now = report("2026-10-25", [], counts, { perNight: perNight(counts) });
+    now.series.push({ id: "sit", short: "capella", kind: "situational", active: true, ran: Object.keys(capella), perNight: perNight(capella), tests: [], testCounts: capella, aborted: [] });
+    return buildWeekly([{ sdk: "go", name: "Go", current: now }], W43).cards[0];
+  };
+  const clean = card(nights(() => full(100, 0, 10)));
+  assert.deepEqual([clean.state, clean.cleanNights], ["clean", 7]);
+  // A one-off failure mid-week: nothing failing at the end, but not clean.
+  const oneOff = card(nights((d) => full(100, d === "2026-10-22" ? 1 : 0, 10)));
+  assert.deepEqual([oneOff.state, oneOff.cleanNights], ["passing", 6]);
+  // A failed Capella scenario spoils the night as much.
+  const capella = card(nights(() => full(100, 0, 10)), nights((d) => full(5, d === "2026-10-23" ? 1 : 0, 0)));
+  assert.deepEqual([capella.state, capella.cleanNights], ["passing", 6]);
+  // A night with no results isn't clean either.
+  const gap = card(nights((d) => (d === "2026-10-20" ? undefined : full(100, 0, 10))));
+  assert.deepEqual([gap.state, gap.cleanNights], ["passing", 6]);
 });
 
 test("flaky is the intermittent tests that failed during the week, apart from failing", () => {

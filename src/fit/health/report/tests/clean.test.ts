@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { NightTests } from "../build-report.js";
-import { cleanNights, isClean, isCounted, type CleanSeries } from "../clean.js";
+import { cleanNights, isClean, isCounted, isCountedOn, type CleanSeries } from "../clean.js";
 
 const full = (passed: number, failing: number, skipped = 0): NightTests => ({ testCases: passed + failing + skipped, tests: passed + failing + skipped, passed, failing, skipped });
 const logOnly = (failing: number): NightTests => ({ testCases: 500, failing });
@@ -22,10 +22,9 @@ const series = (testCounts: Record<string, NightTests>, more: Partial<CleanSerie
   ...more,
 });
 
-test("the counted series are the active functional ones", () => {
-  assert.equal(isCounted({ kind: "functional", active: true }), true);
-  assert.equal(isCounted({ kind: "situational", active: true }), false);
-  assert.equal(isCounted({ kind: "functional", active: false }), false);
+test("the counted series are the active ones, functional and situational", () => {
+  assert.equal(isCounted({ active: true }), true);
+  assert.equal(isCounted({ active: false }), false);
 });
 
 test("a night is clean when every counted series ran, gave full results and failed nothing", () => {
@@ -43,13 +42,16 @@ test("a night is not clean when a counted series didn't run, or left only its lo
   assert.equal(isClean([onprem], "d9"), false, "no results at all");
 });
 
-test("a series that hadn't started yet isn't missing; situational series don't count either way", () => {
+test("a series that hadn't started yet isn't missing; a situational failure spoils the night", () => {
   const onprem = series({ d1: full(100, 0), d2: full(100, 0) });
   const cng = series({ d2: full(50, 0) });
   assert.equal(isClean([onprem, cng], "d1"), true);
-  const capella = series({ d1: full(5, 3) }, { kind: "situational" });
-  assert.equal(isClean([onprem, capella], "d1"), true);
-  assert.equal(isClean([capella], "d1"), false, "nothing counted, nothing clean");
+  const capella = series({ d1: full(4, 1), d2: full(5, 0) }, { kind: "situational" });
+  assert.equal(isClean([onprem, capella], "d1"), false, "a Capella scenario failed");
+  assert.equal(isClean([onprem, capella], "d2"), true);
+  const old = series({ d1: full(5, 3) }, { kind: "situational", active: false });
+  assert.equal(isClean([onprem, old], "d1"), true, "an inactive series counts nowhere");
+  assert.equal(isClean([old], "d1"), false, "nothing counted, nothing clean");
 });
 
 test("a series that aborted has started: before its first results, or with none at all", () => {
@@ -67,4 +69,15 @@ test("a series that aborted has started: before its first results, or with none 
 test("cleanNights keeps the clean ones, in order", () => {
   const s = [series({ d1: full(10, 0), d2: full(10, 2), d3: full(10, 0) })];
   assert.deepEqual(cleanNights(s, ["d1", "d2", "d3", "d4"]), ["d1", "d3"]);
+});
+
+test("a series that stopped counting still counts on its own nights, and not after its last try", () => {
+  const onprem = series({ d1: full(100, 0), d2: full(100, 0), d3: full(100, 0) });
+  const gone = series({ d1: full(50, 2), d2: full(50, 0) }, { active: false, countedUntil: "d2" });
+  assert.equal(isCountedOn(gone, "d1"), true);
+  assert.equal(isCountedOn(gone, "d3"), false);
+  assert.equal(isCountedOn(series({ d1: full(1, 0) }, { active: false }), "d1"), false, "no countedUntil, never counted");
+  assert.equal(isClean([onprem, gone], "d1"), false, "its failure that night still spoils it");
+  assert.equal(isClean([onprem, gone], "d2"), true);
+  assert.equal(isClean([onprem, gone], "d3"), true, "after its last try it isn't missing");
 });

@@ -182,17 +182,20 @@ test("a report is marked carried over only when the site kept it, not when its n
   assert.deepEqual(o.sdks.map((s) => [s.sdk, s.carried ?? false]), [["dotnet", false], ["go", true], ["insights-node", false]]);
 });
 
-test("only the counted series add up: situational and inactive ones stay out", () => {
+test("the counted series add up, situational ones too; inactive ones stay out", () => {
   const n = nightTotals([
     series({ "2026-09-30": full(100, 0, 10) }),
     series({ "2026-09-30": full(5, 3, 0) }, { kind: "situational" }),
     series({ "2026-09-30": full(40, 2, 0) }, { active: false }),
   ]);
-  assert.deepEqual(n.get("2026-09-30"), { date: "2026-09-30", passed: 100, failing: 0, skipped: 10, runs: 1, logOnly: 0, clean: true });
-  // A situational abort doesn't shade a night either.
+  assert.deepEqual(n.get("2026-09-30"), { date: "2026-09-30", passed: 105, failing: 3, skipped: 10, runs: 2, logOnly: 0, clean: false });
+  // A situational abort shades a night as a functional one does; an inactive one's doesn't.
   const go = input("go", "2026-09-29", "2026-09-29", []);
   go.series.push(series({}, { kind: "situational", aborted: [{ date: "2026-09-29", runId: 1, attempt: 1 }] }));
-  assert.deepEqual(buildOverview([{ input: go, name: "Go" }], [], new Date(), 1).sdks[0].days, ["none"]);
+  assert.deepEqual(buildOverview([{ input: go, name: "Go" }], [], new Date(), 1).sdks[0].days, ["aborted"]);
+  const old = input("go", "2026-09-29", "2026-09-29", []);
+  old.series.push(series({}, { active: false, aborted: [{ date: "2026-09-29", runId: 1, attempt: 1 }] }));
+  assert.deepEqual(buildOverview([{ input: old, name: "Go" }], [], new Date(), 1).sdks[0].days, ["none"]);
 });
 
 test("an SDK's state is how its own latest night went", () => {
@@ -214,4 +217,13 @@ test("an SDK's state is how its own latest night went", () => {
   assert.deepEqual(Object.fromEntries(o.sdks.map((s) => [s.sdk, s.state])), { dotnet: "clean", go: "failing", "insights-go": "clean", java: "none", scala: "none" });
   const dotnet = o.sdks.find((s) => s.sdk === "dotnet")!;
   assert.deepEqual(dotnet.days.map((d) => typeof d === "object" && d.clean), [false, true]);
+});
+
+test("a series that stopped counting adds to the nights up to its last try, so they don't change", () => {
+  const n = nightTotals([
+    series({ "2026-09-29": full(100, 0, 0), "2026-09-30": full(100, 0, 0) }),
+    series({ "2026-09-29": full(40, 2, 0) }, { active: false, countedUntil: "2026-09-29" }),
+  ]);
+  assert.deepEqual([n.get("2026-09-29")!.failing, n.get("2026-09-29")!.runs, n.get("2026-09-29")!.clean], [2, 2, false]);
+  assert.deepEqual([n.get("2026-09-30")!.failing, n.get("2026-09-30")!.runs, n.get("2026-09-30")!.clean], [0, 1, true]);
 });

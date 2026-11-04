@@ -11,6 +11,11 @@
  * Failing is one set: the tests in a current failure run at a week's end (always failing,
  * failing, or new), in the counted series (clean.ts). Flaky is apart from it: intermittent tests
  * that failed during the week.
+ *
+ * A clean week is seven clean nights (clean.ts), as the top page judges a night: nothing failed
+ * on any night, and every night gave full results. A week with nothing failing or flaky at its
+ * end is not clean if a test failed on one of its nights, or a night had no results: it is
+ * "passing".
  */
 import type { ReportSeries } from "./build-report.js";
 import type { TestClass } from "./classify.js";
@@ -98,6 +103,24 @@ export interface WeeklyCard {
   testsRun?: number;
   /** No test came into or left the failing set, and every night has results. */
   noChange: boolean;
+  /** Nights that were clean (clean.ts): all of them makes a clean week. */
+  cleanNights: number;
+  /** Where the SDK stands at the week's end (see WeeklyState). */
+  state: WeeklyState;
+}
+
+/**
+ * Where an SDK stands at a week's end, the first that holds: no results all week; tests failing;
+ * only flaky tests; every night clean; or else passing (nothing failing or flaky at the end, but
+ * not every night was clean).
+ */
+export type WeeklyState = "none" | "fail" | "flaky" | "clean" | "passing";
+
+export function weeklyState(c: Pick<WeeklyCard, "reported" | "nightsWithResults" | "failing" | "flaky" | "cleanNights" | "days">): WeeklyState {
+  if (!c.reported || !c.nightsWithResults) return "none";
+  if (c.failing) return "fail";
+  if (c.flaky.length) return "flaky";
+  return c.cleanNights === c.days.length ? "clean" : "passing";
 }
 
 export interface Weekly {
@@ -232,7 +255,9 @@ export function buildWeekly(
     const failingBefore = previous ? failingAtEnd(previous, key).size : undefined;
     const moved = changes.newlyFailing.length + changes.noLongerFailing.length;
     const testsRun = current ? typicalTestsRun(days) : undefined;
-    return {
+    const cleanNights = days.filter((d) => typeof d !== "string" && d.clean).length;
+    const flaky = current ? flakyIn(current, week) : [];
+    const card = {
       sdk,
       name,
       product: place(sdk).product,
@@ -240,12 +265,14 @@ export function buildWeekly(
       days,
       nightsWithResults,
       ...changes,
-      flaky: current ? flakyIn(current, week) : [],
+      flaky,
       failing,
       ...(failingBefore !== undefined ? { failingBefore } : {}),
       ...(testsRun !== undefined ? { testsRun } : {}),
       noChange: !!current && failingBefore !== undefined && !moved && nightsWithResults === dates.length,
+      cleanNights,
     };
+    return { ...card, state: weeklyState({ ...card, reported: !!current, days }) };
   });
   return {
     generatedAt: now.toISOString(),

@@ -7,18 +7,19 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { renderSlackWeekly, shortName } from "../render/render-slack-weekly.js";
-import { isoWeek, type Weekly, type WeeklyCard } from "../weekly.js";
+import { isoWeek, weeklyState, type Weekly, type WeeklyCard } from "../weekly.js";
 
 const W43 = isoWeek("2026-10-19");
 const dates = Array.from({ length: 7 }, (_, k) => `2026-10-${19 + k}`);
 
-function card(sdk: string, name: string, more: Partial<WeeklyCard> = {}): WeeklyCard {
-  return {
+/** A card, its state decided as weekly.ts decides it: seven clean nights unless `more` says otherwise. */
+function card(sdk: string, name: string, more: Partial<Omit<WeeklyCard, "state">> = {}): WeeklyCard {
+  const c = {
     sdk,
     name,
     product: "SDK",
     reported: true,
-    days: [],
+    days: dates.map(() => "none" as const),
     nightsWithResults: 7,
     newlyFailing: [],
     noLongerFailing: [],
@@ -26,8 +27,10 @@ function card(sdk: string, name: string, more: Partial<WeeklyCard> = {}): Weekly
     failing: 0,
     failingBefore: 0,
     noChange: false,
+    cleanNights: 7,
     ...more,
   };
+  return { ...c, state: weeklyState(c) };
 }
 
 function weekly(cards: WeeklyCard[]): Weekly {
@@ -54,7 +57,7 @@ test("one message, grouped by where each SDK stands, the counts first, in the pa
     card("rust", "Rust", { reported: false, nightsWithResults: 0 }),
   ]);
   assert.deepEqual(renderSlackWeekly(w, "https://site/w/").split("\n"), [
-    "*<https://site/w/|FIT weekly · 2026-W43>*: :x: 3 failing  :warning: 1 flaky only  :white_check_mark: 1 clean  :heavy_minus_sign: 1 no results all week",
+    "*<https://site/w/|FIT weekly · 2026-W43>*: :x: 3 failing  :warning: 1 flaky only  :white_check_mark: 1 clean all week  :heavy_minus_sign: 1 no results all week",
     "_19 Oct to 25 Oct, against 2026-W42_",
     "",
     ":x: *Failing*",
@@ -63,7 +66,7 @@ test("one message, grouped by where each SDK stands, the counts first, in the pa
     "• <https://site/w/#sdk-go|Go>: *3 failing* of 1,200 · ▲ 3 more than last week",
     "",
     ":warning: *Flaky only:* <https://site/w/#sdk-dotnet|.NET> (2)",
-    ":white_check_mark: *Clean:* <https://site/w/#sdk-kotlin|Kotlin>",
+    ":white_check_mark: *Clean all week:* <https://site/w/#sdk-kotlin|Kotlin>",
     ":heavy_minus_sign: *No results all week:* <https://site/w/#sdk-rust|Rust>",
     "",
     "<https://site/w/|Open the weekly report>",
@@ -87,6 +90,13 @@ test("an SDK with a report but no results all week is not clean", () => {
   const text = renderSlackWeekly(weekly([card("go", "Go", { nightsWithResults: 0 })]));
   assert.match(text, /^\*FIT weekly · 2026-W43\*: :heavy_minus_sign: 1 no results all week$/m);
   assert.doesNotMatch(text, /clean/);
+});
+
+test("nothing failing at the week's end is passing, not clean, unless all seven nights were clean", () => {
+  const text = renderSlackWeekly(weekly([card("go", "Go", { cleanNights: 5 }), card("java", "Java", { cleanNights: 6, nightsWithResults: 6 })]));
+  assert.match(text, /^\*FIT weekly · 2026-W43\*: :ballot_box_with_check: 2 passing, not clean every night$/m);
+  assert.match(text, /^:ballot_box_with_check: \*Passing, not clean every night:\* Java \(6\/7 nights clean\), Go \(5\/7 nights clean\)$/m);
+  assert.doesNotMatch(text, /white_check_mark/);
 });
 
 test("names are escaped for Slack, and Operational Insights is shortened", () => {
