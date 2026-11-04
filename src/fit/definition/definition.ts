@@ -79,7 +79,7 @@ Subcommands:
 /**
  * Translate legacy `execute-preset` args (preset chosen via `--type <preset>`)
  * into `run preset` args (preset given as a positional). Other args — the
- * performer image, resume flags — pass straight through for the run dispatcher
+ * performer image, `--cbcollect` etc. — pass straight through for the run dispatcher
  * to parse.
  */
 function legacyExecutePresetToRunPreset(rest: string[]): string[] {

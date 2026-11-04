@@ -1080,8 +1080,8 @@ export function localPathForUrl(url: string, home: string = homedir()): string {
 
 /**
  * Fetch a definition file from a URL, write it to a stable local cache path, and
- * return that path. The stable path means resume state written next to it can be
- * found again when the same URL is passed to a later `--resume-at` invocation.
+ * return that path. The path is stable, so the same URL always lands in the same
+ * cache entry rather than a new file per run.
  * A gist.github.com page URL is rewritten to its raw-content URL before fetching
  * (see {@link normalizeDefinitionUrl}); the cache path is keyed off the original
  * URL so both forms of the same gist link reuse the same cache entry.

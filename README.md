@@ -81,18 +81,8 @@ The AWS region and VPC are fixed (region `us-west-2`, VPC `fit-cli-vpc`, managed
 * Simplifies and derisks where to look for user's instances for cleanup.
 * It means we always have a VPC and avoid hitting VPCIdNotSpecified if the user specifies a region that does not have a default one.
 
-### Resuming
-The output will guide you through how to resume where a failure happened, something like:
-
-```
-fit run definition --resume-at=after-cluster-creation examples/test.yaml
-```
-
-This can save valuable time when iterating a definition file.  It will try its best to resume, including checking that preceding steps such as cluster creation are resumable from.
-
-But note that this is somewhat temperamental and experimental.  You may hit issues and patches are welcome.
-
-You can also get very far by just rerunning the full definition file and using the performer onPortInUse and cluster useExisting settings to reuse existing resources.
+### Iterating quickly
+Standing up an instance, cluster and performer is slow.  To avoid redoing it every iteration, answer yes to "Leave everything up" at the end of an interactive run, then rerun the definition file with the performer `onPortInUse` and cluster `useExisting` settings to reuse those resources (or choose "an existing AWS EC2 instance" when asked where to run).
 
 ## Running a single step or flow
 
@@ -111,7 +101,7 @@ User-facing (using the installed binary):
 - `fit help` — show help.
 - `fit wizard` — run the interactive wizard.
 - `fit run preset <preset>` — generate a preset definition file and run it.
-- `fit run definition <file>` — run an existing definition file (see Resuming for the resume flags).
+- `fit run definition <file>` — run an existing definition file.
 - `fit definition validate | generate-desc` — author or inspect a definition file.
 - `fit preset list | expand | generate` — list, expand or generate presets.
 - `fit cloud-instances list | manage | delete | remove-all` — manage the EC2 instances fit-cli launched.

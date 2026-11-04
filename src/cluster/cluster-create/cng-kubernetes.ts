@@ -132,7 +132,7 @@ export function remoteHomeFromWorkspace(workspaceRootDir: string): string {
  * setup-declarative-cluster (see `installCaoCrdsAndAdmission`).
  *
  * Idempotent-ish: `k3d cluster create` is skipped if the cluster already exists
- * and the cao install is skipped if already present, so a resumed run on the same
+ * and the cao install is skipped if already present, so a rerun on a reused
  * box doesn't fail.
  */
 export async function provisionRemoteK3d(
