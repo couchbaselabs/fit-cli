@@ -18,8 +18,15 @@
  * follows the same pattern, so the link may 404. It likely also needs VPN
  * access to load at all. Callers should say so when printing it.
  *
- * Run on its own:
+ * The DataDog link carries an explicit time range. Without one DataDog shows only
+ * the last 15 minutes, so a link opened later while triaging a failure finds
+ * nothing. It filters on clusterId alone: the UUID is already unique, and an
+ * `env:` filter has hidden every log in the past.
+ *
+ * Run on its own (the optional from/to are ISO times bounding the DataDog link,
+ * for building one after the fact):
  *   bun src/cluster/cluster-create/capella-debug-links.ts dev b0652a58-45d4-4cf7-afff-343ca735c6c6
+ *   bun src/cluster/cluster-create/capella-debug-links.ts prod <uuid> 2026-11-04T10:10:00Z 2026-11-04T10:40:00Z
  */
 import { isMain, runCli } from "../../util/non-fit/cli.js";
 import { loadEnvironments, type EnvironmentsFile } from "../../fit/util/environments.js";
@@ -29,8 +36,26 @@ export interface CapellaDebugLinks {
   capellaUiUrl?: string;
   /** Best-guess Fleet Manager cluster page — see the caveat above. */
   fleetManagerUrl: string;
-  /** DataDog logs, filtered by env and clusterId. */
+  /** DataDog logs, filtered by clusterId over the cluster's likely lifetime. */
   datadogLogsUrl: string;
+}
+
+/** The time range a DataDog logs link covers. */
+export interface DatadogWindow {
+  from: Date;
+  to: Date;
+}
+
+/**
+ * The window for a link printed just after a cluster is allocated or reused:
+ * from a little before now (allocation itself takes several minutes) to past the
+ * longest expiry fit-cli allocates with (31h, see allocate-cluster.ts).
+ */
+export function defaultDatadogWindow(now: Date = new Date()): DatadogWindow {
+  return {
+    from: new Date(now.getTime() - 30 * 60_000),
+    to: new Date(now.getTime() + 32 * 60 * 60_000),
+  };
 }
 
 /**
@@ -60,18 +85,21 @@ export function capellaDebugLinks(
   environment: string,
   couchbaseClusterUuid: string,
   environments: EnvironmentsFile = loadEnvironments(),
+  window: DatadogWindow = defaultDatadogWindow(),
 ): CapellaDebugLinks | undefined {
   const endpoint = environments.capella[environment]?.endpoint;
   if (!endpoint) {
     return undefined;
   }
   const fleetManagerHost = endpoint.replace(/^https:\/\/api\./, "https://fm.");
-  const datadogQuery = `env:${environment} @clusterId:${couchbaseClusterUuid}`;
+  const datadogQuery = `@clusterId:${couchbaseClusterUuid}`;
   const uiUrl = capellaUiUrl(environment, environments);
   return {
     ...(uiUrl ? { capellaUiUrl: uiUrl } : {}),
     fleetManagerUrl: `${fleetManagerHost}/clusters/${couchbaseClusterUuid}`,
-    datadogLogsUrl: `https://app.datadoghq.com/logs?query=${encodeURIComponent(datadogQuery)}`,
+    datadogLogsUrl:
+      `https://app.datadoghq.com/logs?query=${encodeURIComponent(datadogQuery)}` +
+      `&from_ts=${window.from.getTime()}&to_ts=${window.to.getTime()}&live=false`,
   };
 }
 
@@ -132,14 +160,15 @@ export function printCapellaUiLink(environment: string): void {
 
 if (isMain(import.meta.url)) {
   runCli(() => {
-    const [environment, uuid] = process.argv.slice(2);
-    if (!environment || !uuid) {
+    const [environment, uuid, from, to] = process.argv.slice(2);
+    const window = from && to ? { from: new Date(from), to: new Date(to) } : undefined;
+    if (!environment || !uuid || (from && !to) || (window && (isNaN(window.from.getTime()) || isNaN(window.to.getTime())))) {
       console.error(
-        "Usage: bun src/cluster/cluster-create/capella-debug-links.ts <environment> <couchbaseClusterUuid>",
+        "Usage: bun src/cluster/cluster-create/capella-debug-links.ts <environment> <couchbaseClusterUuid> [<from ISO time> <to ISO time>]",
       );
       process.exit(2);
     }
-    const links = capellaDebugLinks(environment, uuid);
+    const links = capellaDebugLinks(environment, uuid, loadEnvironments(), window);
     if (!links) {
       console.error(`No Capella environment "${environment}" configured in environments.json5.`);
       process.exit(1);
