@@ -41,6 +41,11 @@ export interface ResumeClusterState {
   clusterId?: string;
   /** The cbdinocluster command (path) on the target, for teardown removal. */
   cbdinoclusterCommand?: string;
+  /**
+   * True when the box's cbdinocluster has Capella credentials. Teardown then
+   * sweeps the run's leftover Capella clusters through it.
+   */
+  capellaCredentials?: boolean;
   /** The cluster's artifacts dir, where cbcollect diagnostics are gathered before removal. */
   logsDir?: string;
   /**
@@ -97,6 +102,12 @@ export interface RunState {
   performers: ResumePerformerState[];
   /** Reused on resume; a fresh id would split one run across two groups. */
   situationalRunId?: string;
+  /**
+   * The run stamp (see allocate-purpose.ts). A resumed run reuses it for its
+   * allocates, its key pool, FIT and teardown, so it still finds what the original
+   * run made.
+   */
+  purpose?: string;
 }
 
 /** Where the run-state file lives inside the artifact directory `runDir`. */
