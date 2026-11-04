@@ -124,7 +124,7 @@ export async function createRemoteFitExecutionContext(
   const localGerritKey = await resolveGerritKeyWithAwsFallback();
 
   if (skipPreparation) {
-    console.log(`\n→ resume: reusing existing remote FIT workspace on ${target.description} (skipping preparation).`);
+    console.log(`\n→ reusing existing remote FIT workspace on ${target.description} (skipping preparation).`);
   } else {
     console.log(`\nPreparing a remote FIT workspace on ${target.description}...`);
     await target.runHiddenUntilFailure("mkdir", ["-p", rootDir]);

@@ -100,7 +100,7 @@ export function ocInstallScript(version: string = DEFAULT_OC_VERSION): string {
     `ver=${posixQuote(version)}`,
     'bindir="$HOME/.local/bin"',
     'mkdir -p "$bindir"',
-    // Already the pinned version? Nothing to do (resumed run / warm box).
+    // Already the pinned version? Nothing to do (reused / warm box).
     'if command -v oc >/dev/null 2>&1 && oc version --client 2>/dev/null | grep -q "$ver"; then',
     `  printf '%s\\n' "oc $ver already installed"`,
     "  exit 0",

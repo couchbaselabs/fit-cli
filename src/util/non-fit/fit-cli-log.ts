@@ -49,7 +49,7 @@ export interface LogContext {
   progress?: string;
   /** Execution target label, e.g. "local" or "aws1". Set once the target is acquired. */
   env?: string;
-  /** Cluster label, e.g. "cbdino1". Set once a cluster is allocated/resumed. */
+  /** Cluster label, e.g. "cbdino1". Set once a cluster is allocated. */
   cluster?: string;
   /** Performer (session) label, e.g. "java:main". Set at the start of each iteration. */
   performer?: string;

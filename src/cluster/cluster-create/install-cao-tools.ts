@@ -69,7 +69,7 @@ export type RunExecutor = {
  * location (so cbdinocluster finds `cao` exactly where it expects).
  *
  * Idempotent: skips the download when `caoToolsDir` already has contents, so a
- * resumed run on the same box is a no-op. Pure logic. `set -e` aborts on any
+ * rerun on a reused box is a no-op. Pure logic. `set -e` aborts on any
  * step failing.
  */
 export function caoToolsInstallScript(
@@ -79,7 +79,7 @@ export function caoToolsInstallScript(
   return [
     "set -e",
     `dest=${posixQuote(caoToolsDir)}`,
-    // Already populated (e.g. a resumed run)? Nothing to do.
+    // Already populated (e.g. a reused box)? Nothing to do.
     'if [ -d "$dest" ] && [ -n "$(ls -A "$dest" 2>/dev/null)" ]; then',
     `  printf '%s\\n' "cao tools already present at $dest"`,
     "  exit 0",
@@ -135,7 +135,7 @@ export async function installCaoToolsRemote(
  * credentials (the `github` block) from the `~/.cbdinocluster` we upload, so this
  * must run *after* that upload — and after the k3d cluster is up. Both are
  * idempotent: cbdinocluster removes any existing couchbase CRDs / admission
- * controller before reinstalling, so a resumed run is safe.
+ * controller before reinstalling, so a rerun on a reused box is safe.
  *
  * `cbdinocluster` is the resolved command to invoke it with (its name on the
  * remote PATH, or the absolute path {@link installCbdinoclusterRemote} returned).

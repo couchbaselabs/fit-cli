@@ -189,17 +189,13 @@ const SITUATIONAL_GROUP = [{ type: "situational" }] as unknown as Parameters<typ
 const FUNCTIONAL_GROUP = [{ type: "functional" }] as unknown as Parameters<typeof needsResultsUpload>[0];
 
 test("a situational run outside CI needs no AWS credentials, since it won't upload", () => {
-  assert.equal(needsResultsUpload(SITUATIONAL_GROUP, 0, {}), false);
+  assert.equal(needsResultsUpload(SITUATIONAL_GROUP, {}), false);
 });
 
 test("a situational run in CI needs AWS credentials for the upload", () => {
-  assert.equal(needsResultsUpload(SITUATIONAL_GROUP, 0, CI_ENV), true);
+  assert.equal(needsResultsUpload(SITUATIONAL_GROUP, CI_ENV), true);
 });
 
 test("a functional run needs no results upload even in CI", () => {
-  assert.equal(needsResultsUpload(FUNCTIONAL_GROUP, 0, CI_ENV), false);
-});
-
-test("groups before the resume point don't count", () => {
-  assert.equal(needsResultsUpload(SITUATIONAL_GROUP, 1, CI_ENV), false);
+  assert.equal(needsResultsUpload(FUNCTIONAL_GROUP, CI_ENV), false);
 });

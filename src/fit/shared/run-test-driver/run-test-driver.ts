@@ -302,7 +302,7 @@ export async function runTestDriver(
   await execution.removeTree(sourceSurefireDir);
 
   // Situational runs also write test_results.csv (RunnerUtils.writeCsvRow appends), so
-  // purge it too — otherwise a resumed/reused checkout carries rows from a previous run.
+  // purge it too — otherwise a reused checkout carries rows from a previous run.
   const sourceCsvPath = testResultsCsvPath(execution.fitPerformerDir, testDriverModule);
   if (collectSituationalCsv) {
     await execution.removeTree(sourceCsvPath);

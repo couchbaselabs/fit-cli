@@ -22,7 +22,7 @@ test("reconcileArtifactsWithDir appends on-disk files not already registered", (
   writeFileSync(join(runDir, "instances", "0", "performer.log"), "logs");
   // `_internal/` bookkeeping must be omitted from the user-facing table.
   mkdirSync(join(runDir, "instances", "0", "_internal"), { recursive: true });
-  writeFileSync(join(runDir, "instances", "0", "_internal", "run-state.json"), "{}");
+  writeFileSync(join(runDir, "instances", "0", "_internal", "bookkeeping.json"), "{}");
 
   const reconciled = reconcileArtifactsWithDir(runDir, [
     { filename: "fit.json5", explanation: "Generated fit definition file" },

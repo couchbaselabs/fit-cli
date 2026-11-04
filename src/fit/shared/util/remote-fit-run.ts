@@ -472,11 +472,11 @@ export function createLocalFitExecutionContext(): FitExecutionContext {
 export async function createFitExecutionContext(
   target: ExecutionTarget,
   sdk: Sdk,
-  options: { skipRemotePreparation?: boolean; instancePath?: DefinitionRunPath } = {},
+  options: { instancePath?: DefinitionRunPath } = {},
 ): Promise<FitExecutionContext> {
   return target.kind === "local"
     ? createLocalFitExecutionContext()
-    : await createRemoteFitExecutionContext(target, sdk, options.skipRemotePreparation, options.instancePath);
+    : await createRemoteFitExecutionContext(target, sdk, false, options.instancePath);
 }
 
 /**

@@ -38,7 +38,7 @@ const REMOTE_AWS_CREDS_JSON_FILENAME = "fit-aws-creds.json";
 const REMOTE_AWS_CREDS_FETCH_FILENAME = "fit-aws-creds-fetch.sh";
 /**
  * The pre-refresh env-var file. We no longer write it, but boxes reused across runs
- * (`onPortInUse: 'reuse'`, `--resume-at`, `--execution existing`) may still have it
+ * (`onPortInUse: 'reuse'`, `--execution existing`) may still have it
  * sourced from `~/.profile`, and env vars outrank `~/.aws/config` in the AWS provider
  * chain — leaving it in place would silently defeat everything below.
  */
@@ -247,7 +247,7 @@ export async function uploadRemoteAwsCredentials(
 /**
  * Drop the legacy `~/.profile` sourcing line and the env-var file it pointed at. Idempotent,
  * and a no-op on a box that never had them. Without this a reused box (`onPortInUse: 'reuse'`,
- * `--resume-at`, `--execution existing`) keeps exporting stale `AWS_*` values, which outrank
+ * `--execution existing`) keeps exporting stale `AWS_*` values, which outrank
  * `~/.aws/config` in the AWS provider chain — the refresh would appear to work and change
  * nothing.
  */

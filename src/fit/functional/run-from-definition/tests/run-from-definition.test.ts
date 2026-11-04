@@ -440,13 +440,8 @@ function otelStackHandle(): OtelStackHandle {
 
 function teardownInputs(overrides: Partial<Parameters<typeof teardownRun>[0]> = {}): Parameters<typeof teardownRun>[0] {
   return {
-    definitionPath: "/tmp/fit.json5",
-    executionGroupIndex: 0,
-    runIndex: 0,
     execution: fitExecutionContext(),
     teardown: { kind: "local" },
-    forceLocalhost: false,
-    forceAws: false,
     performers: [],
     performerStates: [],
     externalServices: [],
