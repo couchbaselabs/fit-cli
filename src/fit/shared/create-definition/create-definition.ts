@@ -370,8 +370,6 @@ async function addFunctionalRun(
       if (capellaCloudProvider === "aws" || capellaCloudProvider === "gcp") {
         capellaPrivateEndpoint = await askCapellaPrivateEndpoint(promptIdPrefix, capellaCloudProvider);
       }
-    } else if (connectivity === "capella-analytics") {
-      capellaEnvironment = await chooseCapellaEnvironment(promptIdPrefix);
     }
 
     console.log(
@@ -500,12 +498,8 @@ async function addSituationalRun(
   const capellaEnvironment = await chooseCapellaEnvironment(promptIdPrefix);
   const selection = await selectFitTests(execution, SITUATIONAL_TEST_DOMAIN, promptIdPrefix);
 
-  // One box = one Capella env (init is per-box), so only reuse an instance when the chosen env matches.
   const currentInstance = lastSituationalInstance(state);
-  if (
-    currentInstance?.clusterlessSessions &&
-    (currentInstance.setup?.capellaEnvironment ?? DEFAULT_CAPELLA_ENV) === capellaEnvironment
-  ) {
+  if (currentInstance?.clusterlessSessions) {
     // The instance's execution mode (and its aws/gcp.privateEndpoint, if any) was
     // fixed when it was created, so reuse whatever PE-ness that instance already has.
     const privateEndpoint =
