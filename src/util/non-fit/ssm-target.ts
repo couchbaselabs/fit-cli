@@ -229,15 +229,41 @@ async function pollUntilDone(instanceId: string, commandId: string): Promise<Inv
 }
 
 /**
+ * How far before SendCommand (by the local clock) a command's log events may claim to
+ * be, to absorb clock skew between here and the instance. Generous because erring low
+ * silently drops real output, while erring high costs very little.
+ */
+const LOG_READ_SKEW_MARGIN_MS = 15 * 60 * 1_000;
+
+/**
+ * The FilterLogEvents `startTime` for a read: just past the last event already seen, but
+ * never earlier than {@link LOG_READ_SKEW_MARGIN_MS} before the command was sent.
+ */
+export function logReadStartTime(afterMs: number, sentAtMs: number): number {
+  return Math.max(afterMs + 1, sentAtMs - LOG_READ_SKEW_MARGIN_MS);
+}
+
+/**
  * Every log event for `commandId` on `instanceId` written strictly after `afterMs`,
  * or the whole stream when `afterMs` is 0. The log stream name is command-unique, so
- * there are no stale events to filter out and an unfiltered read is safe - callers
- * seed from 0 rather than from the local clock deliberately, since event timestamps
- * come from the instance and any clock skew between it and here would otherwise
- * silently filter out real output.
+ * there are no stale events to filter out - callers seed `afterMs` from 0 rather than
+ * from the local clock deliberately, since event timestamps come from the instance and
+ * any clock skew between it and here would otherwise silently filter out real output.
+ *
+ * `sentAtMs` still bounds the read from below, with {@link LOG_READ_SKEW_MARGIN_MS} of
+ * slack. Without any `startTime`, FilterLogEvents walks the log group's whole retention
+ * window and hands back a page per chunk of it, nearly all of them empty but carrying a
+ * nextToken - ~40 pages and ~27s for a one-line `echo`, on every streamed command, each
+ * page a call against the 10 TPS account-wide FilterLogEvents quota.
  */
-async function fetchNewLogLines(commandId: string, instanceId: string, afterMs: number): Promise<StreamedOutput & { lastMs: number }> {
+async function fetchNewLogLines(
+  commandId: string,
+  instanceId: string,
+  afterMs: number,
+  sentAtMs: number,
+): Promise<StreamedOutput & { lastMs: number }> {
   let lastMs = afterMs;
+  const startTime = logReadStartTime(afterMs, sentAtMs);
   const events: { message?: string; logStreamName?: string }[] = [];
   let nextToken: string | undefined;
   do {
@@ -248,7 +274,7 @@ async function fetchNewLogLines(commandId: string, instanceId: string, afterMs: 
       resp = await cloudWatchLogsClient.send(new FilterLogEventsCommand({
         logGroupName: SSM_LOG_GROUP_NAME,
         logStreamNamePrefix: `${commandId}/${instanceId}`,
-        ...(afterMs > 0 ? { startTime: afterMs + 1 } : {}),
+        startTime,
         nextToken,
       }));
     } catch (err) {
@@ -279,10 +305,16 @@ const OUTPUT_SETTLE_POLL_MS = 1_000;
  * keep retrying until something shows up (or the settle timeout expires) rather than
  * accepting an empty read that's really just ingestion lag.
  */
-async function settledLogLines(commandId: string, instanceId: string, afterMs: number, expectOutput: boolean): Promise<StreamedOutput> {
+async function settledLogLines(
+  commandId: string,
+  instanceId: string,
+  afterMs: number,
+  sentAtMs: number,
+  expectOutput: boolean,
+): Promise<StreamedOutput> {
   const deadline = Date.now() + OUTPUT_SETTLE_TIMEOUT_MS;
   for (;;) {
-    const output = await fetchNewLogLines(commandId, instanceId, afterMs);
+    const output = await fetchNewLogLines(commandId, instanceId, afterMs, sentAtMs);
     if (output.combined || !expectOutput || Date.now() >= deadline) return output;
     await sleep(OUTPUT_SETTLE_POLL_MS);
   }
@@ -334,8 +366,9 @@ async function sendShellCommand(
   // nothing to gain from CloudWatch, and asking for it is not free: each request makes the
   // agent stand its publisher up and tear it down, and log the attempt, on the instance.
   { withCloudWatchOutput = true }: { withCloudWatchOutput?: boolean } = {},
-): Promise<{ commandId: string }> {
+): Promise<{ commandId: string; sentAtMs: number }> {
   if (withCloudWatchOutput) await ensureLogGroup();
+  const sentAtMs = Date.now();
   // AWS-RunShellScript runs as root; sudo -u keeps parity with the box's normal
   // login user (home dir, environment, group membership — e.g. docker) instead
   // of silently switching every command to root.
@@ -352,7 +385,7 @@ async function sendShellCommand(
   const commandId = resp.Command?.CommandId;
   if (!commandId) throw new Error(`SendCommand on ${instanceId} returned no CommandId.`);
   await sleep(POST_SEND_SETTLE_MS);
-  return { commandId };
+  return { commandId, sentAtMs };
 }
 
 /**
@@ -448,7 +481,7 @@ function reportStalledOutput(instanceId: string, status: string, quietForMs: num
 }
 
 async function runShellCommandStreamed(instanceId: string, remoteCmd: string, runAsUser: string, livenessPath?: string): Promise<void> {
-  const { commandId } = await sendShellCommand(instanceId, remoteCmd, runAsUser);
+  const { commandId, sentAtMs } = await sendShellCommand(instanceId, remoteCmd, runAsUser);
   let lastMs = 0;
   let wroteAnything = false;
   let lastOutputAt = Date.now();
@@ -464,7 +497,7 @@ async function runShellCommandStreamed(instanceId: string, remoteCmd: string, ru
     if (livenessPath === undefined) {
       // Streamed output is for a human to read, so both streams go to the terminal
       // interleaved — only capture() needs them kept apart.
-      const chunk = await fetchNewLogLines(commandId, instanceId, lastMs);
+      const chunk = await fetchNewLogLines(commandId, instanceId, lastMs, sentAtMs);
       if (chunk.combined) {
         process.stdout.write(chunk.combined);
         wroteAnything = true;
@@ -479,6 +512,7 @@ async function runShellCommandStreamed(instanceId: string, remoteCmd: string, ru
         commandId,
         instanceId,
         lastMs,
+        sentAtMs,
         // Same shortcut as the captured path: if the inline copy is whole, it is already
         // everything the command said, so there is nothing to wait on CloudWatch for.
         status.inline.combined.length > 0 && !wroteAnything && !inlineOutputIsComplete(status.inline),
@@ -560,7 +594,7 @@ function truncationExplanation(instanceId: string): string {
 }
 
 async function runShellCommandCaptured(instanceId: string, remoteCmd: string, runAsUser: string): Promise<CapturedResult> {
-  const { commandId } = await sendShellCommand(instanceId, remoteCmd, runAsUser);
+  const { commandId, sentAtMs } = await sendShellCommand(instanceId, remoteCmd, runAsUser);
   const result = await pollUntilDone(instanceId, commandId);
   // Below SSM's inline caps there is nothing to go to CloudWatch for, and going anyway is
   // what made every output-producing command take ~23s instead of ~3s: the settle loop
@@ -571,7 +605,7 @@ async function runShellCommandCaptured(instanceId: string, remoteCmd: string, ru
   // command - wait it out instead of falling straight through to the capped inline copy.
   const fromLogs = inlineOutputIsComplete(result.inline)
     ? undefined
-    : await settledLogLines(commandId, instanceId, 0, result.inline.combined.length > 0);
+    : await settledLogLines(commandId, instanceId, 0, sentAtMs, result.inline.combined.length > 0);
   void deleteLogStreams(commandId, instanceId);
   // Falling back to GetCommandInvocation's inline content is fine as far as it goes, but
   // it is capped. Whether that matters depends on the caller: harmless for output only

@@ -7,10 +7,26 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { inlineOutputIsComplete, parseLivenessProbe, partitionLogEvents } from "../ssm-target.js";
+import { inlineOutputIsComplete, logReadStartTime, parseLivenessProbe, partitionLogEvents } from "../ssm-target.js";
 
 const stdoutStream = "cmd-1/i-abc/aws-runShellScript/stdout";
 const stderrStream = "cmd-1/i-abc/aws-runShellScript/stderr";
+
+// The regression this guards: with no lower bound, FilterLogEvents walked the log group's
+// whole retention window, ~40 mostly-empty pages and ~27s for a one-line command.
+test("logReadStartTime bounds a first read to shortly before the command was sent", () => {
+  const sentAtMs = Date.UTC(2026, 10, 4, 12, 0, 0);
+  const start = logReadStartTime(0, sentAtMs);
+  assert.ok(start > 0);
+  assert.ok(start < sentAtMs, "must leave slack for clock skew between here and the instance");
+  assert.ok(sentAtMs - start <= 60 * 60 * 1_000, "must not reach back far into the retention window");
+});
+
+test("logReadStartTime resumes just past the last event seen", () => {
+  const sentAtMs = Date.UTC(2026, 10, 4, 12, 0, 0);
+  const lastSeen = sentAtMs + 5_000;
+  assert.equal(logReadStartTime(lastSeen, sentAtMs), lastSeen + 1);
+});
 
 test("partitionLogEvents keeps stdout free of stderr", () => {
   const out = partitionLogEvents([

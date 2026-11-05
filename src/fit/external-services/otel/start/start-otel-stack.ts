@@ -126,7 +126,7 @@ async function createAndStartContainer(
     // not secret content, so world-readable is the simplest fix.
     writeFileSync(spec.config.localPath, spec.config.content, { mode: 0o644 });
     const stagedConfigPath = await execution.stageFile(spec.config.localPath, execution.targetFilePath(spec.config.localPath));
-    await execution.run(execution.dockerCommand, ["cp", stagedConfigPath, `${containerId}:${spec.config.containerPath}`], undefined, {
+    await execution.runHiddenUntilFailure(execution.dockerCommand, ["cp", stagedConfigPath, `${containerId}:${spec.config.containerPath}`], undefined, {
       display: `docker cp ${spec.config.localPath} ${spec.name}:${spec.config.containerPath}`,
     });
   }
@@ -139,7 +139,8 @@ async function startCreatedContainer(
   name: string,
   logFile: string,
 ): Promise<OtelContainerHandle> {
-  await execution.run(execution.dockerCommand, ["start", containerId], undefined, { display: `docker start ${name}` });
+  // Hidden rather than streamed: all it prints is the container ID, which we already have.
+  await execution.runHiddenUntilFailure(execution.dockerCommand, ["start", containerId], undefined, { display: `docker start ${name}` });
   const targetLogFile = execution.targetFilePath(logFile);
   const logStream = await execution.streamToArtifactFileInBackground(
     execution.dockerCommand,
@@ -147,8 +148,11 @@ async function startCreatedContainer(
     targetLogFile,
   );
 
+  // Bounded by the clock rather than by counting iterations: on a remote box each inspect
+  // is a multi-second round trip, and counting turned a 2s watch into ~30s per container.
   let exitedEarly = false;
-  for (let waited = 0; waited < STARTUP_CRASH_CHECK_TOTAL_MS; waited += STARTUP_CRASH_CHECK_INTERVAL_MS) {
+  const crashCheckDeadline = Date.now() + STARTUP_CRASH_CHECK_TOTAL_MS;
+  while (Date.now() < crashCheckDeadline) {
     await sleep(STARTUP_CRASH_CHECK_INTERVAL_MS);
     const running = await execution
       .capture(execution.dockerCommand, ["inspect", "--format", "{{.State.Running}}", containerId])
@@ -202,9 +206,11 @@ export async function findRunningOtelStack(
 
   const otelDir = join(instanceDir, "otel");
   mkdirSync(otelDir, { recursive: true, mode: 0o700 });
-  const collector = await attachToRunningContainer(execution, names.collector, join(otelDir, "fit-cli-otel-collector.log"));
-  const jaeger = await attachToRunningContainer(execution, names.jaeger, join(otelDir, "fit-cli-otel-jaeger.log"));
-  const prometheus = await attachToRunningContainer(execution, names.prometheus, join(otelDir, "fit-cli-otel-prometheus.log"));
+  const [collector, jaeger, prometheus] = await Promise.all([
+    attachToRunningContainer(execution, names.collector, join(otelDir, "fit-cli-otel-collector.log")),
+    attachToRunningContainer(execution, names.jaeger, join(otelDir, "fit-cli-otel-jaeger.log")),
+    attachToRunningContainer(execution, names.prometheus, join(otelDir, "fit-cli-otel-prometheus.log")),
+  ]);
   return { service: "otel", collector, jaeger, prometheus, endpoints: otelEndpoints(), artifacts: [], details: [] };
 }
 
@@ -212,13 +218,16 @@ export async function findRunningOtelStack(
 async function removeStaleContainers(execution: FitExecutionContext, names: readonly string[]): Promise<void> {
   if (names.length === 0) return;
   console.log(`\n→ Removing stale otel container(s): ${names.join(", ")}`);
-  await execution.run(execution.dockerCommand, ["rm", "-f", ...names]).catch(() => {});
+  await execution.runHiddenUntilFailure(execution.dockerCommand, ["rm", "-f", ...names]).catch(() => {});
 }
 
 async function removeStackResources(execution: FitExecutionContext): Promise<void> {
-  await execution.run(execution.dockerCommand, ["rm", "-f", ...Object.values(OTEL_CONTAINER_NAMES)]).catch(() => {});
-  await execution.run(execution.dockerCommand, ["network", "rm", OTEL_NETWORK]).catch(() => {});
-  await execution.run(execution.dockerCommand, ["volume", "rm", "-f", OTEL_BADGER_VOLUME]).catch(() => {});
+  await execution.runHiddenUntilFailure(execution.dockerCommand, ["rm", "-f", ...Object.values(OTEL_CONTAINER_NAMES)]).catch(() => {});
+  // Both only refuse while a container still references them, so they can go together.
+  await Promise.all([
+    execution.runHiddenUntilFailure(execution.dockerCommand, ["network", "rm", OTEL_NETWORK]).catch(() => {}),
+    execution.runHiddenUntilFailure(execution.dockerCommand, ["volume", "rm", "-f", OTEL_BADGER_VOLUME]).catch(() => {}),
+  ]);
 }
 
 /**
@@ -231,12 +240,14 @@ async function removeStackResources(execution: FitExecutionContext): Promise<voi
  */
 async function teardownPartialStack(execution: FitExecutionContext, started: readonly OtelContainerHandle[]): Promise<void> {
   await removeStackResources(execution);
-  const collected: string[] = [];
-  for (const handle of started) {
-    await handle.logStream.drain().catch(() => {});
-    const path = await execution.collectFile(execution.targetFilePath(handle.logFile), handle.logFile).catch(() => undefined);
-    if (path) collected.push(path);
-  }
+  const collected = (
+    await Promise.all(
+      started.map(async (handle) => {
+        await handle.logStream.drain().catch(() => {});
+        return execution.collectFile(execution.targetFilePath(handle.logFile), handle.logFile).catch(() => undefined);
+      }),
+    )
+  ).filter((path): path is string => path !== undefined);
   if (collected.length > 0) {
     console.log(`  Kept the failed stack's container logs:\n${collected.map((path) => `    ${path}`).join("\n")}`);
   }
@@ -276,9 +287,9 @@ export async function removeOtelStackRemnants(execution: FitExecutionContext): P
  * permitted".
  */
 export async function ensureBadgerVolume(execution: FitExecutionContext, chmodImage: string): Promise<void> {
-  await execution.run(execution.dockerCommand, ["volume", "rm", "-f", OTEL_BADGER_VOLUME]).catch(() => {});
+  await execution.runHiddenUntilFailure(execution.dockerCommand, ["volume", "rm", "-f", OTEL_BADGER_VOLUME]).catch(() => {});
   await execution.runHiddenUntilFailure(execution.dockerCommand, ["volume", "create", OTEL_BADGER_VOLUME]);
-  await execution.run(
+  await execution.runHiddenUntilFailure(
     execution.dockerCommand,
     [
       "run",
@@ -299,8 +310,10 @@ export async function ensureBadgerVolume(execution: FitExecutionContext, chmodIm
 }
 
 async function checkPortsFreeOrFail(execution: FitExecutionContext): Promise<void> {
-  for (const port of Object.values(OTEL_PORTS)) {
-    const availability = await checkPortAvailability(execution, port);
+  const ports = Object.values(OTEL_PORTS);
+  const availabilities = await Promise.all(ports.map((port) => checkPortAvailability(execution, port)));
+  for (const [i, availability] of availabilities.entries()) {
+    const port = ports[i];
     if (availability.available === false) {
       throwFatalToCluster(
         `Port ${port} (needed by fit-cli's otel stack) is already in use on ${execution.description} ` +
@@ -331,26 +344,28 @@ async function waitForPrometheusScrapingCollector(execution: FitExecutionContext
 }
 
 async function runHealthGate(execution: FitExecutionContext): Promise<void> {
-  const collectorUp = await pollUntil(
-    () => execution.capture("curl", ["-sf", `http://localhost:${OTEL_PORTS.collectorHealth}/`], undefined, { quiet: true }).then(() => true),
-    10_000,
-  );
+  const [collectorUp, jaegerUp, prometheusUp] = await Promise.all([
+    pollUntil(
+      () => execution.capture("curl", ["-sf", `http://localhost:${OTEL_PORTS.collectorHealth}/`], undefined, { quiet: true }).then(() => true),
+      10_000,
+    ),
+    pollUntil(
+      () => execution.capture("curl", ["-sf", `http://localhost:${OTEL_PORTS.jaegerUi}/`], undefined, { quiet: true }).then(() => true),
+      10_000,
+    ),
+    pollUntil(
+      () => execution.capture("curl", ["-sf", `http://localhost:${OTEL_PORTS.prometheus}/-/ready`], undefined, { quiet: true }).then(() => true),
+      10_000,
+    ),
+  ]);
   if (!collectorUp) {
     throwFatalToCluster(`The otel collector's health_check endpoint (http://localhost:${OTEL_PORTS.collectorHealth}/) never came up.`);
   }
 
-  const jaegerUp = await pollUntil(
-    () => execution.capture("curl", ["-sf", `http://localhost:${OTEL_PORTS.jaegerUi}/`], undefined, { quiet: true }).then(() => true),
-    10_000,
-  );
   if (!jaegerUp) {
     throwFatalToCluster(`Jaeger (http://localhost:${OTEL_PORTS.jaegerUi}/, fronting the gRPC query port ${OTEL_PORTS.jaegerQueryGrpc}) never came up.`);
   }
 
-  const prometheusUp = await pollUntil(
-    () => execution.capture("curl", ["-sf", `http://localhost:${OTEL_PORTS.prometheus}/-/ready`], undefined, { quiet: true }).then(() => true),
-    10_000,
-  );
   if (!prometheusUp) {
     throwFatalToCluster(`Prometheus (http://localhost:${OTEL_PORTS.prometheus}/-/ready) never came up.`);
   }
@@ -413,9 +428,11 @@ export async function startOtelStack(
     // Now, not the container's start time: this stack ran for an earlier process, and
     // its data belongs to that run rather than this one.
     windowStart = new Date().toISOString();
-    collector = await attachToRunningContainer(execution, OTEL_CONTAINER_NAMES.collector, collectorLogFile);
-    jaeger = await attachToRunningContainer(execution, OTEL_CONTAINER_NAMES.jaeger, jaegerLogFile);
-    prometheus = await attachToRunningContainer(execution, OTEL_CONTAINER_NAMES.prometheus, prometheusLogFile);
+    [collector, jaeger, prometheus] = await Promise.all([
+      attachToRunningContainer(execution, OTEL_CONTAINER_NAMES.collector, collectorLogFile),
+      attachToRunningContainer(execution, OTEL_CONTAINER_NAMES.jaeger, jaegerLogFile),
+      attachToRunningContainer(execution, OTEL_CONTAINER_NAMES.prometheus, prometheusLogFile),
+    ]);
     started.push(collector, jaeger, prometheus);
   } else {
     if (existing.size > 0) {
@@ -425,18 +442,19 @@ export async function startOtelStack(
 
     const images = otelImages(otel);
     console.log(`\nPulling otel stack images on ${execution.description}...`);
-    for (const image of [images.collector, images.jaeger, images.prometheus]) {
-      try {
-        await execution.runHiddenUntilFailure(execution.dockerCommand, ["pull", image]);
-      } catch (err) {
+    const pullImage = (image: string): Promise<void> =>
+      execution.runHiddenUntilFailure(execution.dockerCommand, ["pull", image]).catch((err: unknown) =>
         throwFatalToCluster(
           `Failed to pull ${image}: ${(err as Error).message}\n` +
             `  If this is a Docker Hub rate limit, \`docker login\` first to raise the anonymous pull limit.`,
-        );
-      }
-    }
-
-    await ensureDockerNetwork(execution, OTEL_NETWORK);
+        ),
+      );
+    await Promise.all([
+      pullImage(images.collector),
+      pullImage(images.jaeger),
+      pullImage(images.prometheus),
+      ensureDockerNetwork(execution, OTEL_NETWORK),
+    ]);
 
     const collectorConfigPath = join(otelDir, "otel-collector-config.yaml");
     const prometheusConfigPath = join(otelDir, "prometheus.yml");
@@ -450,8 +468,11 @@ export async function startOtelStack(
     // Before the containers rather than after: a window that opens a few seconds early
     // costs an empty leading range, whereas one that opens late drops real data.
     windowStart = new Date().toISOString();
-    try {
-      collector = await createAndStartContainer(
+    // All three at once: none needs another up to start - the collector's exporter and
+    // Prometheus's scrape both retry until their peer answers, and the health gate below
+    // is what confirms they have found each other.
+    const results = await Promise.allSettled([
+      createAndStartContainer(
         execution,
         {
           name: OTEL_CONTAINER_NAMES.collector,
@@ -459,11 +480,9 @@ export async function startOtelStack(
           config: { localPath: collectorConfigPath, content: collectorConfigYaml(), containerPath: OTEL_CONFIG_PATHS.collector },
         },
         collectorLogFile,
-      );
-      started.push(collector);
-      jaeger = await createAndStartContainer(execution, { name: OTEL_CONTAINER_NAMES.jaeger, createArgs: jaegerCreateArgs(images.jaeger) }, jaegerLogFile);
-      started.push(jaeger);
-      prometheus = await createAndStartContainer(
+      ),
+      createAndStartContainer(execution, { name: OTEL_CONTAINER_NAMES.jaeger, createArgs: jaegerCreateArgs(images.jaeger) }, jaegerLogFile),
+      createAndStartContainer(
         execution,
         {
           name: OTEL_CONTAINER_NAMES.prometheus,
@@ -471,14 +490,19 @@ export async function startOtelStack(
           config: { localPath: prometheusConfigPath, content: prometheusConfigYaml(), containerPath: OTEL_CONFIG_PATHS.prometheus },
         },
         prometheusLogFile,
-      );
-      started.push(prometheus);
-    } catch (err) {
+      ),
+    ]);
+    for (const result of results) {
+      if (result.status === "fulfilled") started.push(result.value);
+    }
+    const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failure) {
       // Best-effort teardown of whatever partial set came up, so a failed start
       // doesn't leave half a stack squatting on our fixed names/ports.
       await teardownPartialStack(execution, started);
-      throw err;
+      throw failure.reason;
     }
+    [collector, jaeger, prometheus] = started;
   }
 
   try {

@@ -229,8 +229,11 @@ export async function checkBuildAndRunPerformer(
     // out from under us, so the logs above and the inspect below both still see
     // it even if it already exited.
     console.log(`Checking the performer doesn't crash on startup (polling for ${STARTUP_CRASH_CHECK_TOTAL_MS}ms)...`);
+    // Bounded by the clock rather than by counting iterations: on a remote box each inspect
+    // is a multi-second round trip, and counting turned a 2s watch into ~30s.
     let exitedEarly = false;
-    for (let waited = 0; waited < STARTUP_CRASH_CHECK_TOTAL_MS; waited += STARTUP_CRASH_CHECK_INTERVAL_MS) {
+    const crashCheckDeadline = Date.now() + STARTUP_CRASH_CHECK_TOTAL_MS;
+    while (Date.now() < crashCheckDeadline) {
       await sleep(STARTUP_CRASH_CHECK_INTERVAL_MS);
       const running = await execution
         .capture(execution.dockerCommand, ["inspect", "--format", "{{.State.Running}}", containerId])
