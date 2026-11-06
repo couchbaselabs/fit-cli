@@ -67,6 +67,23 @@ test("a quiet fortnight says so rather than posting an empty thread", () => {
   assert.doesNotMatch(d.headline, /Full report/);
 });
 
+test("the Capella vs Capella PE comparison stays on the page, so a quiet night still says so", () => {
+  const capella = { preset: "op-capella-sit-lite", kind: "situational" as const, cluster: "Capella:8.0", params: {} };
+  const capellaPe = { preset: "op-capella-pe-sit-lite", kind: "situational" as const, cluster: "Capella:8.0", params: { privateEndpoint: true } };
+  const rs = days(28).flatMap((d) => [rec(d), rec(d, [], capella), rec(d, [], capellaPe)]);
+  const report = buildHealthReport("dotnet", rs, [], { end: "2026-09-28" });
+  assert.equal(report.comparisons.length, 1);
+  const d = renderSlackDigest(report, ".NET");
+  assert.equal(d.thread, "_Nothing started or stopped failing in the last 14 days._");
+});
+
+test("a thread that starts with a later section has no blank first line", () => {
+  // Failed 10-14 Sep, then not in the results: the thread is only "Stopped running".
+  const rs = days(28).map((d, i) => rec(d, i >= 9 && i < 14 ? ["A.b"] : []));
+  const d = renderSlackDigest(buildHealthReport("dotnet", rs, [], { end: "2026-09-28" }), ".NET");
+  assert.match(d.thread, /^\*Stopped running \(last 14 days\)\*\n• `A\.b` — not run since 15 Sep, on-prem$/);
+});
+
 test("a clean night says so, with what passed where", () => {
   const rs = days(28).map((d) => {
     const r = rec(d);

@@ -93,30 +93,30 @@ export function renderSlackDigest(report: HealthReport, sdkName: string, reportU
     ...(reportUrl ? [`<${reportUrl}|Full report>`] : []),
   ].join("\n");
 
+  // Changes only: the Capella vs Capella PE comparison covers the whole window and is the same
+  // every night, so it stays on the page. Without it a quiet night gets the "nothing changed" line.
   const thread: string[] = [];
-  if (failed?.tests.length) {
-    thread.push(`*Failed last night*`);
-    thread.push(...list(failed.tests.map((t) => `\`${slackEscape(t.test)}\` — ${KIND[t.cls] ?? t.cls}, ${t.where}`)));
-  }
-  if (d.startedGroups.length) {
+  const section = (title: string, items: string[]) => {
     if (thread.length) thread.push("");
-    thread.push(`*Started failing (last ${recent} days)*`);
-    thread.push(...list(d.startedGroups.map((g) => `\`${g.cls}\` ${slackEscape(g.tests.map(testMethod).join(", "))} — since ${shortDate(g.since)}, ${g.where}`)));
+    thread.push(`*${title}*`, ...list(items));
+  };
+  if (failed?.tests.length) section("Failed last night", failed.tests.map((t) => `\`${slackEscape(t.test)}\` — ${KIND[t.cls] ?? t.cls}, ${t.where}`));
+  if (d.startedGroups.length) {
+    section(
+      `Started failing (last ${recent} days)`,
+      d.startedGroups.map((g) => `\`${g.cls}\` ${slackEscape(g.tests.map(testMethod).join(", "))} — since ${shortDate(g.since)}, ${g.where}`),
+    );
   }
   if (d.stoppedTests.length) {
-    thread.push("", `*Stopped failing (last ${recent} days)*`);
-    thread.push(...list(d.stoppedTests.map((t) => `\`${slackEscape(t.test)}\` — last failed ${shortDate(t.last)}, ${t.where}${t.fix?.ticket ? ` (${t.fix.ticket})` : ""}`)));
+    section(
+      `Stopped failing (last ${recent} days)`,
+      d.stoppedTests.map((t) => `\`${slackEscape(t.test)}\` — last failed ${shortDate(t.last)}, ${t.where}${t.fix?.ticket ? ` (${t.fix.ticket})` : ""}`),
+    );
   }
   if (d.stoppedRunning.length) {
-    thread.push("", `*Stopped running (last ${recent} days)*`);
-    thread.push(...list(d.stoppedRunning.map((t) => `\`${slackEscape(t.test)}\` — not run since ${shortDate(t.since)}, ${t.where}`)));
+    section(`Stopped running (last ${recent} days)`, d.stoppedRunning.map((t) => `\`${slackEscape(t.test)}\` — not run since ${shortDate(t.since)}, ${t.where}`));
   }
-  if (d.always.length) thread.push("", `*Failed every night they ran in the last ${report.classes.windowDays} days*`, ...list(d.always.map((t) => `\`${slackEscape(t.test)}\` — ${t.where}`)));
-  for (const c of report.comparisons) {
-    const a = report.series.find((s) => s.id === c.a)!;
-    const b = report.series.find((s) => s.id === c.b)!;
-    thread.push("", `*${a.short} vs ${b.short}*`, `• Nights with any failure: ${c.aRed}/${c.nights} vs ${c.bRed}/${c.nights} (both on ${c.bothRed})`);
-  }
+  if (d.always.length) section(`Failed every night they ran in the last ${report.classes.windowDays} days`, d.always.map((t) => `\`${slackEscape(t.test)}\` — ${t.where}`));
   if (!thread.length) thread.push(`_Nothing started or stopped failing in the last ${recent} days._`);
   return { headline, thread: thread.join("\n") };
 }
