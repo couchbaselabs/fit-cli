@@ -75,6 +75,27 @@ jobs:
       - name: Install fit-cli dependencies
         run: bun install --frozen-lockfile
 
+      # The runner has no fit-cli config, so capella-clusters finds this binary
+      # through CBDINOCLUSTER_PATH.
+      - name: Install cbdinocluster
+        run: |
+          set -euo pipefail
+          version=$(bun -e '
+            import { loadEnvironments } from "./src/fit/util/environments.ts";
+            const version = loadEnvironments().defaults.cbdinoclusterVersion;
+            if (typeof version !== "string") {
+              console.error("defaults.cbdinoclusterVersion in environments.json5 is a PR or branch source. The sweep needs a release tag.");
+              process.exit(1);
+            }
+            console.log(version);
+          ')
+          target="$RUNNER_TEMP/cbdinocluster"
+          echo "Installing cbdinocluster $version to $target"
+          curl -fsSL "https://github.com/couchbaselabs/cbdinocluster/releases/download/$version/cbdinocluster-linux-amd64" -o "$target"
+          chmod 755 "$target"
+          "$target" version
+          echo "CBDINOCLUSTER_PATH=$target" >> "$GITHUB_ENV"
+
       - name: Reap expired Capella clusters
         env:
           # schedule events carry no inputs, so fall back to the defaults below.

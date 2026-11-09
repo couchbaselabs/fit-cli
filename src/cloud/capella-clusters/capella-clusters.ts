@@ -26,8 +26,8 @@ import { capture, run, runHiddenUntilFailure } from "../../util/non-fit/proc.js"
 import { findOnPath } from "../../util/non-fit/which.js";
 import { isFitCliPurpose } from "../../cluster/cluster-create/allocate-purpose.js";
 import { capellaCleanupCbdinoclusterInitArgs } from "../../cluster/cluster-create/default-cbdinocluster-init-config.js";
-import { installCbdinoclusterLocally } from "../../cluster/cluster-create/install-cbdinocluster.js";
 import {
+  CBDINOCLUSTER_URL,
   DEFAULT_CAPELLA_ENV,
   resolveCapellaConfig,
   resolveCbdinoclusterPath,
@@ -181,8 +181,8 @@ function capellaInitEnv(capella: ResolvedCapellaConfig): Record<string, string> 
   };
 }
 
-/** The configured cbdinocluster, else one on the PATH, else a fresh install. */
-async function resolveLocalCbdinocluster(): Promise<string> {
+/** The configured cbdinocluster, else one on the PATH. Throws when there is neither. */
+function resolveLocalCbdinocluster(): string {
   const configured = resolveCbdinoclusterPath();
   if (configured) {
     console.log(`→ capella-clusters: using cbdinocluster from your fit-cli config: ${configured}`);
@@ -193,7 +193,9 @@ async function resolveLocalCbdinocluster(): Promise<string> {
     console.log(`→ capella-clusters: using cbdinocluster from your PATH: ${onPath}`);
     return onPath;
   }
-  return installCbdinoclusterLocally();
+  throw new Error(
+    `cbdinocluster is not in your fit-cli config or on your PATH. You can get it from ${CBDINOCLUSTER_URL}.`,
+  );
 }
 
 /** Give `body` a cbdinocluster that knows one Capella organization and nothing else. */
@@ -201,8 +203,8 @@ async function withCapellaConfig(
   envName: string,
   body: (cbdinocluster: string) => Promise<void>,
 ): Promise<void> {
+  const cbdinocluster = resolveLocalCbdinocluster();
   const capella = await resolveCapellaConfig({ block: envName });
-  const cbdinocluster = await resolveLocalCbdinocluster();
   const configDir = mkdtempSync(join(tmpdir(), "fit-cli-cbdinocluster-"));
   const configPath = join(configDir, "config");
   Object.assign(process.env, capellaInitEnv(capella), { CBDINOCLUSTER_CONFIG: configPath });
