@@ -393,6 +393,36 @@ test("resolveCapellaConfig prefers CAPELLA_*/CAP_* env over the shared account",
   assert.equal(resolved.v4Endpoint, "https://cloudapi.dev.example");
 });
 
+const PERSONAL_CAPELLA_CREDS = { password: "pw", apiKey: "k", apiSecret: "s" };
+
+async function resolvedProjectId(projectId: string | undefined, env: NodeJS.ProcessEnv = {}): Promise<string | undefined> {
+  const resolved = await resolveCapellaConfig({
+    block: "dev",
+    environments: { ...TEST_ENVIRONMENTS, capella: { dev: { ...TEST_ENVIRONMENTS.capella.dev, projectId } } },
+    config: { version: FIT_CLI_CONFIG_VERSION, capella: PERSONAL_CAPELLA_CREDS },
+    env,
+    fetchSecret: noFetch,
+  });
+  return resolved.projectId;
+}
+
+test("resolveCapellaConfig takes projectId from the environments.json5 entry", async () => {
+  assert.equal(await resolvedProjectId(" pid-dev "), "pid-dev");
+});
+
+test("resolveCapellaConfig leaves projectId unset when the entry has none", async () => {
+  assert.equal(await resolvedProjectId(undefined), undefined);
+});
+
+test("resolveCapellaConfig treats a blank projectId entry as unset", async () => {
+  assert.equal(await resolvedProjectId("  "), undefined);
+});
+
+test("resolveCapellaConfig ignores CAPELLA_PROJECT_ID in the environment", async () => {
+  assert.equal(await resolvedProjectId("pid-dev", { CAPELLA_PROJECT_ID: "pid-other" }), "pid-dev");
+  assert.equal(await resolvedProjectId(undefined, { CAPELLA_PROJECT_ID: "pid-other" }), undefined);
+});
+
 test("resolveCapellaConfig uses the shared registry username + the secret's credentials when no personal creds", async () => {
   const resolved = await resolveCapellaConfig({
     block: "dev",

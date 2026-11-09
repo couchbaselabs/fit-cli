@@ -22,6 +22,8 @@ export interface CapellaEnvironment {
   /** Capella Management API v4 endpoint for this environment. */
   v4Endpoint?: string | null;
   oid?: string | null;
+  /** The Capella project cbdinocluster puts every cluster in. It belongs to the org above. */
+  projectId?: string | null;
   /** The (shared, non-secret) Capella account username for this environment. */
   username?: string | null;
   /**
