@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { createWriteStream, mkdirSync, type WriteStream } from "node:fs";
+import { createWriteStream, mkdirSync, readFileSync, statSync, type WriteStream } from "node:fs";
 import { dirname } from "node:path";
 import { echoCommand, formatCommandLine, formatTimestampedChunk, startGreyIndentedOutput, startGreyTextOutput, stopGreyIndentedOutput, stopGreyTextOutput } from "./fit-cli-log.js";
 import { createRunFilePath } from "./replay.js";
@@ -27,7 +27,11 @@ export enum LogType {
   Streamed = 1,
   /** L2: hidden as unimportant noise; shown only on failure; mirrored to the debug log. */
   HiddenUntilFailure = 2,
-  /** L3: sent to its own artifact file; the last line is echoed every N seconds as proof-of-life. */
+  /**
+   * L3: sent to its own artifact file; the last line is echoed every N seconds
+   * as proof-of-life, and the whole log is printed once the step ends if it
+   * turned out to be smaller than {@link SMALL_LOG_MAX_BYTES}.
+   */
   Artifact = 3,
   /**
    * L4: sent to its own artifact file in the background; the process runs
@@ -642,6 +646,48 @@ export function announceArtifactStream({ logPath, command, onHost }: ArtifactStr
   );
 }
 
+/**
+ * Below this size, an L3 step prints its whole log to the terminal once it ends
+ * rather than leaving it in the file. L3 exists for logs too big to scroll past
+ * — a log this small isn't that, and is usually a process that died before it
+ * got going, where the stack trace *is* the whole story. Sending the reader to
+ * a file to read 900 bytes is the wrong trade.
+ *
+ * Unrelated to the size at which a remote `collectFile` switches to fetching a
+ * log as `.gz` — that one is about what's safe to decompress locally.
+ *
+ * @execModel ProcessExecModel.StreamToArtifact (LogType.Artifact / L3)
+ */
+export const SMALL_LOG_MAX_BYTES = 16 * 1024;
+
+/** The one wording for the small-log dump, shared by the local and remote L3 paths. */
+export const SMALL_LOG_INTRO = "The full log is short, so here it is:";
+
+/**
+ * Print `logFile` in full if it came in under {@link SMALL_LOG_MAX_BYTES}.
+ * Silent for a big, missing or empty log — this is a convenience on top of the
+ * artifact file, never a substitute for it.
+ *
+ * The dump repeats the `# <timestamp> <command>` header {@link streamToFile}
+ * writes, and any heartbeat lines already printed, which is a small price for
+ * having the failure in front of you.
+ */
+export function printLogIfSmall(logFile: string): void {
+  let contents: string;
+  try {
+    if (statSync(logFile).size > SMALL_LOG_MAX_BYTES) return;
+    contents = readFileSync(logFile, "utf8");
+  } catch {
+    return;
+  }
+  if (!contents.trim()) return;
+
+  process.stdout.write(`${SMALL_LOG_INTRO}\n`);
+  startGreyIndentedOutput();
+  process.stdout.write(ensureTrailingNewline(contents));
+  stopGreyIndentedOutput();
+}
+
 export function streamToFile(
   command: string,
   args: string[],
@@ -663,6 +709,9 @@ export function streamToFile(
 
     let partial = '';
     let lastLine = '';
+    // The log file always has our own `# <timestamp> <command>` header in it, so
+    // its size alone can't tell us whether the command actually said anything.
+    let sawOutput = false;
     const trackLine = (chunk: Buffer) => {
       const str = partial + chunk.toString();
       const lines = str.split('\n');
@@ -677,8 +726,9 @@ export function streamToFile(
       ...(env ? { env: { ...process.env, ...env } } : {}),
     });
 
-    child.stdout.on("data", (chunk: Buffer) => { log.write(chunk); trackLine(chunk); });
-    child.stderr.on("data", (chunk: Buffer) => { log.write(chunk); trackLine(chunk); });
+    const onChunk = (chunk: Buffer) => { sawOutput = true; log.write(chunk); trackLine(chunk); };
+    child.stdout.on("data", onChunk);
+    child.stderr.on("data", onChunk);
 
     const heartbeat = setInterval(() => {
       const line = lastLine || partial.trim();
@@ -698,15 +748,19 @@ export function streamToFile(
       log.end(() => finish(() => reject(err)));
     });
     child.on("close", (code) => {
-      log.end(() =>
+      // Inside log.end's callback, so the file is flushed and complete. The dump
+      // has to happen before we settle the promise: callers report the failure
+      // once their await rejects, and the log belongs above that, not after it.
+      log.end(() => {
+        if (sawOutput) printLogIfSmall(logFile);
         finish(() => {
           if (code === 0) {
             resolve();
           } else {
             reject(new Error(`${command} exited with code ${code}`));
           }
-        }),
-      );
+        });
+      });
     });
   });
 }

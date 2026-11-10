@@ -28,6 +28,7 @@
     "upgrade": "bun src/fit/upgrade/upgrade.ts",
     "maintenance": "bun src/fit/maintenance/maintenance.ts",
     "generate-fit-tests-cache": "bun src/fit/shared/select-fit-tests/generate-fit-tests-cache.ts",
+    "generate-protocol": "bun src/fit/performance/generate-protocol/generate-protocol.ts",
     "dev": "bun --watch src/fit/main/main.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
@@ -51,6 +52,9 @@
     "@aws-sdk/lib-storage": "^3.1107.0",
     "@aws-sdk/s3-request-presigner": "^3.1107.0",
     "@aws-sdk/shared-ini-file-loader": "^3.374.0",
+    "@bufbuild/protobuf": "^2.14.0",
+    "@connectrpc/connect": "2.2.0",
+    "@connectrpc/connect-node": "2.2.0",
     "@google-cloud/compute": "^7.0.0",
     "@inquirer/prompts": "^7.10.1",
     "archiver": "^8.0.0",
@@ -61,6 +65,8 @@
     "yaml": "^2.9.1"
   },
   "devDependencies": {
+    "@bufbuild/buf": "^1.72.0",
+    "@bufbuild/protoc-gen-es": "^2.14.0",
     "@eslint/js": "^10.0.1",
     "@types/archiver": "^8.0.0",
     "@types/node": "^22.20.1",

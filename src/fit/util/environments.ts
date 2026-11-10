@@ -4,6 +4,7 @@
  *   - defaults: global version strings for cbdinocluster (cluster, CNG, Analytics, CAO)
  *   - externalServices: settings for the services fit-cli starts itself, e.g. the otel stack
  *   - testSets: the test set each preset tier runs (see TestSets)
+ *   - perf: FIT/PERF settings shared by the perf presets (see PerfDefaults)
  *   - capella: control-plane endpoint + org id per Capella environment (dev/stage/…)
  *   - results: the hosted results host per results environment (dev/prod/…), which
  *     serves both the Postgres DB and the results UI.
@@ -16,6 +17,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import JSON5 from "json5";
 import type { CbdinoclusterSourceGit } from "../shared/definition/types.js";
+import type { JsonValue } from "../../util/non-fit/config-pieces.js";
 
 export interface CapellaEnvironment {
   endpoint?: string | null;
@@ -138,6 +140,25 @@ export interface Defaults {
   aws: AwsDefaults;
   /** GCP account and network settings. */
   gcp?: GcpDefaults;
+  /** The Couchbase Server version FIT/PERF measures against; changing it starts a new perf baseline. */
+  perfClusterVersion: string;
+}
+
+/**
+ * FIT/PERF settings shared by the perf presets, referenced as whole values, e.g.
+ * `'{{environments.perf.pooledVariables}}'`. Every value is part of a datapoint's identity.
+ */
+export interface PerfDefaults {
+  driverVer: number;
+  performerVer: number;
+  /** The perf presets' `aws` instance block, matching the box FIT/PERF has always used. */
+  aws: { instanceType: string };
+  /** The perf presets' cbdinocluster `docker` block, e.g. `{ "kv-memory": 28000 }`. */
+  docker: Record<string, JsonValue>;
+  pooledVariables: Record<string, string | number | boolean>;
+  insertVariables: Record<string, string | number | boolean>;
+  /** The standard workloads, inserted verbatim as a preset run's `performance.workload`. */
+  workloads: Record<"kvGet" | "kvReplace" | "kvInsert" | "txnWrite", JsonValue>;
 }
 
 /** Pinned image tags for fit-cli's ephemeral per-box observability stack. */
@@ -180,6 +201,7 @@ export interface EnvironmentsFile {
   defaults: Defaults;
   externalServices: ExternalServicesDefaults;
   testSets: TestSets;
+  perf: PerfDefaults;
   capella: Record<string, CapellaEnvironment>;
   results: Record<string, ResultsEnvironment>;
   awsTenants: Record<string, AwsTenantEnvironment>;

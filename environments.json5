@@ -162,6 +162,15 @@
       // the AWS ssmInstanceProfileName above).
       serviceAccountEmail: "fit-cli-gcp@couchbase-qe.iam.gserviceaccount.com",
     },
+
+    // The Couchbase Server version FIT/PERF measures against. Deliberately separate from
+    // clusterVersion and almost never changed: the server version is part of every perf
+    // datapoint's identity, so changing it starts a new baseline — every SDK's history has
+    // to be re-measured before the charts show anything again. Coordinate any change with
+    // the perf UI's DEFAULT_CLUSTER (perf-sdk-frontend src/lib/config/defaults.ts).
+    // "8.0.0" is the 8.0.0 GA image, build 3777, which records as "8.0.0-3777-enterprise".
+    // Not pinned as "8.0.0-3777": cbdinocluster would fetch that build from ghcr instead.
+    perfClusterVersion: "8.0.0",
   },
 
   // The services fit-cli itself starts alongside a run — see src/fit/external-services/.
@@ -201,6 +210,80 @@
     FUNCTIONAL_SET_SANITY: "com.couchbase.client.kv.SanityTest",
     FUNCTIONAL_SET_LITE: "all",
     FUNCTIONAL_SET_RELEASE: "all",
+  },
+
+  // FIT/PERF settings shared by the perf presets that are meant to land on the perf UI's
+  // standard charts. Every value here is part of a datapoint's identity, so these match what
+  // the existing history records (and the UI's DEFAULT_QUERY_VARS) exactly.
+  perf: {
+    driverVer: 6,
+    performerVer: 1,
+
+    // The machine and cluster resources are deliberately the ones FIT/PERF has always been
+    // measured on (jenkins-sdk's fit-perf-scheduled), so new numbers compare with the history.
+    // The run records the cluster's cpuCount and memory, so changing either of these starts
+    // a new baseline just as perfClusterVersion does.
+
+    // A c5.4xlarge: 16 vCPUs, 32GB. Pinned rather than left to fit-cli's default instance
+    // type, which FIT_EC2_INSTANCE_TYPE can change.
+    aws: { instanceType: "c5.4xlarge" },
+
+    // The cbdinocluster `docker` block: 28GB for the data service, leaving 4GB of the 32GB
+    // box for the driver and performer. The engine gives the whole quota to the bucket.
+    docker: { "kv-memory": 28000 },
+
+    // KV get/replace and transactions, which work over a pool of documents.
+    pooledVariables: {
+      forSeconds: 300,
+      horizontalScaling: 20,
+      api: "DEFAULT",
+      // Only acted on by the Python performer, but every recorded run carries it.
+      concurrencyMechanism: "multiprocessing",
+      poolSize: 10000,
+    },
+
+    // KV insert, which writes fresh documents. The UI's insert charts filter on docNum.
+    insertVariables: {
+      forSeconds: 300,
+      horizontalScaling: 20,
+      api: "DEFAULT",
+      concurrencyMechanism: "multiprocessing",
+      docNum: 10000000,
+    },
+
+    // The standard workloads, each stored verbatim as part of its datapoint's identity: any
+    // change here starts a new baseline. kvGet, kvReplace and txnWrite use pooledVariables;
+    // kvInsert uses insertVariables.
+    workloads: {
+      kvGet: {
+        operations: [
+          { op: "get", bounds: { forSeconds: "$forSeconds" }, docLocation: { method: "pool", poolSize: "$poolSize", poolSelectionStrategy: "randomUniform" } },
+        ],
+      },
+      kvReplace: {
+        operations: [
+          { op: "replace", bounds: { forSeconds: "$forSeconds" }, docLocation: { method: "pool", poolSize: "$poolSize", poolSelectionStrategy: "counter" } },
+        ],
+      },
+      kvInsert: {
+        operations: [
+          { op: "insert", bounds: { forSeconds: "$forSeconds" }, docLocation: { method: "uuid" } },
+        ],
+      },
+      txnWrite: {
+        operations: [
+          {
+            transaction: {
+              ops: [
+                { op: "replace", docLocation: { method: "pool", poolSize: "$poolSize", poolSelectionStrategy: "randomUniform" } },
+                { op: "insert", docLocation: { method: "uuid" } },
+              ],
+              bounds: { forSeconds: "$forSeconds" },
+            },
+          },
+        ],
+      },
+    },
   },
 
   capella: {

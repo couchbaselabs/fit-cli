@@ -44,6 +44,8 @@ import { postSlackRunResults } from "../slack/post-run-summary.js";
 import type { SlackRunResult } from "../slack/util/slack-results.js";
 import { extractFailureTail, likelyCauseLine } from "../util/gha.js";
 import { getCurrentSessionTail } from "../../util/non-fit/proc.js";
+import { recordRepoDirOverride } from "../util/repo-dir-overrides.js";
+import { RESULTS_UPLOAD_FLAG } from "../shared/results/results-upload-policy.js";
 
 /** Maps a `--repo-dir` key (a {@link Repo.name}) to the env var {@link resolveFitPerformerDir} reads it from. */
 const REPO_DIR_ENV_VARS: Record<string, string> = {
@@ -58,8 +60,8 @@ function buildHelp(): string {
   return `Run FIT tests from a preset or a definition file.
 
 Usage:
-  ${run} preset <preset>[,<preset>...] --performer <image> [--env-override <path>=<value>] [--cbcollect] [--slack-thread <ref>] [--repeat <n>] [--stop-on-failure] [--situational-run-id <uuid>]
-  ${run} definition <file.json5> [--override <dotpath>=<value>] [--cbcollect] [--slack-thread <ref>] [--repeat <n>] [--stop-on-failure] [--situational-run-id <uuid>]
+  ${run} preset <preset>[,<preset>...] --performer <image> [--env-override <path>=<value>] [--cbcollect] [--slack-thread <ref>] [--repeat <n>] [--stop-on-failure] [--situational-run-id <uuid>] [--results-upload]
+  ${run} definition <file.json5> [--override <dotpath>=<value>] [--cbcollect] [--slack-thread <ref>] [--repeat <n>] [--stop-on-failure] [--situational-run-id <uuid>] [--results-upload]
   ${run} --help
 
 Subcommands:
@@ -89,6 +91,8 @@ Shared options (both subcommands):
   --stop-on-failure                Turn any failure into an immediate abort of the whole run (instead of
                                   continuing to the next run/cluster/instance). Combine with --repeat <n> to
                                   stop a repeated run at its first failure.
+  --results-upload                 Upload FIT/SIT and FIT/PERF result files to the results S3 bucket, for the
+                                  results database. Off by default, wherever the run executes; CI passes it.
 
 preset options:
   --performer <image>             SDK-specific performer image ref (e.g. java-fit-performer:refs-changes-67-246067-3 or ghcr.io/couchbase/java-fit-performer:refs-changes-67-246067-3). Alias: --performer-image-name.
@@ -157,6 +161,12 @@ function extractSlackThreadFlag(argv: readonly string[]): { slackThread?: string
     }
   }
   return { slackThread, positionals };
+}
+
+/** See {@link RunFromDefinitionOptions.resultsUpload}. */
+export function extractResultsUploadFlag(argv: readonly string[]): { resultsUpload: boolean; positionals: string[] } {
+  const positionals = argv.filter((arg) => arg !== RESULTS_UPLOAD_FLAG);
+  return { resultsUpload: positionals.length !== argv.length, positionals };
 }
 
 /** See {@link RunFromDefinitionOptions.situationalRunId}. */
@@ -232,6 +242,7 @@ function extractRepoDirs(argv: readonly string[]): { repoDirs: Record<string, st
 function applyRepoDirs(repoDirs: Record<string, string>): void {
   for (const [name, dir] of Object.entries(repoDirs)) {
     process.env[REPO_DIR_ENV_VARS[name]] = dir;
+    recordRepoDirOverride(name);
   }
 }
 
@@ -384,12 +395,14 @@ function extractRunOptions(
   const { slackThread, positionals: afterSlackThread } = extractSlackThreadFlag(afterCbcollect);
   const { slackResultFile, positionals: afterSlackResultFile } = extractSlackResultFileFlag(afterSlackThread);
   const { situationalRunId, positionals: afterSituationalRunId } = extractSituationalRunIdFlag(afterSlackResultFile);
-  const { repeat, stopOnFailure, positionals } = extractRepeatFlags(afterSituationalRunId);
+  const { resultsUpload, positionals: afterResultsUpload } = extractResultsUploadFlag(afterSituationalRunId);
+  const { repeat, stopOnFailure, positionals } = extractRepeatFlags(afterResultsUpload);
   const runOpts = {
     ...(cbcollect ? { cbcollect } : {}),
     ...(slackThread ? { slackThread } : {}),
     ...(stopOnFailure ? { stopOnFailure } : {}),
     ...(situationalRunId ? { situationalRunId } : {}),
+    ...(resultsUpload ? { resultsUpload } : {}),
   };
   return { runOpts, repeat, ...(slackResultFile ? { slackResultFile } : {}), positionals };
 }

@@ -1,0 +1,75 @@
+{
+  preset: {
+    order: 10,
+    tags: ['onprem', 'performance'],
+  },
+  // A quick smoke test (30 seconds at a single thread), so deliberately not one of the perf
+  // UI's standard datapoints: its runs are recorded, but land on no standard chart.
+  version: 1,
+  type: 'fit',
+  instances: [
+    {
+      // The same box and cluster as op-onprem-perf-lite, so the smoke test exercises the
+      // setup the dashboard runs depend on (see environments.json5 `perf`).
+      aws: '{{environments.perf.aws}}',
+      clusters: [
+        {
+          clusterConfig: 'cluster-0',
+          sessions: [
+            {
+              performer: {
+                image: '{{PERFORMER_IMAGE}}',
+                onPortInUse: 'reuse',
+              },
+              runs: [
+                {
+                  type: 'performance',
+                  performance: {
+                    workload: {
+                      operations: [
+                        {
+                          op: 'get',
+                          bounds: { forSeconds: '$forSeconds' },
+                          docLocation: {
+                            method: 'pool',
+                            poolSize: '$poolSize',
+                            poolSelectionStrategy: 'randomUniform',
+                          },
+                        },
+                      ],
+                    },
+                    variables: {
+                      forSeconds: 30,
+                      poolSize: 10000,
+                      horizontalScaling: 1,
+                    },
+                    driverVer: '{{environments.perf.driverVer}}',
+                    performerVer: '{{environments.perf.performerVer}}',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ],
+  clusterConfigs: [
+    {
+      id: 'cluster-0',
+      cbdinocluster: {
+        config: {
+          nodes: [
+            {
+              count: 1,
+              version: '{{environments.defaults.perfClusterVersion}}',
+              services: ['kv', 'n1ql', 'index'],
+            },
+          ],
+          docker: '{{environments.perf.docker}}',
+        },
+        onClusterExists: 'useExisting',
+      },
+    },
+  ],
+}

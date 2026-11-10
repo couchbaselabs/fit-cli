@@ -155,6 +155,13 @@ jobs:
         run: |
           curl -fsSL https://raw.githubusercontent.com/couchbaselabs/fit-cli/main/install.sh | CHANNEL="$CHANNEL" bash
           args=(preset "$PRESET" --performer "$PERFORMER")
+          # CI publishes FIT/SIT and FIT/PERF results to the results database; fit only uploads with this flag.
+          # Gated on the installed binary knowing it, since an older one rejects it (and uploads from CI anyway).
+          # The gate can go once every channel CI installs from has the flag.
+          run_help=$(fit run --help 2>&1 || true)
+          if grep -qE -- '[[ ]--results-upload' <<<"$run_help"; then
+            args+=(--results-upload)
+          fi
           if [[ "$COLLECT_EXTRA_DIAGNOSTICS" == "true" ]]; then
             args+=(--cbcollect)
           fi

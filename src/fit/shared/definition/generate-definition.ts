@@ -24,6 +24,7 @@ import {
   type FitDefinition,
   type InstanceLifetime,
   type InstanceMode,
+  type PerformanceSection,
   type SessionLifetime,
   type TestsSection,
 } from "./types.js";
@@ -179,8 +180,12 @@ interface BuiltFunctionalInstance {
   fitConfigRef?: FitConfigRef;
 }
 
-function buildFunctionalInstance(inputs: DefinitionInputs): BuiltFunctionalInstance {
-  const clusterConfigRef: ClusterConfigRef = inputs.cluster.kind === "connection"
+/**
+ * The clusterConfigs entry for a cluster-bound run — shared by functional and
+ * performance runs, which differ only in what the session's `runs` contain.
+ */
+function buildClusterConfigRef(inputs: Omit<DefinitionInputs, "selection" | "sdk">): ClusterConfigRef {
+  return inputs.cluster.kind === "connection"
     ? {
         id: CLUSTER_CONFIG_ID,
         connection: {
@@ -209,6 +214,10 @@ function buildFunctionalInstance(inputs: DefinitionInputs): BuiltFunctionalInsta
           },
         };
       })();
+}
+
+function buildFunctionalInstance(inputs: DefinitionInputs): BuiltFunctionalInstance {
+  const clusterConfigRef = buildClusterConfigRef(inputs);
   const instance: InstanceLifetime = {
     ...(inputs.instance ?? { localhost: {} }),
     clusters: [
@@ -303,6 +312,38 @@ export function buildFitFunctionalDefinitionFrom(inputs: DefinitionInputs): FitD
     instances: [instance],
     clusterConfigs: [clusterConfigRef],
     ...(fitConfigRef ? { fitConfigs: [fitConfigRef] } : {}),
+  });
+}
+
+/**
+ * A performance run is cluster- and performer-bound in the same way a functional
+ * one is, so it reuses the same cluster config and performer session; only the
+ * run itself differs (a workload instead of a test selection).
+ */
+export interface PerformanceDefinitionInputs extends Omit<DefinitionInputs, "selection" | "analytics"> {
+  performance: PerformanceSection;
+}
+
+export function buildFitPerformanceDefinitionFrom(inputs: PerformanceDefinitionInputs): FitDefinition {
+  const clusterConfigRef = buildClusterConfigRef(inputs);
+  const instance: InstanceLifetime = {
+    ...(inputs.instance ?? { localhost: {} }),
+    clusters: [
+      {
+        clusterConfig: CLUSTER_CONFIG_ID,
+        sessions: [
+          {
+            ...buildPerformerSession(inputs.sdk, inputs.version, inputs.onPortInUse),
+            runs: [{ type: "performance", performance: inputs.performance }],
+          },
+        ],
+      },
+    ],
+  };
+  return buildFitDefinition({
+    ...(inputs.gerritRef ? { gerritRef: inputs.gerritRef } : {}),
+    instances: [instance],
+    clusterConfigs: [clusterConfigRef],
   });
 }
 

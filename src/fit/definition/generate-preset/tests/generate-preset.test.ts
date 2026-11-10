@@ -17,6 +17,7 @@ import {
 import { mkdtempSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import JSON5 from "json5";
 
 test("parseGeneratePresetArgs derives sdk from performer image and accepts output", () => {
   const args = parseGeneratePresetArgs([
@@ -304,6 +305,21 @@ test("autoDescribeName scopes a cross-axis 'multi' group to one SDK family, neve
   );
 });
 
+test("autoDescribeName lists every test type a group mixes, including performance", () => {
+  assert.equal(
+    autoDescribeName("op-onprem-lite", ["onprem", "functional", "performance"]),
+    "Operational SDK functional and performance testing against an on-prem cluster (lite-tier testing).",
+  );
+  assert.equal(
+    autoDescribeName("op-multi-release", ["operational", "functional", "situational", "performance"]),
+    "Operational SDK functional, situational and performance testing across every axis (release sign-off testing).",
+  );
+  assert.equal(
+    autoDescribeName("op-multi-perf-sanity", ["operational", "performance"]),
+    "Operational SDK performance testing across every axis (quick sanity testing).",
+  );
+});
+
 test("parseGeneratePresetArgs collects repeatable --env-override flags in both forms", () => {
   // op-onprem-func-release spans two release lines, so it templates in both version keys.
   const args = parseGeneratePresetArgs([
@@ -431,6 +447,44 @@ test("resolveEnvironmentsPlaceholders substitutes an override verbatim, never JS
     "defaults.clusterVersion": "8.0",
   });
   assert.equal(resolved, "8.0");
+});
+
+const STUB_LOOKUP = (dotPath: string): unknown =>
+  (
+    ({
+      "perf.variables": { forSeconds: 300, api: "DEFAULT" },
+      "perf.driverVer": 6,
+      "perf.enabled": true,
+      "defaults.clusterVersion": "8.0-stable",
+    }) as Record<string, unknown>
+  )[dotPath];
+
+test("resolveEnvironmentsPlaceholders gives a whole-string placeholder the value's own type", () => {
+  const resolved = resolveEnvironmentsPlaceholders(
+    `{ variables: '{{environments.perf.variables}}', driverVer: "{{environments.perf.driverVer}}", on: '{{environments.perf.enabled}}' }`,
+    {},
+    STUB_LOOKUP,
+  );
+  assert.deepEqual(JSON5.parse(resolved), { variables: { forSeconds: 300, api: "DEFAULT" }, driverVer: 6, on: true });
+});
+
+test("resolveEnvironmentsPlaceholders keeps a whole-string string placeholder a string", () => {
+  const resolved = resolveEnvironmentsPlaceholders(`{ version: '{{environments.defaults.clusterVersion}}' }`, {}, STUB_LOOKUP);
+  assert.deepEqual(JSON5.parse(resolved), { version: "8.0-stable" });
+});
+
+test("resolveEnvironmentsPlaceholders keeps a whole-string override a string, never a number", () => {
+  const resolved = resolveEnvironmentsPlaceholders(`{ version: '{{environments.defaults.clusterVersion}}' }`, { "defaults.clusterVersion": "8.0" }, STUB_LOOKUP);
+  assert.deepEqual(JSON5.parse(resolved), { version: "8.0" });
+});
+
+test("resolveEnvironmentsPlaceholders interpolates a placeholder inside a longer string as text", () => {
+  const resolved = resolveEnvironmentsPlaceholders(`{ label: 'v{{environments.perf.driverVer}}' }`, {}, STUB_LOOKUP);
+  assert.deepEqual(JSON5.parse(resolved), { label: "v6" });
+});
+
+test("resolveEnvironmentsPlaceholders rejects an object placeholder inside a longer string", () => {
+  assert.throws(() => resolveEnvironmentsPlaceholders(`{ label: 'x {{environments.perf.variables}}' }`, {}, STUB_LOOKUP), /string or number/);
 });
 
 test("generatePreset bakes an env-override into the written capella situational definition", async () => {

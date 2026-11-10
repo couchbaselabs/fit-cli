@@ -64,7 +64,9 @@ export async function checkPortAvailability(
     return { available: pids.length === 0 };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (message.includes("exited with code")) {
+    // lsof exits non-zero when nothing is listening. Locally that reads "exited with code N";
+    // over SSM it's "exited with status Failed (code N)".
+    if (message.includes("exited with code") || /exited with status .*\(code \d+\)/.test(message)) {
       return { available: true };
     }
     return { available: null, error: message };

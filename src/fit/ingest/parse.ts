@@ -23,7 +23,7 @@ export interface ParsedRun {
 }
 
 export function parseRunJson5(text: string): ParsedRun {
-  let parsed: { forDatabase?: Record<string, unknown> };
+  let parsed: { runUuid?: unknown; forDatabase?: Record<string, unknown> };
   try {
     parsed = JSON5.parse(text);
   } catch (err) {
@@ -33,17 +33,25 @@ export function parseRunJson5(text: string): ParsedRun {
   if (forDatabase === undefined || typeof forDatabase !== "object") {
     throw new Error("run.json5 has no forDatabase object");
   }
-  const runUuid = forDatabase.runUuid;
+  // A perf bundle keeps its uuid beside forDatabase rather than in it, as the Java perf
+  // driver did. Either way it never reaches runs.params.
+  const runUuid = forDatabase.runUuid ?? parsed.runUuid;
   if (typeof runUuid !== "string" || !isUuid(runUuid.toLowerCase())) {
     throw new Error("run.json5 has no valid forDatabase.runUuid");
   }
   const { runUuid: _runUuid, ...params } = forDatabase;
 
-  const workload = params.workload;
-  const kind: RunKind =
-    workload !== null && typeof workload === "object" && "situational" in workload ? "situational" : "performance";
+  return { runUuid: runUuid.toLowerCase(), kind: runKindOf(params), params };
+}
 
-  return { runUuid: runUuid.toLowerCase(), kind, params };
+/**
+ * Whether a run.json5's forDatabase describes a situational or a performance run. Shared
+ * with the uploader, so the results-site link it prints points at the page the ingest
+ * will actually fill.
+ */
+export function runKindOf(forDatabase: Record<string, unknown>): RunKind {
+  const workload = forDatabase.workload;
+  return workload !== null && typeof workload === "object" && "situational" in workload ? "situational" : "performance";
 }
 
 /** scores.json5 holds {score, reasons}. The score key is absent when nothing was scored. */

@@ -1,0 +1,89 @@
+{
+  preset: {
+    order: 20,
+    tags: ['onprem', 'performance'],
+  },
+  // Produces datapoints for the perf UI's standard charts: every run here records the same
+  // parameters as the existing FIT/PERF history (see environments.json5 `perf`).
+  version: 1,
+  type: 'fit',
+  instances: [
+    {
+      // The machine FIT/PERF has always been measured on (see environments.json5 `perf`).
+      aws: '{{environments.perf.aws}}',
+      clusters: [
+        {
+          clusterConfig: 'cluster-0',
+          sessions: [
+            {
+              performer: {
+                image: '{{PERFORMER_IMAGE}}',
+                onPortInUse: 'reuse',
+              },
+              runs: [
+                // KV get.
+                {
+                  type: 'performance',
+                  performance: {
+                    workload: '{{environments.perf.workloads.kvGet}}',
+                    variables: '{{environments.perf.pooledVariables}}',
+                    driverVer: '{{environments.perf.driverVer}}',
+                    performerVer: '{{environments.perf.performerVer}}',
+                  },
+                },
+                // KV replace.
+                {
+                  type: 'performance',
+                  performance: {
+                    workload: '{{environments.perf.workloads.kvReplace}}',
+                    variables: '{{environments.perf.pooledVariables}}',
+                    driverVer: '{{environments.perf.driverVer}}',
+                    performerVer: '{{environments.perf.performerVer}}',
+                  },
+                },
+                // KV insert.
+                {
+                  type: 'performance',
+                  performance: {
+                    workload: '{{environments.perf.workloads.kvInsert}}',
+                    variables: '{{environments.perf.insertVariables}}',
+                    driverVer: '{{environments.perf.driverVer}}',
+                    performerVer: '{{environments.perf.performerVer}}',
+                  },
+                },
+                // Transactions: replace + insert.
+                {
+                  type: 'performance',
+                  performance: {
+                    workload: '{{environments.perf.workloads.txnWrite}}',
+                    variables: '{{environments.perf.pooledVariables}}',
+                    driverVer: '{{environments.perf.driverVer}}',
+                    performerVer: '{{environments.perf.performerVer}}',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ],
+  clusterConfigs: [
+    {
+      id: 'cluster-0',
+      cbdinocluster: {
+        config: {
+          nodes: [
+            {
+              count: 1,
+              version: '{{environments.defaults.perfClusterVersion}}',
+              services: ['kv', 'n1ql', 'index'],
+            },
+          ],
+          docker: '{{environments.perf.docker}}',
+        },
+        onClusterExists: 'useExisting',
+      },
+    },
+  ],
+}

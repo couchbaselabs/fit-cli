@@ -15,6 +15,7 @@ import { FIT_PERFORMER, repoPath } from "../../util/repos.js";
 import { SDKS, sdkByValue, type Sdk } from "../../../util/sdk/sdks.js";
 import { DEFAULT_PERFORMER_PORT } from "../../performers/util/performer-port.js";
 import { collectJunitArtifactsFromTarget } from "../run-test-driver/collect-junit.js";
+import { collectResultsDirFromTarget } from "../run-test-driver/collect-results.js";
 import {
   backgroundShellCommand,
   configureRemoteGitCredentials,
@@ -328,7 +329,15 @@ export async function createRemoteFitExecutionContext(
     removeTree: (path) => target.runHiddenUntilFailure("rm", ["-rf", path]),
     collectJunitArtifacts: async (sourceDir, path) =>
       await collectJunitArtifactsFromTarget(target, sourceDir, path),
-    pathExists: (path) => target.runHiddenUntilFailure("test", ["-e", path], undefined, { quiet: true }).then(() => true).catch(() => false),
+    collectResultsDir: async (sourceDir, path) => await collectResultsDirFromTarget(target, sourceDir, path),
+    // Answered by the shell rather than by `test`'s exit status: a missing path is an expected
+    // answer, and a failing command gets its SSM error dumped, which read like a real failure
+    // in the middle of an otherwise healthy run.
+    pathExists: (path) =>
+      target
+        .capture("sh", ["-c", `test -e ${posixQuote(path)} && printf yes || printf no`], undefined, { quiet: true })
+        .then((output) => output.trim() === "yes")
+        .catch(() => false),
     commandAvailable: (command) =>
       target
         .capture("sh", ["-lc", `command -v ${posixQuote(command)} >/dev/null && printf yes || printf no`], undefined, { quiet: true })

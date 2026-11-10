@@ -7,7 +7,12 @@ import {
   normalizeDefinitionUrl,
   parseDefinition,
 } from "../parse-definition.js";
-import { CURRENT_FIT_DEFINITION_VERSION } from "../types.js";
+import { CURRENT_FIT_DEFINITION_VERSION, type FitRun, type TestsSection } from "../types.js";
+
+/** A run's `tests` block, narrowed away from the perf run type — which has none. */
+function testsOf(run: FitRun | undefined): TestsSection | undefined {
+  return run && run.type !== "performance" ? run.tests : undefined;
+}
 
 const FUNCTIONAL = `
 version: 1
@@ -652,7 +657,7 @@ test("parses packages list", () => {
       `                  packages:\n                    - com.couchbase.client.kv\n                    - com.couchbase.transactions`,
     ),
   );
-  const tests = def.instances[0]?.clusters[0]?.sessions[0]?.runs[0]?.tests;
+  const tests = testsOf(def.instances[0]?.clusters[0]?.sessions[0]?.runs[0]);
   assert.deepEqual(tests?.packages, ["com.couchbase.client.kv", "com.couchbase.transactions"]);
 });
 
@@ -666,7 +671,7 @@ test("rejects an empty packages list", () => {
 test("parses all-transactions and all-non-transactions preset placeholders", () => {
   for (const preset of ["all-transactions", "all-non-transactions"] as const) {
     const def = parseDefinition(definitionWithTests(`                  presets: [${preset}]`));
-    assert.deepEqual(def.instances[0]?.clusters[0]?.sessions[0]?.runs[0]?.tests.presets, [preset]);
+    assert.deepEqual(testsOf(def.instances[0]?.clusters[0]?.sessions[0]?.runs[0])?.presets, [preset]);
   }
 });
 
@@ -676,7 +681,7 @@ test("parses presets unioned with explicit classes", () => {
       `                  presets: [all-non-transactions]\n                  classes:\n                    - com.couchbase.transactions.FooTest`,
     ),
   );
-  const tests = def.instances[0]?.clusters[0]?.sessions[0]?.runs[0]?.tests;
+  const tests = testsOf(def.instances[0]?.clusters[0]?.sessions[0]?.runs[0]);
   assert.deepEqual(tests?.presets, ["all-non-transactions"]);
   assert.deepEqual(tests?.classes, ["com.couchbase.transactions.FooTest"]);
 });

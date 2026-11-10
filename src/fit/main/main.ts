@@ -31,6 +31,7 @@ import { runCloudInstancesMain } from "../../cloud/cloud-instances/cloud-instanc
 import { runPerformerMain } from "../performer/performer.js";
 import { runSandboxMain } from "../sandbox/sandbox.js";
 import { runSandboxDeploy } from "../sandbox/deploy/deploy-sandbox.js";
+import { runPerfEngineMain } from "../performance/run-perf-engine/run-perf-engine.js";
 import { runSecretsMain } from "../../cloud/util/aws/secrets-cli.js";
 import { runSlackMain } from "../slack/slack-cli.js";
 import { printVersion } from "../version/version.js";
@@ -238,6 +239,7 @@ const COMMANDS: Record<string, { fn: () => void; description: string; hidden?: b
   "caps":            { fn: runCapsMain,             description: "Show the FIT capabilities each SDK's performer reports" },
   "health":          { fn: runHealthMain,           description: "Which FIT tests fail consistently or intermittently, per SDK", machineOutput: (args) => args[0] === "opt-ins" && args.includes("--json") },
   "external-services": { fn: runExternalServicesMain, description: "Manage fit-cli's per-box ephemeral external services (otel: collector, Jaeger, Prometheus)" },
+  "perf-engine":     { fn: runPerfEngineMain,       description: "Measure one perf workload from a TestSuite config", hidden: true },
   "secrets":         { fn: runSecretsMain,          description: "Manage AWS secrets", hidden: true },
   "slack":           { fn: runSlackMain,             description: "Post a combined Slack summary", hidden: true },
   "maintenance":     { fn: runMaintenanceMain,       description: "Repo & release maintenance (branch channels)", hidden: true },

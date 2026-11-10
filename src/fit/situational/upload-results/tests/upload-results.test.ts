@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { planResultsUpload, type ResultsRunDir } from "../upload-results.js";
+import { planResultsUpload, resultsSiteLinks, type ResultsRunDir } from "../upload-results.js";
 
 const RUN_A = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 const RUN_B = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff";
@@ -118,4 +118,37 @@ test("ignores a malformed situational id in run.json5", () => {
 test("run.json5 takes precedence over fallbackId", () => {
   const plan = planResultsUpload([runDir(RUN_A, OTHER_SIT)], { fallbackId: SIT });
   assert.equal(plan.situationalRunUuid, OTHER_SIT);
+});
+
+function situationalRunDir(runUuid: string): ResultsRunDir {
+  return {
+    dirName: runUuid.slice(0, 8),
+    runJson5: JSON.stringify({ forDatabase: { runUuid, situationalRunUuid: SIT, workload: { situational: {} } } }),
+  };
+}
+
+test("a situational run links once, to its situational run's page", () => {
+  const plan = planResultsUpload([situationalRunDir(RUN_A), situationalRunDir(RUN_B)]);
+  assert.deepEqual(
+    resultsSiteLinks(plan).map((l) => l.value),
+    [`https://performance-sdk.couchbase.com/results/situational/${SIT}`],
+  );
+});
+
+test("each perf run links to its own run page", () => {
+  const plan = planResultsUpload([runDir(RUN_A), runDir(RUN_B)], { fallbackId: SIT });
+  assert.deepEqual(
+    plan.uploads.map((u) => u.kind),
+    ["performance", "performance"],
+  );
+  const links = resultsSiteLinks(plan);
+  assert.deepEqual(
+    links.map((l) => l.value),
+    [`https://performance-sdk.couchbase.com/results/run/${RUN_A}`, `https://performance-sdk.couchbase.com/results/run/${RUN_B}`],
+  );
+  assert.ok(links.every((l) => l.callToAction && /ingest/.test(l.label)));
+});
+
+test("nothing uploaded, nothing linked", () => {
+  assert.deepEqual(resultsSiteLinks(planResultsUpload([])), []);
 });

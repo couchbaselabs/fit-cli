@@ -4,12 +4,15 @@ This is a CLI tool to help make FIT easier to use.  It lets you:
 * Run a definition file locally.
 * Run a definition file on a clean AWS EC2 instance you can SSH onto.  This is the exactly same command CI will ultimately execute, so you can reproduce (and debug!) CI locally.
 * See which FIT tests each SDK fails, night by night (`fit health`; see [FIT health](#fit-health)).
+* Performance testing.
+* CNG testing.
+* Analytics testing.
+
 
 Currently not supported (but we want to get working):
-
-* CNG testing.
-* Performance testing.
-* Analytics testing.
+* GCP support.  (It's close)
+* Azure support.
+* PE for some cluster variants (like Operational Insights).
 
 Everything else is expected to work, bugs excepted.
 
@@ -113,7 +116,7 @@ User-facing (using the installed binary):
 - `fit caps table | sync` — show which FIT capabilities each SDK's performer reports (see Capabilities).
 - `fit health report | backfill | check | reparse | import-logs | notes | settings <sdk>` — which FIT tests an opted-in SDK fails consistently or intermittently, and what started or stopped failing, from its nightly runs; `notes` and `settings` show or set its hand-written notes and where its output goes (see `specs/health.md`).
 - `fit health site` — build the health Pages site from one run's reports: how the other SDKs fare on each failing test, each SDK's page, and the top page (each SDK's last 30 nights, one chart each). `fit health opt-ins` lists the opted-in SDKs.
-- `fit ingest situational` drains the situational results uploaded to `s3://fit-cli/incoming/` into the perf Postgres database, moving each run to `processed/` or `failed/`. A run is only taken once it holds a `.done` marker, which the uploader writes as the last object of the run, so a half-uploaded run is never read. Meant for the cron on the database host, which connects as the `results_ingester` role and reads its password from the AWS Secrets Manager secret `performance-sdk/results-ingester` using its own IAM role (see `--help`).
+- `fit ingest situational` drains the situational and performance results uploaded to `s3://fit-cli/incoming/` into the perf Postgres database, moving each run to `processed/` or `failed/`. A run is only taken once it holds a `.done` marker, which the uploader writes as the last object of the run, so a half-uploaded run is never read. Meant for the cron on the database host, which connects as the `results_ingester` role and reads its password from the AWS Secrets Manager secret `performance-sdk/results-ingester` using its own IAM role (see `--help`).
 - `fit external-services otel start | stop` — start or stop the local otel stack (an OTel collector, Jaeger and Prometheus) for manual testing. A functional `fit run` already does this automatically.
 - `fit external-services otel replay <dump-dir>` — bring the Jaeger and Prometheus UIs back up over a finished run's traces and metrics.
 

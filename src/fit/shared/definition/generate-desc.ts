@@ -34,6 +34,13 @@ function describeClusterSource(cluster: ClusterLifetime): string {
 }
 
 function describeRunTests(run: FitRun): string {
+  if (run.type === "performance") {
+    // No tests to name — the operations are what distinguish one perf run from another.
+    const ops = run.performance.workload.operations
+      .map((operation) => (operation as { op?: string; transaction?: unknown }).op ?? "transaction")
+      .join("+");
+    return ops ? `,${ops}` : "";
+  }
   const { presets, classes } = run.tests;
   const parts: string[] = [];
   // "all" (and omitting both keys) is the implicit default, so it adds no suffix.

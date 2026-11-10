@@ -3,7 +3,7 @@ import { basename, dirname, join } from "node:path";
 import { type Artifact, type Detail } from "../../../util/non-fit/artifacts.js";
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { LocalTarget } from "../../../util/non-fit/local-target.js";
-import { HEARTBEAT_INTERVAL_SECS, run, streamToFile, streamToFileInBackground, type BackgroundStream, type RunOptions } from "../../../util/non-fit/proc.js";
+import { HEARTBEAT_INTERVAL_SECS, run, SMALL_LOG_INTRO, SMALL_LOG_MAX_BYTES, streamToFile, streamToFileInBackground, type BackgroundStream, type RunOptions } from "../../../util/non-fit/proc.js";
 import { formatCommandLine } from "../../../util/non-fit/fit-cli-log.js";
 import { createRunFilePath, runRunDir, type DefinitionRunPath } from "../../../util/non-fit/replay.js";
 import { posixQuote, teeToFileCommand } from "../../../util/non-fit/remote-target.js";
@@ -13,6 +13,7 @@ import { FIT_INSTANCE_USER } from "../../util/aws/fit-instance.js";
 import { FIT_PERFORMER, repoPath, type Repo } from "../../util/repos.js";
 import { ensureRepo } from "../../util/ensure-repo.js";
 import { collectJunitArtifacts } from "../run-test-driver/collect-junit.js";
+import { collectResultsDir } from "../run-test-driver/collect-results.js";
 import type { Sdk } from "../../../util/sdk/sdks.js";
 import { DEFAULT_PERFORMER_PORT } from "../../performers/util/performer-port.js";
 import { createRemoteFitExecutionContext } from "./remote-fit-execution-context.js";
@@ -66,7 +67,8 @@ export interface FitExecutionContext {
   /**
    * StreamToArtifact process model (LogType3): full output sent to `targetPath`
    * only, with the last line surfaced every N seconds for proof-of-life. For
-   * genuinely huge logs (the FIT test-driver, performer docker logs).
+   * genuinely huge logs (the FIT test-driver, performer docker logs) — and when
+   * the log turns out not to be huge, it is printed in full once the step ends.
    */
   streamToArtifactFile(command: string, args: string[], targetPath: string, cwd?: string, env?: Record<string, string>): Promise<void>;
   /**
@@ -96,6 +98,14 @@ export interface FitExecutionContext {
    */
   runArtifactsDir(path: DefinitionRunPath): string;
   collectJunitArtifacts(sourceDir: string, path: DefinitionRunPath): Promise<Artifact[]>;
+  /**
+   * Collect the test-driver's whole `results/<runUuid>/` tree (situational
+   * runs only — see collect-results.ts) from `sourceDir` into this run's local
+   * artifact tree. Returns the local dir, or undefined if `sourceDir` doesn't
+   * exist (an old test-driver checkout without this feature, or a run that
+   * died before writing anything).
+   */
+  collectResultsDir(sourceDir: string, path: DefinitionRunPath): Promise<string | undefined>;
   pathExists(path: string): Promise<boolean>;
   commandAvailable(command: string): Promise<boolean>;
   performerRunArgs(imageName: string, hostPort?: number): string[];
@@ -328,9 +338,14 @@ export function redirectCompoundToFileCommand(command: string, path: string): st
  * and the target tails the file out-of-band on our own clock instead.
  *
  * The command runs backgrounded in a subshell (so a compound `a; b` redirects as a whole)
- * with stdout+stderr to the file; we poll for liveness and tail the file. The final `wait`
- * is the last statement, so the script's exit code is the command's — preserving the
- * non-zero-means-failure contract.
+ * with stdout+stderr to the file; we poll for liveness and tail the file. `wait` captures
+ * the command's exit status, which the script re-exits with as its last statement —
+ * preserving the non-zero-means-failure contract across the small-log dump that runs in
+ * between.
+ *
+ * That dump is the remote half of proc.ts's `printLogIfSmall`: a log under
+ * {@link SMALL_LOG_MAX_BYTES} is printed here rather than left on a box the
+ * reader would have to SSH into.
  */
 export function heartbeatShellCommand(
   command: string,
@@ -353,6 +368,13 @@ export function heartbeatShellCommand(
     `  fi`,
     `done`,
     `wait "$cmd_pid"`,
+    `status=$?`,
+    `log_bytes=$(wc -c < ${quotedPath} 2>/dev/null | tr -dc '0-9')`,
+    `if [ -n "$log_bytes" ] && [ "$log_bytes" -gt 0 ] && [ "$log_bytes" -le ${SMALL_LOG_MAX_BYTES} ]; then`,
+    `  printf '%s\\n' ${posixQuote(SMALL_LOG_INTRO)}`,
+    `  cat ${quotedPath}`,
+    `fi`,
+    `exit $status`,
   ].join("\n");
 }
 
@@ -444,6 +466,7 @@ export function createLocalFitExecutionContext(): FitExecutionContext {
     },
     runArtifactsDir: (path) => runRunDir(path),
     collectJunitArtifacts: async (sourceDir, path) => await collectJunitArtifacts(sourceDir, path),
+    collectResultsDir: (sourceDir, path) => Promise.resolve(collectResultsDir(sourceDir, path)),
     pathExists: async (path) => target.capture("test", ["-e", path], undefined, { quiet: true }).then(() => true).catch(() => false),
     commandAvailable: async (command) =>
       target

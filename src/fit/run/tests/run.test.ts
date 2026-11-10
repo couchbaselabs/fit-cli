@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyRepeatOverride, extractRepeatFlags } from "../run.js";
+import { applyRepeatOverride, extractResultsUploadFlag, extractRepeatFlags } from "../run.js";
 
 test("extractRepeatFlags pulls --repeat <n> out of argv", () => {
   const { repeat, stopOnFailure, positionals } = extractRepeatFlags(["definition.json5", "--repeat", "5"]);
@@ -92,4 +92,9 @@ test("applyRepeatOverride sets repeat on clusterlessSessions[].runs[] too", () =
 test("applyRepeatOverride errors on a run that already sets versions", () => {
   const raw = functionalDefinition({ type: "situational", tests: {}, situational: {}, versions: ["8.0"] });
   assert.throws(() => applyRepeatOverride(raw, 5), /already sets "versions"/);
+});
+
+test("extractResultsUploadFlag pulls --results-upload out of argv", () => {
+  assert.deepEqual(extractResultsUploadFlag(["definition.json5", "--results-upload"]), { resultsUpload: true, positionals: ["definition.json5"] });
+  assert.deepEqual(extractResultsUploadFlag(["definition.json5"]), { resultsUpload: false, positionals: ["definition.json5"] });
 });

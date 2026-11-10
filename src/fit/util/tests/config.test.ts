@@ -214,6 +214,7 @@ const STUB_DEFAULTS = {
   cbdinoclusterVersion: "v0.0.120",
   capellaKeyPool: { enabled: true, size: 10, expiryDays: 1 },
   aws: { region: "us-west-2", vpcId: "vpc-stub", subnetId: "subnet-stub" },
+  perfClusterVersion: "8.0.0",
 };
 
 const STUB_EXTERNAL_SERVICES = {
@@ -234,6 +235,15 @@ const TEST_ENVIRONMENTS = {
   defaults: STUB_DEFAULTS,
   externalServices: STUB_EXTERNAL_SERVICES,
   testSets: STUB_TEST_SETS,
+  perf: {
+    driverVer: 6,
+    performerVer: 1,
+    aws: { instanceType: "c5.4xlarge" },
+    docker: { "kv-memory": 28000 },
+    pooledVariables: { forSeconds: 300, horizontalScaling: 20, poolSize: 10000 },
+    insertVariables: { forSeconds: 300, horizontalScaling: 20, docNum: 10000000 },
+    workloads: { kvGet: { operations: [] }, kvReplace: { operations: [] }, kvInsert: { operations: [] }, txnWrite: { operations: [] } },
+  },
   capella: {
     dev: {
       endpoint: "https://dev.example",
@@ -506,6 +516,7 @@ test("resolveCapellaConfig throws for an unprovisioned environment", async () =>
         defaults: STUB_DEFAULTS,
         externalServices: STUB_EXTERNAL_SERVICES,
         testSets: STUB_TEST_SETS,
+        perf: TEST_ENVIRONMENTS.perf,
         capella: { stage: { endpoint: null, oid: null, secretId: "cap/stage" } },
         results: {},
         awsTenants: {},

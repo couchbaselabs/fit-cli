@@ -54,6 +54,8 @@ async function loadPresetMap(): Promise<Record<string, string>> {
     "op-onprem-func-sanity":       ((await import("../../../../presets/op-onprem-func-sanity.json5",       { with: { type: "text" } })) as { default: string }).default,
     "op-onprem-func-lite":         ((await import("../../../../presets/op-onprem-func-lite.json5",         { with: { type: "text" } })) as { default: string }).default,
     "op-onprem-func-release":      ((await import("../../../../presets/op-onprem-func-release.json5",      { with: { type: "text" } })) as { default: string }).default,
+    "op-onprem-perf-sanity":       ((await import("../../../../presets/op-onprem-perf-sanity.json5",       { with: { type: "text" } })) as { default: string }).default,
+    "op-onprem-perf-lite":         ((await import("../../../../presets/op-onprem-perf-lite.json5",         { with: { type: "text" } })) as { default: string }).default,
     "op-cng-func-sanity":          ((await import("../../../../presets/op-cng-func-sanity.json5",          { with: { type: "text" } })) as { default: string }).default,
     "op-cng-func-lite":            ((await import("../../../../presets/op-cng-func-lite.json5",            { with: { type: "text" } })) as { default: string }).default,
     "op-cng-func-release":         ((await import("../../../../presets/op-cng-func-release.json5",         { with: { type: "text" } })) as { default: string }).default,
@@ -226,9 +228,9 @@ export function autoDescribeName(name: string, tags: string[]): string {
   const tokens = name.split("-");
   const tier = tokens.pop();
   if (!tier || !(tier in TIER_PHRASES)) return name;
-  // Strip the func/sit token (closest to the tier) before the `pe` sub-axis token
-  // (closer to the axis) — matches the `<axis>-pe-<func|sit>-<tier>` naming order.
-  if (tokens.at(-1) === "func" || tokens.at(-1) === "sit") tokens.pop();
+  // Strip the func/sit/perf token (closest to the tier) before the `pe` sub-axis token
+  // (closer to the axis) — matches the `<axis>-pe-<func|sit|perf>-<tier>` naming order.
+  if (tokens.at(-1) === "func" || tokens.at(-1) === "sit" || tokens.at(-1) === "perf") tokens.pop();
   let isPe = false;
   if (tokens.at(-1) === "pe") {
     isPe = true;
@@ -240,9 +242,12 @@ export function autoDescribeName(name: string, tags: string[]): string {
     tokens.pop();
   }
   const axis = tokens.join("-");
-  const hasFunc = tags.includes("functional");
-  const hasSit = tags.includes("situational");
-  const typeWord = hasFunc && hasSit ? "functional and situational" : hasFunc ? "functional" : hasSit ? "situational" : "general";
+  const testTypes = ["functional", "situational", "performance"].filter((type) => tags.includes(type));
+  const typeWord = testTypes.length === 0
+    ? "general"
+    : testTypes.length === 1
+      ? testTypes[0]
+      : `${testTypes.slice(0, -1).join(", ")} and ${testTypes.at(-1)}`;
   const peSuffix = isPe ? " via Private Endpoint (PrivateLink)" : "";
   const tierPhrase = TIER_PHRASES[tier];
   const familyPhrase = capitalize(SDK_FAMILY_PHRASES[axis] ?? axis);
@@ -492,17 +497,34 @@ export function assertEnvOverridesUsed(types: PresetType[], envOverrides: Record
  *
  * Override values are substituted as raw strings, never JSON-parsed: version
  * strings like `8.0` must stay `"8.0"` rather than becoming the number 8.
+ *
+ * A quoted string that is *only* a placeholder, e.g. `'{{environments.perf.kvVariables}}'`,
+ * is replaced by the value itself, quotes and all — so it can carry a number, boolean or
+ * object as its own type. Templates must stay valid JSON5 before substitution (preset
+ * metadata is read from them unfilled), which is why such placeholders are quoted at all.
+ * A placeholder inside a longer string is interpolated as text, and must be a string or number.
  */
-export function resolveEnvironmentsPlaceholders(template: string, envOverrides: Record<string, string> = {}): string {
-  return template.replace(/\{\{environments\.([\w.]+)\}\}/g, (match, dotPath: string) => {
+export function resolveEnvironmentsPlaceholders(
+  template: string,
+  envOverrides: Record<string, string> = {},
+  lookup: (dotPath: string) => unknown = lookupEnvironmentsPath,
+): string {
+  const resolve = (match: string, dotPath: string): unknown => {
     const override = envOverrides[dotPath];
     if (override !== undefined) {
       return override;
     }
-    const value = lookupEnvironmentsPath(dotPath);
+    const value = lookup(dotPath);
     if (value === undefined) {
       throw new Error(`Unknown environments.json5 path in preset placeholder: ${match}`);
     }
+    return value;
+  };
+  const wholeValues = template.replace(/(['"])\{\{environments\.([\w.]+)\}\}\1/g, (match, _quote: string, dotPath: string) =>
+    JSON.stringify(resolve(match, dotPath)),
+  );
+  return wholeValues.replace(/\{\{environments\.([\w.]+)\}\}/g, (match, dotPath: string) => {
+    const value = resolve(match, dotPath);
     if (typeof value !== "string" && typeof value !== "number") {
       throw new Error(`Preset placeholder ${match} must resolve to a string or number, got: ${JSON.stringify(value)}`);
     }

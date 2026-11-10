@@ -4,11 +4,11 @@
 import type { PortInUsePolicy } from "../../performers/util/performer-port.js";
 import type { CapellaCloudProvider, CbdinoclusterDef } from "../../../cluster/cluster-create/build-cluster-def.js";
 import type { ClusterExistsPolicy } from "../../../cluster/cluster-create/cluster-exists-policy.js";
-import type { PieceData } from "../../../util/non-fit/config-pieces.js";
+import type { JsonValue, PieceData } from "../../../util/non-fit/config-pieces.js";
 
 export const FIT_DEFINITION_TYPE = "fit";
 export const CURRENT_FIT_DEFINITION_VERSION = 1;
-export const FIT_RUN_TYPES = ["functional", "situational", "analytics-functional"] as const;
+export const FIT_RUN_TYPES = ["functional", "situational", "analytics-functional", "performance"] as const;
 
 export type FitRunType = (typeof FIT_RUN_TYPES)[number];
 export type FitConfigPiece = PieceData;
@@ -318,7 +318,104 @@ export interface AnalyticsFunctionalRun {
   repeat?: number;
 }
 
-export type FitRun = FunctionalRun | SituationalRun | AnalyticsFunctionalRun;
+/**
+ * Perf-relevant facts about the cluster that end up in `runs.params.cluster` —
+ * the perf UI's datapoint identity, so two runs only compare if these match.
+ *
+ * The perf engine reads `version`, `nodeCount`, `cpuCount` and `memory` from the
+ * cluster itself, as jenkins-sdk did. Stating `version`, `nodeCount` or
+ * `cpuCount` here asserts it: a run whose cluster disagrees fails rather than
+ * recording a value that isn't true. `memory` is also the bucket's RAM quota,
+ * so stating it chooses a smaller bucket than the whole data service quota.
+ * The rest is recorded as given.
+ */
+export interface PerformanceClusterMetadata {
+  type?: string;
+  version?: string;
+  nodeCount?: number;
+  cpuCount?: number;
+  memory?: number;
+  storage?: string;
+  replicas?: number;
+  instance?: string;
+  compaction?: string;
+  topology?: string;
+  region?: string;
+}
+
+/** gRPC tuning for the driver↔performer stream, passed through to the perf driver. */
+export interface PerformanceGrpcSettings {
+  flowControl?: boolean;
+  batch?: number;
+  compression?: boolean;
+}
+
+/**
+ * The workload a perf run drives, carried through to the perf driver **verbatim**
+ * and stored as `runs.params.workload`.
+ *
+ * This is one of the deliberate "stable interface, included as-is" exceptions
+ * described in `specs/fit-definition-files.md` — the same reasoning as the
+ * cbdinocluster allocate def. The perf UI reads this exact shape, and it is part
+ * of a datapoint's identity: re-expressing it in a fit-cli-shaped abstraction and
+ * translating back would silently split a workload away from its own history the
+ * moment the translation differed by a key.
+ *
+ * `operations` entries are perf's own: `{op, bounds, docLocation}` for a plain
+ * operation, or `{transaction: {ops, bounds}}` to drive them inside a
+ * transaction. Values may reference a variable by name (`"$forSeconds"`).
+ */
+export interface PerformanceWorkload {
+  operations: PerformanceOperation[];
+}
+
+/**
+ * One entry in a workload's `operations`. Plain JSON rather than a modelled
+ * shape, because it is handed to the perf driver as-is — see
+ * {@link PerformanceWorkload}.
+ */
+export type PerformanceOperation = { [key: string]: JsonValue };
+
+export interface PerformanceSection {
+  workload: PerformanceWorkload;
+  /**
+   * Values for the `$name` references in the workload (e.g. `forSeconds`,
+   * `poolSize`). A map here rather than the driver's `[{name, value}]` list —
+   * fit-cli converts, and the driver flattens it straight back to a map for
+   * `runs.params.vars`, so nothing is lost.
+   */
+  variables?: Record<string, string | number | boolean>;
+  /**
+   * The "invalidate the world" levers. A run only compares against history with
+   * the same values, so bump when a driver/performer change makes older numbers
+   * incomparable. Default to the perf driver's current values when omitted.
+   */
+  driverVer?: number;
+  performerVer?: number;
+  grpc?: PerformanceGrpcSettings;
+  cluster?: PerformanceClusterMetadata;
+}
+
+/**
+ * A performance run: drives a workload at the performer via the `perf-driver`
+ * Maven module and records per-second latency/throughput buckets, rather than
+ * running assertions. Cluster- and performer-bound exactly like
+ * {@link FunctionalRun}, so it shares the whole instance/cluster/performer path;
+ * only the driver invocation differs. Carries no `tests` — there are none.
+ */
+export interface PerformanceRun {
+  type: "performance";
+  fitConfig?: ResolvedFitConfig | string;
+  performance: PerformanceSection;
+  /**
+   * Run this entry N times in sequence against the same cluster. Perf results
+   * are noisy, so repeats are how you smooth variance — each repeat is its own
+   * datapoint with its own uuid, not an average.
+   */
+  repeat?: number;
+}
+
+export type FitRun = FunctionalRun | SituationalRun | AnalyticsFunctionalRun | PerformanceRun;
 
 export interface SessionLifetime {
   performer: PerformerSetup;

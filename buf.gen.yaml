@@ -1,0 +1,18 @@
+# Generates the FIT protobuf/gRPC types fit-cli's performance driver speaks.
+#
+# The .proto files are not in this repo - they live in transactions-fit-performer's `gRPC/`
+# directory, alongside the performers that implement them. Run `bun run generate-protocol
+# <path-to-transactions-fit-performer>` rather than invoking buf directly; it points buf at that
+# checkout and writes the result into src/fit/performance/generated/.
+#
+# The output is committed. fit-cli ships as a `bun build --compile` binary and is often run from a
+# checkout with no protoc, so generation is a deliberate, occasional developer action rather than
+# part of the build.
+version: v2
+plugins:
+  - local: protoc-gen-es
+    out: src/fit/performance/generated
+    opt:
+      # ESM with explicit .js specifiers, matching the rest of the repo.
+      - target=ts
+      - import_extension=js

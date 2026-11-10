@@ -118,7 +118,7 @@
             // Could test other SDKs against the same cluster here by adding another
             // session with its own performer and runs.
             // {
-            //   performer: { image: 'cpp-fit-performer:main' },
+            //   performer: { image: 'cxx-fit-performer:main' },
             //   runs: [{ type: 'functional', tests: { presets: ['all'] } }],
             // },
           ],
@@ -135,7 +135,7 @@
       clusterlessSessions: [
         {
           performer: {
-            image: 'cpp-fit-performer:main',
+            image: 'cxx-fit-performer:main',
           },
           runs: [
             {
@@ -150,6 +150,65 @@
               tests: {
                 presets: ['all'],
               },
+            },
+          ],
+        },
+      ],
+    },
+
+    // A performance instance.
+    {
+      localhost: {},
+      clusters: [
+        {
+          connection: {
+            connectionString: 'couchbase://localhost',
+            username: 'Administrator',
+            password: 'password',
+            tls: null,
+          },
+          sessions: [
+            {
+              performer: {
+                image: 'java-fit-performer:main',
+              },
+              runs: [
+                {
+                  type: 'performance',
+                  performance: {
+                    // Passed to the perf driver as-is, and stored verbatim as the
+                    // workload that identifies this datapoint. `$name` values are
+                    // resolved from `variables` below.
+                    workload: {
+                      operations: [
+                        {
+                          op: 'get',
+                          bounds: { forSeconds: '$forSeconds' },
+                          docLocation: {
+                            method: 'pool',
+                            poolSize: '$poolSize',
+                            poolSelectionStrategy: 'randomUniform',
+                          },
+                        },
+                      ],
+                    },
+                    variables: {
+                      forSeconds: 300,
+                      poolSize: 10000,
+                      // Number of concurrent workload copies. Always sent; defaults to 1.
+                      horizontalScaling: 1,
+                    },
+                    // Bump when a change makes older numbers incomparable. The perf presets
+                    // take these from environments.json5 (`perf`); a definition file states
+                    // them directly, as {{environments...}} placeholders only work in presets.
+                    driverVer: 6,
+                    performerVer: 1
+                  },
+                  // Perf results are noisy — repeat to smooth variance. Each repeat is
+                  // its own datapoint, not an average.
+                  // repeat: 3,
+                },
+              ],
             },
           ],
         },
