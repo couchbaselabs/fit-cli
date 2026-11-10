@@ -12,6 +12,7 @@ import {
   CAPELLA_KEY_NAME,
   parseRotateArgs,
   resolveRotateTarget,
+  shortKeyId,
   v2Credentials,
 } from "../capella-key-rotate.js";
 
@@ -73,4 +74,9 @@ test("the v2 login uses the password from the secret, and the environments.json5
 
 test("the shared key's name and description fit Capella's limits", () => {
   assert.doesNotThrow(() => createApiKeyRequest(CAPELLA_KEY_NAME, CAPELLA_KEY_DESCRIPTION));
+});
+
+test("shortKeyId shows only the last 4 characters of a key ID", () => {
+  assert.equal(shortKeyId("a1b2c3d4e5f6"), "…e5f6");
+  assert.equal(shortKeyId("abc"), "…abc");
 });

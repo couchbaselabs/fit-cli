@@ -69,6 +69,15 @@ interface NewKey {
   token: string;
 }
 
+/**
+ * A key ID as printed: its last 4 characters. The ID goes into the shared secret, and
+ * fit-cli never prints secret values. The last 4 characters are enough to find the key
+ * in the Capella UI.
+ */
+export function shortKeyId(id: string): string {
+  return `…${id.slice(-4)}`;
+}
+
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -156,13 +165,13 @@ async function createKey(target: RotateTarget, secret: Readonly<Record<string, s
       `  POST ${createApiKeyUrl(target)}`,
   );
   const key = await createApiKey(target, jwt, request);
-  console.log(`Created key ${key.id} (${key.name}).`);
+  console.log(`Created key ${shortKeyId(key.id)} (${key.name}).`);
   return key;
 }
 
 async function verifyKey(target: RotateTarget, key: NewKey): Promise<void> {
   console.log(
-    `Checking that Capella v4 accepts key ${key.id}. A new key can take a few seconds to work, ` +
+    `Checking that Capella v4 accepts key ${shortKeyId(key.id)}. A new key can take a few seconds to work, ` +
       `so this retries for up to ${VERIFY_BUDGET_MS / 1000}s.\n  GET ${organizationUrl(target)}`,
   );
   await retryWhole(() => checkApiKey(target, key.token), {
@@ -173,7 +182,7 @@ async function verifyKey(target: RotateTarget, key: NewKey): Promise<void> {
       console.log(`  Not accepted yet (${reason}). Attempt ${nextAttempt} in ${Math.round(waitMs / 1000)}s.`);
     },
   });
-  console.log(`Capella v4 accepts key ${key.id}.`);
+  console.log(`Capella v4 accepts key ${shortKeyId(key.id)}.`);
 }
 
 async function writeKey(target: RotateTarget, key: NewKey): Promise<void> {
@@ -189,29 +198,36 @@ async function writeKey(target: RotateTarget, key: NewKey): Promise<void> {
   console.log(`Updated ${target.secretId}. Its fields are now ${keys.join(", ")}.`);
 }
 
-/** Deletes with the new key, since the previous one may already be gone or broken. */
+/**
+ * Deletes with the new key, since the previous one may already be gone or broken. Nothing here
+ * prints the previous key ID, as it comes from the secret. In the Capella UI it is the older
+ * of the two keys named FIT-CLI-DONT-DELETE.
+ */
 async function offerToDeletePreviousKey(target: RotateTarget, previousKeyId: string, key: NewKey): Promise<Detail> {
   const label = "Previous key";
-  console.log(`The secret held key ${previousKeyId} before. Runs that started earlier may still use it.`);
+  const inUi = `In the Capella UI it is the older key named ${CAPELLA_KEY_NAME}.`;
+  console.log("The secret held another key before. Runs that started earlier may still use it.");
   if (!process.stdin.isTTY) {
-    console.log("Not deleting it without a terminal. If it still exists, delete it in the Capella UI.");
-    return { label, value: `${previousKeyId}, kept (no terminal)` };
+    console.log(`Not deleting it without a terminal. If it still exists, delete it in the Capella UI. ${inUi}`);
+    return { label, value: "kept (no terminal)" };
   }
   const remove = await confirm({
     promptId: "secrets.capella-key.delete-previous",
-    message: `Delete the previous key ${previousKeyId}?`,
+    message: "Delete the previous key?",
     default: false,
   });
-  if (!remove) return { label, value: `${previousKeyId}, kept` };
+  if (!remove) return { label, value: "kept" };
 
-  console.log(`Deleting key ${previousKeyId} with the new key.\n  DELETE ${apiKeyUrl(target, previousKeyId)}`);
+  console.log(`Deleting the previous key with the new key.\n  DELETE ${apiKeyUrl(target, "<previous key ID>")}`);
   try {
     const outcome = await deleteApiKey(target, previousKeyId, key.token);
-    console.log(outcome === "deleted" ? `Deleted key ${previousKeyId}.` : `Key ${previousKeyId} was already gone.`);
-    return { label, value: `${previousKeyId}, ${outcome === "deleted" ? "deleted" : "already gone"}` };
+    console.log(outcome === "deleted" ? "Deleted the previous key." : "The previous key was already gone.");
+    return { label, value: outcome === "deleted" ? "deleted" : "already gone" };
   } catch (err) {
-    console.warn(`Could not delete key ${previousKeyId}. ${errorMessage(err)}`);
-    return { label, value: `${previousKeyId} is not deleted. Delete it in the Capella UI.`, callToAction: true };
+    // The error message repeats the request URL, which holds the previous key ID.
+    const reason = err instanceof CapellaHttpError ? `HTTP ${err.status}` : "the request failed";
+    console.warn(`Could not delete the previous key (${reason}). ${inUi}`);
+    return { label, value: `not deleted (${reason}). Delete it in the Capella UI.`, callToAction: true };
   }
 }
 
@@ -223,33 +239,34 @@ export async function rotateCapellaKey(args: RotateArgs): Promise<RunOutput> {
   // Read as the caller too, so fit-cli-role is never assumed and the write later uses the caller's credentials.
   const secret = await getJsonSecret(target.secretId, { asCaller: true });
   const previousKeyId = secret.apiKey?.trim() || undefined;
-  console.log(previousKeyId ? `It holds key ${previousKeyId}.` : "It holds no key yet.");
+  console.log(previousKeyId ? "It holds a key." : "It holds no key yet.");
 
   const key = args.auto ? await createKey(target, secret) : await askForKey();
-  const createdNote = args.auto ? `\nfit-cli created key ${key.id} (${key.name}). Delete it in the Capella UI.` : "";
+  const newKey = shortKeyId(key.id);
+  const createdNote = args.auto ? `\nfit-cli created key ${newKey} (${key.name}). Delete it in the Capella UI.` : "";
   try {
     await verifyKey(target, key);
   } catch (err) {
     throw new Error(
-      `Capella v4 does not accept key ${key.id}. AWS secret ${target.secretId} is unchanged.${createdNote}`,
+      `Capella v4 does not accept key ${newKey}. AWS secret ${target.secretId} is unchanged.${createdNote}`,
       { cause: err },
     );
   }
   try {
     await writeKey(target, key);
   } catch (err) {
-    throw new Error(`Could not write key ${key.id} to AWS secret ${target.secretId}.${createdNote}`, { cause: err });
+    throw new Error(`Could not write key ${newKey} to AWS secret ${target.secretId}.${createdNote}`, { cause: err });
   }
 
   const details: Detail[] = [
     { label: "Capella environment", value: target.env },
     { label: "AWS secret", value: target.secretId },
-    { label: "New key", value: key.name ? `${key.id} (${key.name})` : key.id },
+    { label: "New key", value: key.name ? `${newKey} (${key.name})` : newKey },
   ];
   if (previousKeyId && previousKeyId !== key.id) {
     details.push(await offerToDeletePreviousKey(target, previousKeyId, key));
   }
-  console.log(`Done. fit-cli and FIT CI now use key ${key.id} for Capella "${target.env}".`);
+  console.log(`Done. fit-cli and FIT CI now use key ${newKey} for Capella "${target.env}".`);
   return { artifacts: [], details };
 }
 
@@ -285,8 +302,9 @@ In both modes the command then
   - asks whether to delete the previous key in the secret. The default is No. Without a terminal
     it never deletes.
 
-It prints the key ID, never the secret. It only updates a secret that exists, and never
-creates one. It uses your own AWS credentials, not fit-cli-role, which can only read secrets.
+It never prints the key secret, and shows a key ID by its last 4 characters only. It only
+updates a secret that exists, and never creates one. It uses your own AWS credentials, not
+fit-cli-role, which can only read secrets.
 They need secretsmanager:GetSecretValue and secretsmanager:PutSecretValue on the secret in ${AWS_REGION}.`;
 }
 
