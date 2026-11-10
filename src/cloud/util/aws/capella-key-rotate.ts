@@ -200,12 +200,14 @@ async function writeKey(target: RotateTarget, key: NewKey): Promise<void> {
 
 /**
  * Deletes with the new key, since the previous one may already be gone or broken. Nothing here
- * prints the previous key ID, as it comes from the secret. In the Capella UI it is the older
- * of the two keys named FIT-CLI-DONT-DELETE.
+ * prints the previous key ID, as it comes from the secret. Its name is unknown too, as a key
+ * made by hand can have any name.
  */
 async function offerToDeletePreviousKey(target: RotateTarget, previousKeyId: string, key: NewKey): Promise<Detail> {
   const label = "Previous key";
-  const inUi = `In the Capella UI it is the older key named ${CAPELLA_KEY_NAME}.`;
+  const inUi =
+    `In the Capella UI it is a key other than the new one, ${shortKeyId(key.id)}. ` +
+    `It is often an older key named ${CAPELLA_KEY_NAME}, but a key made by hand can have another name.`;
   console.log("The secret held another key before. Runs that started earlier may still use it.");
   if (!process.stdin.isTTY) {
     console.log(`Not deleting it without a terminal. If it still exists, delete it in the Capella UI. ${inUi}`);
