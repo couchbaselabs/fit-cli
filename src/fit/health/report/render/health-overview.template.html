@@ -131,7 +131,7 @@ svg text { font: 10px var(--mono); fill: var(--muted); }
 <div class="wrap">
   <header>
     <h1>FIT Health</h1>
-    <p class="lede">Each SDK's nightly FIT runs over the last <span id="win">30</span> days, its functional presets added together, counted in tests (<code>Class.method</code>) rather than test cases. There is a row per language: its Couchbase SDK, then its Operational Insights and Columnar SDKs. Each chart has its own scales, so do not compare the heights of two charts. Select an SDK's name to open its report, or a night on its chart to open the report at that night.</p>
+    <p class="lede">Each SDK's nightly FIT runs over the last <span id="win">30</span> days, its presets added together (functional and situational), counted in tests (<code>Class.method</code>) rather than test cases. There is a row per language: its Couchbase SDK, then its Operational Insights and Columnar SDKs. Each chart has its own scales, so do not compare the heights of two charts. Select an SDK's name to open its report, or a night on its chart to open the report at that night.</p>
     <p class="meta" id="meta"></p>
   </header>
   <div class="key">
@@ -142,7 +142,7 @@ svg text { font: 10px var(--mono); fill: var(--muted); }
   </div>
   <div id="summary"></div>
   <div class="panels" id="panels"></div>
-  <p class="note">A night with no nightly run has no bar, and the line drops to 0. A night whose nightly ran but gave no results - every run aborted, or its log could not be read - is shaded, and the line breaks; open the night for the reason and the CI run. Where a run left only its CI log, its failures are counted but its passes are unknown, so the line breaks for that night. The two scales are independent: where the line meets a bar means nothing. A clean night - every functional preset ran, with full results, and nothing failed (skipped tests don't count against it) - is shaded green. The situational presets (the Capella scenarios) are not counted here: they are on each SDK's page.</p>
+  <p class="note">A night with no nightly run has no bar, and the line drops to 0. A night whose nightly ran but gave no results - every run aborted, or its log could not be read - is shaded, and the line breaks; open the night for the reason and the CI run. Where a run left only its CI log, its failures are counted but its passes are unknown, so the line breaks for that night. The two scales are independent: where the line meets a bar means nothing. A clean night - every preset, functional and situational (the Capella scenarios), ran with full results, and nothing failed (skipped tests don't count against it) - is shaded green.</p>
 </div>
 <div id="tip" hidden></div>
 

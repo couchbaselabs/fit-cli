@@ -10,7 +10,9 @@
  * Slack mrkdwn, not Markdown: *bold*, _italic_, <url|text> links.
  */
 import { shortDate } from "../dates.js";
-import type { Weekly, WeeklyCard } from "../weekly.js";
+import type { Weekly, WeeklyCard, WeeklyState } from "../weekly.js";
+
+export type { WeeklyState };
 import { slackEscape } from "./render-slack.js";
 
 const n = (x: number) => x.toLocaleString("en-US");
@@ -24,15 +26,15 @@ export function pageOrder(w: Pick<Weekly, "sections" | "cards">): WeeklyCard[] {
   return w.sections.flatMap((s) => s.rows.flatMap((r) => r.sdks.map((sdk) => bySdk.get(sdk)).filter((c): c is WeeklyCard => !!c)));
 }
 
-/** Where an SDK stands at the week's end, as the page's badges say it. */
-export type WeeklyState = "fail" | "flaky" | "pass" | "none";
-export const stateOf = (c: WeeklyCard): WeeklyState => (!c.reported || !c.nightsWithResults ? "none" : c.failing ? "fail" : c.flaky.length ? "flaky" : "pass");
+/** Where an SDK stands at the week's end, as the page's badges say it (weekly.ts). */
+export const stateOf = (c: WeeklyCard): WeeklyState => c.state;
 
 /** Each state's emoji and word. The emoji differ in shape as well as color, so they read without color. */
 const STATES: Record<WeeklyState, { emoji: string; word: string }> = {
   fail: { emoji: ":x:", word: "failing" },
   flaky: { emoji: ":warning:", word: "flaky only" },
-  pass: { emoji: ":white_check_mark:", word: "clean" },
+  passing: { emoji: ":ballot_box_with_check:", word: "passing, not clean every night" },
+  clean: { emoji: ":white_check_mark:", word: "clean all week" },
   none: { emoji: ":heavy_minus_sign:", word: "no results all week" },
 };
 
@@ -62,7 +64,8 @@ export function failingLine(c: WeeklyCard, nights: number, url?: string): string
 function groupName(c: WeeklyCard, nights: number, url?: string): string {
   const name = slackEscape(shortName(c));
   const st = stateOf(c);
-  const notes = [st === "flaky" ? n(c.flaky.length) : "", st === "none" ? "" : nightsNote(c, nights)].filter(Boolean);
+  // A passing week names how many of its nights were clean: that is what kept it from clean.
+  const notes = [st === "flaky" ? n(c.flaky.length) : "", st === "passing" ? `${c.cleanNights}/${nights} nights clean` : st === "none" ? "" : nightsNote(c, nights)].filter(Boolean);
   return `${url ? `<${url}|${name}>` : name}${notes.length ? ` (${notes.join(", ")})` : ""}`;
 }
 
@@ -77,12 +80,12 @@ export function renderSlackWeekly(w: Weekly, weekUrl?: string): string {
   const title = `FIT weekly · ${w.week.id}`;
 
   // The first line is what a notification shows: the week's answer, not only its title.
-  const counts = (["fail", "flaky", "pass", "none"] as const)
+  const counts = (["fail", "flaky", "passing", "clean", "none"] as const)
     .filter((st) => by(st).length)
     .map((st) => `${STATES[st].emoji} ${by(st).length} ${STATES[st].word}`);
   const failing = by("fail");
   // The failing SDKs a line each, the rest a line per state; all in the page's order, not ranked.
-  const groups = (["flaky", "pass", "none"] as const)
+  const groups = (["flaky", "passing", "clean", "none"] as const)
     .filter((st) => by(st).length)
     .map((st) => `${STATES[st].emoji} *${STATES[st].word[0].toUpperCase()}${STATES[st].word.slice(1)}:* ${by(st).map((c) => groupName(c, nights, cardUrl(weekUrl, c))).join(", ")}`);
   return [

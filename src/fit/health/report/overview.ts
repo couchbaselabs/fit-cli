@@ -16,7 +16,7 @@ import { FAMILY_SECTIONS, type HealthOptIn } from "../registry/health-opt-ins.js
 import { SDKS, sdkByValue } from "../../../util/sdk/sdks.js";
 import { addDays } from "./dates.js";
 import { WINDOW_DAYS } from "./classify.js";
-import { isClean, isCounted, type CleanSeries } from "./clean.js";
+import { isClean, isCountedOn, type CleanSeries } from "./clean.js";
 
 /** The parts of a report the overview reads. */
 export type OverviewInput = Pick<HealthReport, "sdk" | "start" | "end"> & {
@@ -169,11 +169,12 @@ export function layoutSections(sdks: string[], place: (sdk: string) => Placement
   return [...sections, ...alone.sort((a, b) => byText(a.name, b.name)).map((row) => ({ rows: [row] }))];
 }
 
-/** Every counted series' counts for each night, added together. */
+/** The counts of each night's counted series (clean.ts isCountedOn), added together. */
 export function nightTotals(series: OverviewInput["series"]): Map<string, OverviewNight> {
   const nights = new Map<string, OverviewNight>();
-  for (const s of series.filter(isCounted)) {
+  for (const s of series) {
     for (const [date, c] of Object.entries(s.testCounts)) {
+      if (!isCountedOn(s, date)) continue;
       let n = nights.get(date);
       if (!n) nights.set(date, (n = { date, passed: 0, failing: 0, skipped: 0, runs: 0, logOnly: 0, clean: isClean(series, date) }));
       n.runs++;
@@ -191,7 +192,7 @@ export function nightTotals(series: OverviewInput["series"]): Map<string, Overvi
 
 /** Each of `dates` for one SDK: its night's counts, or why there are none. */
 export function overviewDays(input: OverviewInput, dates: readonly string[], nights = nightTotals(input.series)): OverviewDay[] {
-  const aborted = new Set(input.series.filter(isCounted).flatMap((s) => (s.aborted ?? []).map((a) => a.date)));
+  const aborted = new Set(input.series.flatMap((s) => (s.aborted ?? []).map((a) => a.date).filter((d) => isCountedOn(s, d))));
   const unreadable = new Set((input.source?.unreadableRuns ?? []).map((r) => r.date));
   return dates.map((d): OverviewDay => {
     if (d < input.start || d > input.end) return "unreported";

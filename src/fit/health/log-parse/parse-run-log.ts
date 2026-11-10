@@ -44,8 +44,13 @@ import {
 /**
  * Bump when a parser change could alter what an already-parsed log yields. log-9: a
  * parameterised test's variants (`durability(Durability)[2]`) are one test, as in JUnit.
+ * log-10: a preset that ran but printed no results and no fatal error is aborted (NO_RESULTS),
+ * unless fit-cli said it skipped it on purpose.
  */
-export const LOG_PARSER_VERSION = "log-9";
+export const LOG_PARSER_VERSION = "log-10";
+
+/** abortedAt for a preset that ran but printed no results and no fatal error to say why. */
+export const NO_RESULTS = "NoResults";
 
 /**
  * Before this date fit-cli printed a second copy of the functional summary under the
@@ -90,6 +95,11 @@ const PE_PARAM = /"enablePrivateEndpoint":\s*(true|false)/;
 // and prints unclassified ones as a bare "FitCliError: <why>" (e.g. "ssh exited with code 255").
 const FATAL = /FitCliError(?:\/(FatalTo\w+))?:\s*(.*)$/;
 const UNCLASSIFIED = "Unclassified";
+/**
+ * fit-cli skipping a run on purpose (run-from-definition.ts reportCngSkip): "aws1 / 8.0.2-5503:
+ * skipped, as the SDKs in this execution group don't support CNG." The job still goes green.
+ */
+const SKIPPED = /: (skipped, as the [^.]*? support [\w-]+)/;
 const SEVERITY = [UNCLASSIFIED, "FatalToRun", "FatalToSession", "FatalToCluster", "FatalToInstance", "FatalToAll"];
 
 const SUITE_ALIAS: Record<string, string> = { func: "functional", "sit:standard-qe": "situational:standard-qe" };
@@ -149,6 +159,8 @@ export interface ParsedLog {
   performerRevision: Record<string, string>;
   /** The most severe fit-cli fatal error seen per preset. */
   aborts: Record<string, PresetAbort>;
+  /** Per preset, why fit-cli skipped a run of it on purpose (the first it gave). */
+  skipped: Record<string, string>;
   /** Presets named by banners or job names, whether or not they produced any tagged line. */
   presetsSeen: string[];
 }
@@ -161,6 +173,7 @@ export function parseRunLog(text: string): ParsedLog {
   const params = new Map<string, Record<string, string | number | boolean>>();
   const presetsSeen = new Set<string>();
   const aborts: Record<string, PresetAbort> = {};
+  const skipped: Record<string, string> = {};
 
   const paramsFor = (preset: string) => {
     let p = params.get(preset);
@@ -206,6 +219,8 @@ export function parseRunLog(text: string): ParsedLog {
       if (fe && level && SEVERITY.indexOf(level) >= SEVERITY.indexOf(aborts[preset]?.level ?? "")) {
         aborts[preset] = { level, reason: fe[2].trim().slice(0, 300) };
       }
+      const sk = SKIPPED.exec(msg);
+      if (sk && !skipped[preset]) skipped[preset] = sk[1];
     }
 
     const m = TAG.exec(msg);
@@ -279,7 +294,7 @@ export function parseRunLog(text: string): ParsedLog {
     if (run.kind !== "situational") delete run.params.privateEndpoint;
     if (run.suite.includes(":cng")) run.params.gateway = "cng";
   }
-  return { runs: [...runs.values()], driver, performerRevision, aborts, presetsSeen: [...presetsSeen].sort() };
+  return { runs: [...runs.values()], driver, performerRevision, aborts, skipped, presetsSeen: [...presetsSeen].sort() };
 }
 
 export interface RecordBuildResult {
@@ -311,23 +326,30 @@ export function buildRecords(parsed: ParsedLog, ctx: { sdk: string; date: string
   });
 
   // A preset that died before any of its runs printed a tagged line. With fit-cli's own
-  // fatal-error line it is an honest "aborted" - a gap, never a pass. Without one we cannot
-  // tell a harness death from a log format we don't recognise, so the log is a parse error.
+  // fatal-error line it is an honest "aborted" - a gap, never a pass. A preset fit-cli says it
+  // skipped on purpose (an SDK that doesn't support CNG) wasn't tried: no record, so a preset
+  // that is only ever skipped stops counting. Any other silent preset ran and told us nothing,
+  // which is a broken night, not a skipped one: it is aborted too (NO_RESULTS).
   // A log naming no preset at all is a format we don't recognise, or a workflow that died
-  // before fit-cli started. Either way it is not a night with nothing to report.
+  // before fit-cli started. Either way it is not a night with nothing to report; so is a log
+  // where every preset is silent with no reason given.
   if (parsed.presetsSeen.length === 0 && parsed.runs.length === 0) {
     return { records: [], warnings, parseError: "no FIT presets or result lines were recognised in the log" };
   }
   const presetsWithRuns = new Set(parsed.runs.map((r) => r.preset));
   const silent = parsed.presetsSeen.filter((p) => !presetsWithRuns.has(p));
-  const unexplained = silent.filter((p) => !parsed.aborts[p]);
+  const unexplained = silent.filter((p) => !parsed.aborts[p] && !parsed.skipped[p]);
   if (unexplained.length > 0 && unexplained.length === parsed.presetsSeen.length) {
     return { records: [], warnings, parseError: `presets ran (${unexplained.join(", ")}) but no fit-cli result lines or fatal errors were recognised` };
   }
   for (const preset of silent) {
     const abort = parsed.aborts[preset];
+    if (!abort && parsed.skipped[preset]) {
+      warnings.push(`${preset}: fit-cli ${parsed.skipped[preset]} - not run`);
+      continue;
+    }
     const kind = presetKind(preset);
-    if (!abort || !kind) {
+    if (!kind) {
       warnings.push(`${preset}: produced no result lines${abort ? "" : " and no fatal error"} - not stored`);
       continue;
     }
@@ -336,8 +358,8 @@ export function buildRecords(parsed: ParsedLog, ctx: { sdk: string; date: string
       params: {},
       ci: { ...ctx.ci },
       outcome: "aborted",
-      abortedAt: abort.level,
-      abortReason: abort.reason,
+      abortedAt: abort?.level ?? NO_RESULTS,
+      abortReason: abort?.reason ?? "ran, but printed no results and no fatal error",
       tests: {},
     });
   }

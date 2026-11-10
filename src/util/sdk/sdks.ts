@@ -27,13 +27,15 @@ export const SDKS = [
   //     https://github.com/orgs/couchbase/packages/container/package/analytics-dotnet-fit-performer
   //   - analytics-go (family "enterprise-analytics"), from couchbase/gocbanalytics:
   //     https://github.com/couchbase/gocbanalytics/pkgs/container/analytics-go-fit-performer
+  //   - columnar-go (family "columnar"), from couchbase/gocbcolumnar:
+  //     https://github.com/couchbase/gocbcolumnar/pkgs/container/columnar-go-fit-performer
   //   - insights-python (family "enterprise-analytics"), from
   //     couchbaselabs/operational-insights-python-client:
   //     https://github.com/couchbaselabs/operational-insights-python-client/pkgs/container/insights-python-fit-performer
   //   - insights-node (family "enterprise-analytics"), from
   //     couchbaselabs/operational-insights-nodejs-client:
   //     https://github.com/couchbaselabs/operational-insights-nodejs-client/pkgs/container/insights-node-fit-performer
-  // The Go/Node/Python columnar+analytics performers still in transactions-fit-performer
+  // The Node/Python columnar+analytics performers still in transactions-fit-performer
   // are not published. Add entries here as more images ship.
   // Enterprise Analytics SDK first — it's the standard/recommended choice for the
   // (self-managed Enterprise Analytics) clusters fit-cli allocates; the Columnar SDK
@@ -43,6 +45,7 @@ export const SDKS = [
   { name: ".NET Enterprise Analytics", value: "analytics-dotnet", family: "enterprise-analytics" },
   { name: "Go Enterprise Analytics", value: "analytics-go", family: "enterprise-analytics" },
   { name: "Java Columnar", value: "columnar-java", family: "columnar" },
+  { name: "Go Columnar", value: "columnar-go", family: "columnar" },
   { name: "Go Operational Insights", value: "insights-go", family: "enterprise-analytics" },
   { name: ".NET Operational Insights", value: "insights-dotnet", family: "enterprise-analytics" },
   { name: "Python Operational Insights", value: "insights-python", family: "enterprise-analytics" },
