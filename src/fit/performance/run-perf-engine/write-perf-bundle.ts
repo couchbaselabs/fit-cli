@@ -1,5 +1,6 @@
 /**
- * The two files a perf run writes besides buckets.csv: metrics.csv and run.json5.
+ * The two files a perf run writes besides buckets.csv: metrics.csv and run.json5. Plus
+ * skipped.json, written instead of all three when the engine skips a run.
  *
  * `run.json5` matters most: its `forDatabase` object is exactly what goes into `runs.params`,
  * which is both what the perf UI reads and the key the results pipeline dedups on. Its shape
@@ -7,7 +8,8 @@
  * jenkins-sdk wrote (cluster, impl, workload, vars), plus `runner`, which only fit-cli writes
  * and which marks the datapoint as one of its own (see {@link PerfRunner}).
  */
-import { closeSync, openSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, writeFileSync, writeSync } from "node:fs";
+import { join } from "node:path";
 import { escapeCsv, isoSecond } from "./perf-buckets.js";
 import type { PerfRunner, PerfTestSuite } from "../run-perf-driver/run-perf-driver.js";
 
@@ -110,4 +112,29 @@ export function writePerfRunRecord(path: string, record: PerfRunRecord): void {
  */
 export function shouldRecordRun(operations: readonly { op?: string }[]): boolean {
   return !operations.some((op) => op.op === "ping");
+}
+
+/**
+ * Left in a run's bundle directory, in place of its results, when the engine skipped the run
+ * because the performer can't do the workload. A remote run's driver only sees the collected
+ * files, so this is how the skip, and its reason, get back to it (see assessPerfBundles).
+ */
+export const PERF_SKIPPED_MARKER = "skipped.json";
+
+export function writePerfSkipMarker(bundleDir: string, reason: string): void {
+  writeFileSync(join(bundleDir, PERF_SKIPPED_MARKER), JSON.stringify({ reason }));
+}
+
+/** The reason a bundle was skipped, or undefined if it wasn't. */
+export function readPerfSkipMarker(bundleDir: string): string | undefined {
+  const path = join(bundleDir, PERF_SKIPPED_MARKER);
+  if (!existsSync(path)) {
+    return undefined;
+  }
+  try {
+    const { reason } = JSON.parse(readFileSync(path, "utf8")) as { reason?: unknown };
+    return typeof reason === "string" && reason !== "" ? reason : "skipped by the perf engine";
+  } catch {
+    return "skipped by the perf engine";
+  }
 }

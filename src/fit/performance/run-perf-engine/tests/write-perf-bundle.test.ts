@@ -1,14 +1,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { buildPerfRunRecord, shouldRecordRun } from "../write-perf-bundle.js";
 import { curlArgs, parseRestResponse, storageBackend, unhealthyNodes } from "../perf-cluster-rest.js";
-import { classifyResult, largestPoolPerPreface, mergeSettings } from "../run-perf-engine.js";
+import { classifyResult, largestPoolPerPreface, mergeSettings, workloadSkipReason } from "../run-perf-engine.js";
+import { Caps } from "../../generated/performer.caps_pb.js";
 import type { PerfTestSuite } from "../../run-perf-driver/run-perf-driver.js";
 import type { PerfOperation } from "../build-perf-request.js";
 import { planResultsUpload } from "../../../situational/upload-results/upload-results.js";
 import { parseBucketsCsv, parseMetricsCsv, parseRunJson5 } from "../../../ingest/parse.js";
 import { BUCKETS_CSV_HEADER, formatBucketRow, isoSecond, summariseBucket } from "../perf-buckets.js";
-import { METRICS_CSV_HEADER } from "../write-perf-bundle.js";
+import { METRICS_CSV_HEADER, PERF_SKIPPED_MARKER, readPerfSkipMarker, writePerfSkipMarker } from "../write-perf-bundle.js";
 import { bundleDirName } from "../../run-perf-driver/run-perf-driver.js";
 
 const testSuite: PerfTestSuite = {
@@ -224,4 +228,22 @@ test("the ingest accepts the buckets.csv the engine writes, with and without err
 test("the ingest accepts the metrics.csv the engine writes", () => {
   const csv = `${METRICS_CSV_HEADER}\n${[isoSecond(100), 3, '"{""cpu"":12.5}"'].join(",")}\n`;
   assert.deepEqual(parseMetricsCsv(csv).map((r) => r.metrics), ['{"cpu":12.5}']);
+});
+
+test("a transaction workload is skipped unless the performer has TRANSACTIONS_WORKLOAD_1", () => {
+  const txn: PerfOperation[] = [{ transaction: { ops: [{ op: "replace" }, { op: "insert" }], bounds: { forSeconds: 300 } } }];
+  const kv: PerfOperation[] = [{ op: "get" }];
+  // TRANSACTIONS_SUPPORT_1 is the transactions RPCs, not transactions.Workload: Scala, .NET and Python advertise it and still can't.
+  assert.match(workloadSkipReason(txn, [Caps.KV_SUPPORT_1, Caps.TRANSACTIONS_SUPPORT_1]) ?? "", /TRANSACTIONS_WORKLOAD_1/);
+  assert.equal(workloadSkipReason(txn, [Caps.TRANSACTIONS_WORKLOAD_1]), undefined);
+  assert.equal(workloadSkipReason(kv, []), undefined);
+});
+
+test("the skip marker round-trips its reason, and tolerates a damaged file", () => {
+  const dir = mkdtempSync(join(tmpdir(), "fit-perf-skip-"));
+  assert.equal(readPerfSkipMarker(dir), undefined);
+  writePerfSkipMarker(dir, "no cap");
+  assert.equal(readPerfSkipMarker(dir), "no cap");
+  writeFileSync(join(dir, PERF_SKIPPED_MARKER), "not json");
+  assert.equal(readPerfSkipMarker(dir), "skipped by the perf engine");
 });

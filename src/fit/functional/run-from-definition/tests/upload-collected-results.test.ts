@@ -244,7 +244,7 @@ const STALE_RUN = "dddddddd-0000-4000-8000-000000000004";
 const PUBLISHING: ResultsPublishing = { runGroupId: "11111111-2222-4333-8444-555555555555", upload: true, debugLinks: { ciUrl: "https://ci" } };
 
 function perfRun(resultsDir: string, ok: boolean) {
-  return { ok, perfResultsDir: resultsDir, assessment: { ok, reasons: [], bundles: [join(resultsDir, PERF_RUN.slice(0, 8))], bucketRows: ok ? 10 : 0 } };
+  return { ok, perfResultsDir: resultsDir, assessment: { ok, reasons: [], bundles: [join(resultsDir, PERF_RUN.slice(0, 8))], bucketRows: ok ? 10 : 0, skipped: [] } };
 }
 
 test("a performance run uploads only its own bundle, under the invocation's id", async () => {
@@ -280,6 +280,18 @@ test("a performance run without --results-upload keeps its files", async () => {
   });
   assert.equal(uploads, 0);
   assert.deepEqual(output.details, [{ label: "Preserved results", value: resultsDir }]);
+});
+
+test("a performance run that was skipped uploads nothing", async () => {
+  const resultsDir = writePerfResults([]);
+  let uploads = 0;
+  const skipped = { ok: true, perfResultsDir: resultsDir, assessment: { ok: true, reasons: [], bundles: [], bucketRows: 0, skipped: [{ bundle: "cccccccc", reason: "no cap" }] } };
+  const output = await publishPerfResults(skipped, PUBLISHING, () => {
+    uploads++;
+    return Promise.resolve({ artifacts: [], details: [] });
+  });
+  assert.equal(uploads, 0);
+  assert.deepEqual(output, { artifacts: [], details: [] });
 });
 
 test("a failed perf upload is reported, not thrown — the run already happened", async () => {
