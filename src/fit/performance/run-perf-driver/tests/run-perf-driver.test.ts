@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   DEFAULT_PERF_HORIZONTAL_SCALING,
   DEFAULT_PERF_REPLICAS,
   DEFAULT_PERF_STORAGE,
+  assessPerfBundles,
   buildPerfTestSuite,
   countCsvDataRows,
   describePerfWorkload,
@@ -12,6 +16,7 @@ import {
   restHostname,
 } from "../run-perf-driver.js";
 import { PERF_WORKLOADS, perfWorkloadByValue } from "../perf-workloads.js";
+import { writePerfSkipMarker } from "../../run-perf-engine/write-perf-bundle.js";
 import type { SelectedCluster } from "../../../../cluster/cluster-select/cluster-select.js";
 import type { PerformanceSection } from "../../../shared/definition/types.js";
 import { sdkByValue, type Sdk } from "../../../../util/sdk/sdks.js";
@@ -255,4 +260,24 @@ test("from a checkout, fitCliRunner names fit-cli and records HEAD's full commit
   assert.equal(runner.name, "fit-cli");
   assert.match(runner.commit ?? "", /^[0-9a-f]{40}$/);
   assert.ok(runner.dirty === undefined || runner.dirty === true);
+});
+
+test("assessPerfBundles: a skipped run is ok, uploads nothing, and says why", () => {
+  const resultsDir = mkdtempSync(join(tmpdir(), "fit-perf-assess-"));
+  mkdirSync(join(resultsDir, "aaaaaaaa"));
+  writePerfSkipMarker(join(resultsDir, "aaaaaaaa"), "no cap");
+  const assessment = assessPerfBundles(resultsDir, "aaaaaaaa-0000-4000-8000-000000000001");
+  assert.deepEqual(assessment, { ok: true, reasons: [], bundles: [], bucketRows: 0, skipped: [{ bundle: "aaaaaaaa", reason: "no cap" }] });
+});
+
+test("assessPerfBundles: a skipped sibling doesn't change how a measured run is judged", () => {
+  const resultsDir = mkdtempSync(join(tmpdir(), "fit-perf-assess-"));
+  mkdirSync(join(resultsDir, "aaaaaaaa"));
+  writePerfSkipMarker(join(resultsDir, "aaaaaaaa"), "no cap");
+  mkdirSync(join(resultsDir, "bbbbbbbb"));
+  writeFileSync(join(resultsDir, "bbbbbbbb", "buckets.csv"), "header\n");
+  const assessment = assessPerfBundles(resultsDir);
+  assert.equal(assessment.ok, false);
+  assert.deepEqual(assessment.bundles, [join(resultsDir, "bbbbbbbb")]);
+  assert.deepEqual(assessment.skipped, [{ bundle: "aaaaaaaa", reason: "no cap" }]);
 });

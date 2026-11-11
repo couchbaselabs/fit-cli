@@ -39,6 +39,9 @@ import { resolvedGitSha } from "../../version/version.js";
 import { captureValueSync } from "../../../util/non-fit/proc.js";
 import { localDriverResultsDir } from "../../shared/run-test-driver/collect-results.js";
 import { runPerfEngine } from "../run-perf-engine/run-perf-engine.js";
+import { readPerfSkipMarker } from "../run-perf-engine/write-perf-bundle.js";
+import { fitCliWarn } from "../../../util/non-fit/fit-cli-log.js";
+import { emitGhaNotice } from "../../util/gha.js";
 import { otelEndpoints } from "../../external-services/otel/util/otel-endpoints.js";
 
 /**
@@ -312,10 +315,15 @@ export interface PerfBundleAssessment {
   ok: boolean;
   /** Why it isn't ok — empty when it is. */
   reasons: string[];
-  /** Bundle directories found under the collected results tree. */
+  /** Bundle directories found under the collected results tree. Excludes skipped ones. */
   bundles: string[];
   /** Total data rows (excluding the header) across every bundle's buckets.csv. */
   bucketRows: number;
+  /**
+   * Bundles the engine skipped because the performer can't run the workload, with why. Not a
+   * failure, and nothing in them is uploaded.
+   */
+  skipped: { bundle: string; reason: string }[];
 }
 
 /**
@@ -329,17 +337,29 @@ export interface PerfBundleAssessment {
  */
 export function assessPerfBundles(resultsDir: string | undefined, runUuid?: string): PerfBundleAssessment {
   if (!resultsDir || !existsSync(resultsDir)) {
-    return { ok: false, reasons: ["the perf driver wrote no results directory"], bundles: [], bucketRows: 0 };
+    return { ok: false, reasons: ["the perf driver wrote no results directory"], bundles: [], bucketRows: 0, skipped: [] };
   }
-  const bundles = readdirSync(resultsDir, { withFileTypes: true })
+  const found = readdirSync(resultsDir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     // Several runs in one session share a results directory, each with its own bundle named
     // after its uuid. Without this a run would be judged on its siblings' output too — passing
     // or failing for something another run did.
     .filter((entry) => runUuid === undefined || entry.name === bundleDirName(runUuid))
     .map((entry) => join(resultsDir, entry.name));
+  const skipped: PerfBundleAssessment["skipped"] = [];
+  const bundles: string[] = [];
+  for (const bundle of found) {
+    const reason = readPerfSkipMarker(bundle);
+    if (reason === undefined) {
+      bundles.push(bundle);
+    } else {
+      skipped.push({ bundle: basename(bundle), reason });
+    }
+  }
   if (bundles.length === 0) {
-    return { ok: false, reasons: ["the perf driver wrote no result bundle"], bundles: [], bucketRows: 0 };
+    return skipped.length > 0
+      ? { ok: true, reasons: [], bundles: [], bucketRows: 0, skipped }
+      : { ok: false, reasons: ["the perf driver wrote no result bundle"], bundles: [], bucketRows: 0, skipped };
   }
 
   const reasons: string[] = [];
@@ -362,7 +382,7 @@ export function assessPerfBundles(resultsDir: string | undefined, runUuid?: stri
       reasons.push(`${name}: no run.json5 — the run's parameters weren't recorded`);
     }
   }
-  return { ok: reasons.length === 0, reasons, bundles, bucketRows };
+  return { ok: reasons.length === 0, reasons, bundles, bucketRows, skipped };
 }
 
 /** Data rows in a CSV, i.e. non-blank lines after the header. */
@@ -522,6 +542,11 @@ export async function runPerfDriver(
   for (const reason of assessment.reasons) {
     console.error(`  ✗ ${reason}`);
   }
+  for (const { bundle, reason } of assessment.skipped) {
+    fitCliWarn(`→ Perf run ${bundle} skipped, as ${reason}.`);
+    // A skip leaves the job green, so say why on its summary page.
+    emitGhaNotice("Perf run skipped", `${bundle}: skipped, as ${reason}.`);
+  }
 
   return {
     ok: outcome.ok && assessment.ok,
@@ -551,7 +576,8 @@ export function assertPerfDriverCredentials(cluster: SelectedCluster): void {
 function perfRunDetails(assessment: PerfBundleAssessment, path: DefinitionRunPath, durationMs: number): Detail[] {
   const label = (name: string): string => `Run ${path.runIndex ?? 0} ${name}`;
   return [
-    { label: label("Result"), value: assessment.ok ? "PASS" : "FAIL" },
+    { label: label("Result"), value: !assessment.ok ? "FAIL" : assessment.bundles.length === 0 && assessment.skipped.length > 0 ? "SKIPPED" : "PASS" },
+    ...assessment.skipped.map(({ bundle, reason }) => ({ label: label(`Skipped ${bundle}`), value: reason })),
     { label: label("Result bundles"), value: String(assessment.bundles.length) },
     { label: label("Bucket rows"), value: String(assessment.bucketRows) },
     { label: label("Duration"), value: `${Math.round(durationMs / 1000)}s` },

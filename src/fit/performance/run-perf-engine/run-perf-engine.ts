@@ -44,7 +44,7 @@ import {
   withMeasuredClusterFacts,
   type PerfClusterRest,
 } from "./perf-cluster-rest.js";
-import { buildPerfRunRecord, PerfMetricsWriter, shouldRecordRun, writePerfRunRecord } from "./write-perf-bundle.js";
+import { buildPerfRunRecord, PerfMetricsWriter, shouldRecordRun, writePerfRunRecord, writePerfSkipMarker } from "./write-perf-bundle.js";
 
 /**
  * Trace sampling, when the config names a collector (see {@link buildObservabilityConfig}).
@@ -78,6 +78,8 @@ export interface PerfEngineRunOutcome {
   resultsReceived: number;
   /** Operations the performer reported as failed, across the whole run. */
   failures: number;
+  /** Why the run was skipped without measuring anything (see workloadSkipReason), if it was. */
+  skipped?: string;
 }
 
 export interface PerfEngineOutcome {
@@ -368,9 +370,19 @@ async function runOne(testSuite: PerfTestSuite, runIndex: number, rest: PerfClus
   const connection = connectPerformer(testSuite.connections.performer.hostname, testSuite.connections.performer.port);
   const performer = connection.client;
   const clusterConnectionId = randomUUID();
+  // Only a connection that was made needs closing: a skipped run never makes one.
+  let clusterConnectionCreated = false;
 
   try {
     const caps = await performer.performerCapsFetch({}, UNARY_CALL_OPTIONS);
+    // Before anything is set up on the performer, so a skipped run costs nothing. Only this
+    // run is skipped: the session's other workloads still run.
+    const skipReason = workloadSkipReason(operations, caps.performerCaps);
+    if (skipReason) {
+      console.log(`Skipping workload ${run.uuid}: ${skipReason}`);
+      writePerfSkipMarker(outputDir, skipReason);
+      return { runUuid: run.uuid, outputDir, bucketRows: 0, resultsReceived: 0, failures: 0, skipped: skipReason };
+    }
     const clusterConfig = buildClusterConfig(testSuite, run.uuid);
     if (clusterConfig.observabilityConfig && !caps.performerCaps.includes(Caps.OBSERVABILITY_1)) {
       console.log("Performer does not support observability, so disabling");
@@ -393,6 +405,7 @@ async function runOne(testSuite: PerfTestSuite, runIndex: number, rest: PerfClus
       },
       UNARY_CALL_OPTIONS,
     );
+    clusterConnectionCreated = true;
     console.log(`Performer now has ${created.clusterConnectionCount} cluster connection(s)`);
 
     // Pools share one document namespace per preface, so only the largest needs creating.
@@ -440,10 +453,12 @@ async function runOne(testSuite: PerfTestSuite, runIndex: number, rest: PerfClus
 
     return { runUuid: run.uuid, outputDir, bucketRows, resultsReceived: sink.received, failures: sink.failures };
   } finally {
-    try {
-      await performer.clusterConnectionClose({ clusterConnectionId }, UNARY_CALL_OPTIONS);
-    } catch (err) {
-      console.error(`  Could not close the performer's cluster connection: ${(err as Error).message}`);
+    if (clusterConnectionCreated) {
+      try {
+        await performer.clusterConnectionClose({ clusterConnectionId }, UNARY_CALL_OPTIONS);
+      } catch (err) {
+        console.error(`  Could not close the performer's cluster connection: ${(err as Error).message}`);
+      }
     }
     connection.close();
   }
@@ -483,6 +498,22 @@ export function largestPoolPerPreface(settings: PerfMergedSettings, operations: 
 }
 
 /**
+ * Why the performer can't run this workload, or undefined if it can.
+ *
+ * Transaction workloads need TRANSACTIONS_WORKLOAD_1. TRANSACTIONS_SUPPORT_1 isn't enough:
+ * it covers the transactions RPCs, not transactions.Workload. Performers without it cancel
+ * the run stream as soon as the workload arrives (Scala, .NET and Python all did), leaving a
+ * bundle with no timings. jenkins-sdk only ever scheduled write transactions for SDKs that
+ * support it.
+ */
+export function workloadSkipReason(operations: readonly PerfOperation[], performerCaps: readonly Caps[]): string | undefined {
+  if (operations.some((op) => op.transaction !== undefined) &&!performerCaps.includes(Caps.TRANSACTIONS_WORKLOAD_1)) {
+    return "the performer doesn't support transaction workloads (no TRANSACTIONS_WORKLOAD_1 cap)";
+  }
+  return undefined;
+}
+
+/**
  * `fit perf-engine <config.yaml>` — measure one workload and write its bundle.
  *
  * Registered as a (hidden) top-level command because a remote run invokes it on the
@@ -512,7 +543,7 @@ export function runPerfEngineMain(): void {
     const testSuite = YAML.parse(readFileSync(resolve(configPath), "utf8")) as PerfTestSuite;
     const outcome = await runPerfEngine(testSuite);
     for (const run of outcome.runs) {
-      console.log(`\n${run.runUuid}: ${run.bucketRows} bucket row(s) in ${run.outputDir}`);
+      console.log(run.skipped ? `\n${run.runUuid}: skipped, as ${run.skipped}` : `\n${run.runUuid}: ${run.bucketRows} bucket row(s) in ${run.outputDir}`);
     }
     return { artifacts: [], details: [] };
   });

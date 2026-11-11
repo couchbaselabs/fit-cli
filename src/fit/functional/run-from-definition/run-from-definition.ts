@@ -969,6 +969,11 @@ export async function publishPerfResults(
     return { artifacts: [], details: [] };
   }
   const onlyDirs = perfRun.assessment.bundles.map((bundle) => basename(bundle));
+  if (perfRun.ok && onlyDirs.length === 0 && perfRun.assessment.skipped.length > 0) {
+    // Skipped (see workloadSkipReason): there is no datapoint, so nothing to link or upload.
+    console.log(`\nNothing to upload from ${resultsDir}: the run was skipped.`);
+    return { artifacts: [], details: [] };
+  }
   addDebugLinksToResults(resultsDir, publishing.debugLinks, { onlyDirs });
 
   if (!perfRun.ok) {
