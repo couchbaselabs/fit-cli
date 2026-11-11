@@ -268,9 +268,10 @@ export interface SituationalSection {
    * self-managed and are coarser-grained (a plain release line rather than a
    * cb-alias like "8.0-stable" or a pinned build) — see
    * `environments.json5`'s `capellaClusterVersion`. Defaults to the
-   * situational default version (currently "7.6") when omitted. Mutually
-   * exclusive with `cng` (CNG pins its own cluster version from
-   * environments.json5) and with the run-level `versions` shorthand — see
+   * situational default version (currently "7.6") when omitted. With `cng`,
+   * this must instead be a server build that exists on cb-rhcc (e.g.
+   * "8.0.2-5503", not a cb-alias), and defaults to `cngClusterVersion`.
+   * Mutually exclusive with the run-level `versions` shorthand — see
    * {@link SituationalRun.versions}.
    */
   version?: string;
@@ -294,8 +295,9 @@ export interface SituationalRun {
   /**
    * Run this same situational spec once per listed Couchbase Server version,
    * in sequence — shorthand for duplicating the whole run block just to vary
-   * `situational.version` (e.g. `["8.0", "7.6"]`). Mutually exclusive with
-   * `repeat` and with `situational.version`/`situational.cng`.
+   * `situational.version` (e.g. `["8.0", "7.6"]`, or cb-rhcc builds for
+   * `situational.cng`). Mutually exclusive with `repeat` and with
+   * `situational.version`.
    */
   versions?: string[];
 }

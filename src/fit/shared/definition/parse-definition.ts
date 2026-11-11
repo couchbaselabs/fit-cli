@@ -15,6 +15,7 @@ import {
   type ClusterExistsPolicy,
 } from "../../../cluster/cluster-create/cluster-exists-policy.js";
 import { CAPELLA_CLOUD_PROVIDERS, type CbdinoclusterDef } from "../../../cluster/cluster-create/build-cluster-def.js";
+import { isAlias } from "../../../cluster/cluster-create/cb-alias.js";
 import { analysePerformerImage } from "../../performers/util/performer-image.js";
 import { isAnalyticsSdk } from "../../../util/sdk/sdks.js";
 import {
@@ -557,7 +558,7 @@ function validateSituationalSection(value: unknown, path: string): SituationalSe
   }
   const version = validateSituationalVersion(record, path);
   if (version !== undefined && record.cng !== undefined) {
-    throw new InvalidDefinitionError(`"${path}.version" and "${path}.cng" are mutually exclusive — CNG pins its own cluster version.`);
+    rejectCngAliasVersion(version, `${path}.version`);
   }
   return {
     database: validateSituationalDatabase(record.database, `${path}.database`),
@@ -589,6 +590,20 @@ function validateRepeat(record: Record<string, unknown>, path: string): number |
     throw new InvalidDefinitionError(`"${path}.repeat" must be a positive integer when present; got ${JSON.stringify(value)}`);
   }
   return value;
+}
+
+/**
+ * A CNG cluster's server image comes from cb-rhcc, which only carries hand-picked builds:
+ * a cb-alias like "8.0-stable" resolves to a cb-vanilla dev build cb-rhcc doesn't have,
+ * leaving the server pod in ImagePullBackOff (see `cngClusterVersion` in environments.json5).
+ */
+function rejectCngAliasVersion(version: string, path: string): void {
+  if (isAlias(version)) {
+    throw new InvalidDefinitionError(
+      `"${path}" is the cb-alias "${version}", which a CNG cluster can't use: CNG pulls its server image from cb-rhcc, ` +
+        `so it needs a build that exists there, e.g. "8.0.2-5503" (https://github.com/orgs/cb-rhcc/packages/container/package/server).`,
+    );
+  }
 }
 
 function validateVersions(record: Record<string, unknown>, path: string): string[] | undefined {
@@ -754,7 +769,7 @@ function validateRun(value: unknown, path: string, clusterless: boolean): FitRun
     throw new InvalidDefinitionError(`"${path}.versions" and "${path}.situational.version" are mutually exclusive; set only one.`);
   }
   if (versions !== undefined && situational.cng !== undefined) {
-    throw new InvalidDefinitionError(`"${path}.versions" cannot be combined with "${path}.situational.cng" — CNG pins its own cluster version.`);
+    versions.forEach((version, index) => rejectCngAliasVersion(version, `${path}.versions[${index}]`));
   }
   return {
     type: "situational",
