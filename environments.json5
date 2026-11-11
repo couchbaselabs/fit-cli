@@ -4,7 +4,7 @@
   // no secret values are committed.
   //
   // Which environment gets used:
-  //   capella  → instances[*].setup.capellaEnvironment in the definition file   (default 'prod')
+  //   capella  → instances[*].setup.capellaEnvironment in the definition file   (default 'dev')
   //   results  → fit query-runs --env <name>   (default 'prod'; used to be 'dev')
   //
   // Only the passwords and API keys live in AWS Secrets Manager now (us-west-2); everything else
@@ -94,9 +94,8 @@
     capellaPreviousClusterVersion: "7.6",
 
     // Default Capella environment (a key under `capella` below) when the definition file doesn't specify one.
-    // This is the default because we've seen issues on dev (https://couchbase.slack.com/archives/C05LNBVQRE3/p1782487819678329)
-    // That will hopefully be better on prod.
-    defaultCapellaEnvironment: "prod",
+    // Dev, as its internal support token allows things prod doesn't (cbcollect, image upgrades, redeploys).
+    defaultCapellaEnvironment: "dev",
 
     // Default results environment (a key under `results` below) when `fit query-runs --env` isn't given one.
     // This is the database and UI for FIT/SIT and FIT/PERF results.

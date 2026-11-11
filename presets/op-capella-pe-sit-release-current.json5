@@ -10,6 +10,9 @@
       aws: {
         privateEndpoint: {},
       },
+      setup: {
+        capellaEnvironment: '{{environments.defaults.defaultCapellaEnvironment}}',
+      },
       clusters: [],
       clusterlessSessions: [
         {

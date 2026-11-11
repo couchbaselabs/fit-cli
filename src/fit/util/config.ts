@@ -891,7 +891,7 @@ function firstEnv(env: NodeJS.ProcessEnv, names: string[]): string | undefined {
 
 /**
  * Resolve the Capella control-plane settings for a Capella environment (a key
- * under `capella` in environments.json5; default "prod").
+ * under `capella` in environments.json5; default "dev").
  *
  * endpoint/v4Endpoint/organizationId/username are the non-secret registry values
  * (username is the shared account for the environment). The password and the v4
