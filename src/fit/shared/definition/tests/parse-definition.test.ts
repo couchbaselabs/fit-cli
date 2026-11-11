@@ -799,23 +799,43 @@ test("rejects versions combined with situational.version", () => {
   );
 });
 
-test("rejects versions combined with situational.cng", () => {
+test("accepts versions of cb-rhcc builds combined with situational.cng", () => {
+  const def = parseDefinition(
+    SITUATIONAL
+      .replace("mode: files", "mode: files\n              cng: {}")
+      .replace("presets: [all]", "presets: [all]\n            versions: [8.5.0-1060, 8.0.2-5503]"),
+  );
+  const run = def.instances[0]?.clusterlessSessions?.[0]?.runs[0];
+  assert.ok(run && run.type === "situational");
+  assert.deepEqual(run.versions, ["8.5.0-1060", "8.0.2-5503"]);
+});
+
+test("rejects a cb-alias in versions combined with situational.cng, as cb-rhcc doesn't carry it", () => {
   assert.throws(
     () => parseDefinition(
       SITUATIONAL
         .replace("mode: files", "mode: files\n              cng: {}")
-        .replace("presets: [all]", "presets: [all]\n            versions: [8.0-stable]"),
+        .replace("presets: [all]", "presets: [all]\n            versions: [8.0.2-5503, 8.0-stable]"),
     ),
-    (err: unknown) => err instanceof InvalidDefinitionError && /CNG pins its own cluster version/.test(err.message),
+    (err: unknown) => err instanceof InvalidDefinitionError && /versions\[1\]/.test(err.message) && /cb-rhcc/.test(err.message),
   );
 });
 
-test("rejects situational.version combined with situational.cng", () => {
+test("accepts situational.version of a cb-rhcc build combined with situational.cng", () => {
+  const def = parseDefinition(
+    SITUATIONAL.replace("mode: files", "mode: files\n              version: 8.0.2-5503\n              cng: {}"),
+  );
+  const run = def.instances[0]?.clusterlessSessions?.[0]?.runs[0];
+  assert.ok(run && run.type === "situational");
+  assert.equal(run.situational.version, "8.0.2-5503");
+});
+
+test("rejects a cb-alias situational.version combined with situational.cng", () => {
   assert.throws(
     () => parseDefinition(
       SITUATIONAL.replace("mode: files", "mode: files\n              version: 8.0-stable\n              cng: {}"),
     ),
-    (err: unknown) => err instanceof InvalidDefinitionError && /mutually exclusive/.test(err.message),
+    (err: unknown) => err instanceof InvalidDefinitionError && /cb-rhcc/.test(err.message),
   );
 });
 

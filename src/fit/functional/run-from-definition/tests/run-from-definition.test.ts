@@ -408,10 +408,12 @@ test("situationalCbdinoSettings uses the override version for a non-CNG run", ()
   assert.equal(settings.version, "8.0-stable");
 });
 
-test("situationalCbdinoSettings ignores a version override for a CNG run (CNG pins its own version)", () => {
-  const withOverride = situationalCbdinoSettings(true, false, "8.0-stable");
-  const withoutOverride = situationalCbdinoSettings(true, false);
-  assert.equal(withOverride.version, withoutOverride.version);
+test("situationalCbdinoSettings uses environments.json5's cngClusterVersion for a CNG run with no override", () => {
+  assert.equal(situationalCbdinoSettings(true, false).version, loadEnvironments().defaults.cngClusterVersion);
+});
+
+test("situationalCbdinoSettings uses the override version for a CNG run", () => {
+  assert.equal(situationalCbdinoSettings(true, false, "8.0.2-5503").version, "8.0.2-5503");
 });
 
 test("situationalCbdinoSettings asks for gateway ingress for a CNG run, so the driver verifies TLS", () => {
@@ -528,6 +530,11 @@ test("a CNG situational run is labelled with CNG's pinned version, and isn't a C
   assert.equal(parts.clusterVersion, cngVersion);
   assert.equal(parts.capella, undefined);
   assert.equal(formatRunLabel(situationalRun().path, parts), `aws1 / ${cngVersion} / java:main / situational:cng:standard-qe`);
+});
+
+test("a CNG situational run that names a version is labelled with it", () => {
+  const parts = runLabelParts("aws", undefined, situationalRun({ cng: true, version: "8.0.2-5503" }), undefined, true);
+  assert.equal(parts.clusterVersion, "8.0.2-5503");
 });
 
 test("a fitConfig override of situational.cbdino.version is what the label reports", () => {

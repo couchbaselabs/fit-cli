@@ -1194,8 +1194,8 @@ async function withResolvedSituationalCbdino(
 /**
  * The cbdino settings for a situational run. A CNG run deploys via the Couchbase
  * Autonomous Operator instead of a Capella cloud cluster, so it needs the CNG
- * server/operator/gateway versions (from environments.json5) rather than the
- * Capella-cluster default — the driver's CbDinoYamlWrangler only writes an
+ * server/operator/gateway versions (from environments.json5; the server version can
+ * be overridden per run with a cb-rhcc build) rather than the Capella-cluster default — the driver's CbDinoYamlWrangler only writes an
  * `operator-version`/`gateway-version` into cbdinocluster's config when it sees a
  * `cao` deployer.
  */
@@ -1222,7 +1222,7 @@ export function situationalCbdinoSettings(
   const { cngClusterVersion, caoOperatorVersion, cngVersion } = loadEnvironments().defaults;
   return {
     ...DEFAULT_CBDINO_SETTINGS,
-    version: cngClusterVersion,
+    version: versionOverride ?? cngClusterVersion,
     cao: {
       operatorVersion: caoOperatorVersion,
       gatewayVersion: cngVersion,

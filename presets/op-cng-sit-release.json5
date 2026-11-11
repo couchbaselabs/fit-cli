@@ -27,6 +27,9 @@
                 },
                 cng: {},
               },
+              // Both CNG server lines in sequence. A line's release suite takes ~70 min, so the pair
+              // fits one job's 6h budget, and only one cluster at a time lands on the shared ROSA cluster.
+              versions: ['{{environments.defaults.cngClusterVersion}}', '{{environments.defaults.cngPreviousClusterVersion}}'],
             },
           ],
         },

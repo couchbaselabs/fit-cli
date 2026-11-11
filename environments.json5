@@ -52,11 +52,11 @@
     // https://github.com/orgs/cb-rhcc/packages/container/package/server
     cngClusterVersion: "8.5.0-1060",
 
-    // The previous CNG server line — the GA one in the field, and what every CNG
-    // functional preset runs. Only op-cng-func-release additionally spans
-    // cngClusterVersion above; the cheaper tiers stay on one cluster to keep the load
-    // on the shared ROSA OpenShift cluster down. (The CNG situational presets cannot
-    // choose per-preset and always use cngClusterVersion — see run-from-definition.ts.)
+    // The previous CNG server line — the GA one in the field. Every CNG functional preset
+    // runs it, while CNG situational presets run cngClusterVersion above. Only the release
+    // tiers span both lines (op-cng-func-release and op-cng-sit-release); the
+    // cheaper tiers stay on one cluster to keep the load on the shared ROSA OpenShift
+    // cluster down.
     cngPreviousClusterVersion: "8.0.2-5503",
 
     // Default self-managed Enterprise Analytics build passed to cbdinocluster.
