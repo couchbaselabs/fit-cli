@@ -767,6 +767,7 @@ async function setupPerformer(
     run.onPortInUse,
     run.performerPort,
     fitPerformerGerritRef,
+    run.performerLogLevel,
   );
 }
 

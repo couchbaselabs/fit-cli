@@ -32,3 +32,4 @@ jenkins-sdk likewise only scheduled write transactions for Java, Go and C++. The
 The performer sends OpenTelemetry traces, sampled at 0.01%, to the box's own otel stack, the same one functional runs use.
 It sends no metrics. That matches how the jenkins-sdk history was measured, and with metrics on, the Java SDK's per-operation histograms cost a KV workload about 5%.
 The stack's teardown writes the traces to the instance's `otel/` artifacts directory. `fit external-services otel replay <dir>` brings the UIs back up over them.
+The perf presets run the performer at `LOG_LEVEL=info`, because debug SDK logging lowers throughput (the .NET SDK logs about 4 lines per KV op at debug).

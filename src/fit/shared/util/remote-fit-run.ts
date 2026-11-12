@@ -16,6 +16,7 @@ import { collectJunitArtifacts } from "../run-test-driver/collect-junit.js";
 import { collectResultsDir } from "../run-test-driver/collect-results.js";
 import type { Sdk } from "../../../util/sdk/sdks.js";
 import { DEFAULT_PERFORMER_PORT } from "../../performers/util/performer-port.js";
+import { DEFAULT_PERFORMER_LOG_LEVEL, type PerformerLogLevel } from "../../performers/util/performer-log-level.js";
 import { createRemoteFitExecutionContext } from "./remote-fit-execution-context.js";
 import { resolveFitPerformerDir, resolveGerritSshKey, type ResolvedCapellaConfig } from "../../util/config.js";
 
@@ -108,7 +109,7 @@ export interface FitExecutionContext {
   collectResultsDir(sourceDir: string, path: DefinitionRunPath): Promise<string | undefined>;
   pathExists(path: string): Promise<boolean>;
   commandAvailable(command: string): Promise<boolean>;
-  performerRunArgs(imageName: string, hostPort?: number): string[];
+  performerRunArgs(imageName: string, hostPort?: number, logLevel?: PerformerLogLevel): string[];
 }
 
 export function remoteFitRootDir(user: string = FIT_INSTANCE_USER): string {
@@ -392,6 +393,7 @@ export function backgroundShellCommand(command: string, path: string): string {
 export function remotePerformerArgs(
   imageName: string,
   hostPort: number = DEFAULT_PERFORMER_PORT,
+  logLevel: PerformerLogLevel = DEFAULT_PERFORMER_LOG_LEVEL,
 ): string[] {
   return [
     "run",
@@ -401,7 +403,7 @@ export function remotePerformerArgs(
     "--publish",
     `${hostPort}:${DEFAULT_PERFORMER_PORT}`,
     "--env",
-    "LOG_LEVEL=debug",
+    `LOG_LEVEL=${logLevel}`,
     imageName,
   ];
 }
@@ -476,7 +478,7 @@ export function createLocalFitExecutionContext(): FitExecutionContext {
     // Performer images are only published for linux/amd64; pin the platform explicitly
     // so Docker pulls/runs it under emulation on an Arm host instead of erroring with
     // "no matching manifest" (a no-op on a native amd64 host).
-    performerRunArgs: (imageName, hostPort = DEFAULT_PERFORMER_PORT) => [
+    performerRunArgs: (imageName, hostPort = DEFAULT_PERFORMER_PORT, logLevel = DEFAULT_PERFORMER_LOG_LEVEL) => [
       "run",
       "--platform",
       "linux/amd64",
@@ -486,7 +488,7 @@ export function createLocalFitExecutionContext(): FitExecutionContext {
       "--publish",
       `${hostPort}:${DEFAULT_PERFORMER_PORT}`,
       "--env",
-      "LOG_LEVEL=debug",
+      `LOG_LEVEL=${logLevel}`,
       imageName,
     ],
   };
