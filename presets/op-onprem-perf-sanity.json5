@@ -45,6 +45,7 @@
                     },
                     driverVer: '{{environments.perf.driverVer}}',
                     performerVer: '{{environments.perf.performerVer}}',
+                    grpc: '{{environments.perf.grpc}}',
                   },
                 },
               ],
