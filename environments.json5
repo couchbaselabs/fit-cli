@@ -232,6 +232,12 @@
     // box for the driver and performer. The engine gives the whole quota to the bucket.
     docker: { "kv-memory": 28000 },
 
+    // How the performer streams results back, as jenkins-sdk's fit-perf-scheduled did (CBD-4975).
+    // Without a batch size the .NET performer sends one gRPC message per operation and queues
+    // results faster than it sends them, so its memory grows through the run.
+    // Not part of a datapoint's identity.
+    grpc: { flowControl: true, batch: 1000 },
+
     // KV get/replace and transactions, which work over a pool of documents.
     pooledVariables: {
       forSeconds: 300,
