@@ -133,6 +133,24 @@ test("rejects the legacy performer sdk/version fields", () => {
   assert.throws(() => parseDefinition(def), /no longer takes "sdk"\/"version"/);
 });
 
+test("parses performer logLevel case-insensitively and lowercases it", () => {
+  for (const [input, expected] of [["info", "info"], ["WARN", "warn"], ["Trace", "trace"], ["debug", "debug"], ["error", "error"]]) {
+    const def = FUNCTIONAL.replace("image: java-fit-performer:main", `image: java-fit-performer:main\n              logLevel: ${input}`);
+    assert.equal(parseDefinition(def).instances[0]?.clusters[0]?.sessions[0]?.performer.logLevel, expected);
+  }
+});
+
+test("leaves performer logLevel unset when missing", () => {
+  assert.equal(parseDefinition(FUNCTIONAL).instances[0]?.clusters[0]?.sessions[0]?.performer.logLevel, undefined);
+});
+
+test("rejects an unknown or non-string performer logLevel", () => {
+  for (const value of ["verbose", "42", "true"]) {
+    const def = FUNCTIONAL.replace("image: java-fit-performer:main", `image: java-fit-performer:main\n              logLevel: ${value}`);
+    assert.throws(() => parseDefinition(def), /logLevel" must be one of trace, debug, info, warn, error/);
+  }
+});
+
 test("parses clusterless situational sessions", () => {
   const def = parseDefinition(`
 version: 1

@@ -69,6 +69,16 @@ test("remotePerformerArgs add the host-gateway alias and publish the performer p
   ]);
 });
 
+test("performer run args pass the requested LOG_LEVEL to the container", () => {
+  for (const args of [
+    remotePerformerArgs("performer-node-main", 8060, "info"),
+    createLocalFitExecutionContext().performerRunArgs("performer-node-main", 8060, "info"),
+  ]) {
+    assert.ok(args.includes("LOG_LEVEL=info"), `expected LOG_LEVEL=info in ${args.join(" ")}`);
+    assert.ok(!args.includes("LOG_LEVEL=debug"), `expected no LOG_LEVEL=debug in ${args.join(" ")}`);
+  }
+});
+
 test("performer run args never join another Docker network, so the published port keeps working", () => {
   // The test-driver is a host process dialling localhost:<port>, so it depends on the
   // publish. Joining a cluster's network silently breaks it: --publish does nothing on

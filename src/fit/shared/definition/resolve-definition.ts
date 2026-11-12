@@ -11,6 +11,7 @@ import {
   DEFAULT_PORT_IN_USE_POLICY,
   type PortInUsePolicy,
 } from "../../performers/util/performer-port.js";
+import type { PerformerLogLevel } from "../../performers/util/performer-log-level.js";
 import { type Sdk } from "../../../util/sdk/sdks.js";
 import { parsePerformerImage } from "../../performers/util/performer-image.js";
 import {
@@ -138,6 +139,7 @@ export interface ResolvedSessionPlan {
   performerPort: number;
   performerVersion?: string;
   onPortInUse: PortInUsePolicy;
+  performerLogLevel?: PerformerLogLevel;
   runs: ResolvedRun[];
 }
 
@@ -181,6 +183,7 @@ export interface ResolvedExecutionRunCommon extends ResolvedRunCommon {
   performerPort: number;
   performerVersion?: string;
   onPortInUse: PortInUsePolicy;
+  performerLogLevel?: PerformerLogLevel;
 }
 
 export interface ResolvedFunctionalExecutionRun extends ResolvedExecutionRunCommon, ResolvedTestRunFields {
@@ -221,6 +224,7 @@ export interface ResolvedSessionGroup {
   performerPort: number;
   performerVersion?: string;
   onPortInUse: PortInUsePolicy;
+  performerLogLevel?: PerformerLogLevel;
   /** Session-level path (carries sessionIndex). */
   path: DefinitionRunPath;
   runs: ResolvedClusterBoundExecutionRun[];
@@ -586,6 +590,7 @@ export function resolveSession(
     performerPort: session.performer.port ?? DEFAULT_PERFORMER_PORT,
     performerVersion: tag,
     onPortInUse: session.performer.onPortInUse ?? DEFAULT_PORT_IN_USE_POLICY,
+    ...(session.performer.logLevel !== undefined ? { performerLogLevel: session.performer.logLevel } : {}),
     runs,
   };
 }
@@ -724,6 +729,7 @@ export function buildExecutionGroups(instances: ResolvedInstancePlan[]): Resolve
         performerPort: session.performerPort,
         ...(session.performerVersion !== undefined ? { performerVersion: session.performerVersion } : {}),
         onPortInUse: session.onPortInUse,
+        ...(session.performerLogLevel !== undefined ? { performerLogLevel: session.performerLogLevel } : {}),
         path: session.path,
         runs: session.runs
           .filter((run): run is ResolvedFunctionalRun | ResolvedPerformanceRun => run.type !== "situational")
@@ -734,6 +740,7 @@ export function buildExecutionGroups(instances: ResolvedInstancePlan[]): Resolve
               performerPort: session.performerPort,
               ...(session.performerVersion !== undefined ? { performerVersion: session.performerVersion } : {}),
               onPortInUse: session.onPortInUse,
+              ...(session.performerLogLevel !== undefined ? { performerLogLevel: session.performerLogLevel } : {}),
               ...(run.fitConfig !== undefined ? { fitConfig: run.fitConfig } : {}),
               ...(cluster.cluster ? { cluster: cluster.cluster } : {}),
             };
@@ -778,6 +785,7 @@ export function buildExecutionGroups(instances: ResolvedInstancePlan[]): Resolve
                   performerPort: session.performerPort,
                   ...(session.performerVersion !== undefined ? { performerVersion: session.performerVersion } : {}),
                   onPortInUse: session.onPortInUse,
+                  ...(session.performerLogLevel !== undefined ? { performerLogLevel: session.performerLogLevel } : {}),
                   ...(run.fitConfig !== undefined ? { fitConfig: run.fitConfig } : {}),
                   testSelection: run.testSelection,
                   extraMavenArgs: run.extraMavenArgs,
