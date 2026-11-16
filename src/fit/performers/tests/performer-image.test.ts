@@ -108,7 +108,7 @@ test("performerImageName builds a GHCR reference for columnar-java", () => {
   assert.equal(performerImageName(sdk, "main"), "ghcr.io/couchbase/columnar-java-fit-performer:main");
 });
 
-for (const value of ["go", "node", "python", "ruby", "rust"] as const) {
+for (const value of ["go", "node", "python", "ruby", "rust", "php"] as const) {
   test(`${value} performerImageName uses the ${value}-fit-performer GHCR package`, () => {
     const sdk = sdkByValue(value);
     assert.ok(sdk);
@@ -124,10 +124,10 @@ for (const value of ["go", "node", "python", "ruby", "rust"] as const) {
 }
 
 test("analysePerformerImage rejects an image for an SDK FIT doesn't know", () => {
-  const result = analysePerformerImage("php-fit-performer:main");
+  const result = analysePerformerImage("cobol-fit-performer:main");
   assert.ok("error" in result);
   if (!("error" in result)) return;
-  assert.match(result.error, /Unknown SDK "php"/);
+  assert.match(result.error, /Unknown SDK "cobol"/);
 });
 
 test("Quarkus performerImageName uses the couchbaselabs GHCR owner", () => {
