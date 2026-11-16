@@ -151,10 +151,11 @@ test("the committed opt-ins lay out as core sections first, then the languages o
   assert.deepEqual(
     sections.map((s) => [s.title ?? "", s.rows.map((r) => `${r.name}: ${r.sdks.join(" ")}`)]),
     [
-      ["C++ core", ["C++: cpp", "Node.js: node insights-node", "Python: python insights-python"]],
+      ["C++ core", ["C++: cpp", "Node.js: node insights-node", "Python: python insights-python", "Ruby: ruby"]],
       ["JVM", ["Java: java insights-java columnar-java", "Kotlin: kotlin", "Scala: scala"]],
       ["", [".NET: dotnet insights-dotnet"]],
       ["", ["Go: go insights-go"]],
+      ["", ["Rust: rust"]],
     ],
   );
   assert.ok(sections[0].description);
