@@ -75,9 +75,9 @@ test("parseGeneratePresetArgs rejects an SDK that does not support FIT", () => {
     () =>
       parseGeneratePresetArgs([
         "--type=op-onprem-func-lite",
-        "--performer-image-name=php-fit-performer:main",
+        "--performer-image-name=cobol-fit-performer:main",
       ]),
-    /Unknown SDK "php"/,
+    /Unknown SDK "cobol"/,
   );
 });
 
