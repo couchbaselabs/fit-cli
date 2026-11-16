@@ -25,6 +25,7 @@
   //
   // A null non-secret value means "not yet provided" — selecting that block fails fast.
   // bun run secrets set capella/dev password='<password>' apiKey='<key>' apiSecret='<secret>'
+  // bun run secrets capella-key rotate dev [--auto]   (replaces a deleted v4 API key, see --help)
   // bun run secrets set results/dev password='<password>'
 
   // Global defaults — not per-environment. Version strings passed to cbdinocluster
