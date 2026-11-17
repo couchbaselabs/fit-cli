@@ -266,7 +266,10 @@ export function buildPerfTestSuite(input: BuildPerfTestSuiteInput): PerfTestSuit
       },
     ],
     settings: {
-      variables: Object.entries(variables).map(([name, value]) => ({ name, value })),
+      // Tunables also reach the performer's clusterConnectionCreate; see mergeSettings.
+      variables: Object.entries(variables).map(([name, value]) =>
+        performance.tunables?.includes(name) ? { name, value, type: "tunable" as const } : { name, value },
+      ),
       ...(performance.driverVer !== undefined ? { driverVer: performance.driverVer } : {}),
       ...(performance.performerVer !== undefined ? { performerVer: performance.performerVer } : {}),
       ...(performance.grpc !== undefined ? { grpc: performance.grpc } : {}),
