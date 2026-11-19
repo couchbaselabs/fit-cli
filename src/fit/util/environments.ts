@@ -157,6 +157,8 @@ export interface PerfDefaults {
   docker: Record<string, JsonValue>;
   pooledVariables: Record<string, string | number | boolean>;
   insertVariables: Record<string, string | number | boolean>;
+  /** Variable names the perf presets send as SDK tunables, e.g. `concurrencyMechanism`. */
+  tunables: string[];
   /** The standard workloads, inserted verbatim as a preset run's `performance.workload`. */
   workloads: Record<"kvGet" | "kvReplace" | "kvInsert" | "txnWrite", JsonValue>;
 }

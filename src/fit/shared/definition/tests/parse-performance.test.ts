@@ -173,3 +173,35 @@ test("rejects a performance run paired with an Analytics SDK performer", () => {
     (err: unknown) => err instanceof InvalidDefinitionError && /only run "analytics-functional" tests/.test(err.message),
   );
 });
+
+test("parses tunables that name variables", () => {
+  const def = parseDefinition(
+    performanceDefinition(
+      `${GET_WORKLOAD}\n                    concurrencyMechanism: multiprocessing\n                  tunables: [concurrencyMechanism, concurrencyMechanism]`,
+    ),
+  );
+  const run = def.instances[0]?.clusters[0]?.sessions[0]?.runs[0];
+  assert.ok(run && run.type === "performance");
+  assert.deepEqual(run.performance.tunables, ["concurrencyMechanism"]);
+});
+
+test("rejects a tunable that isn't one of the variables", () => {
+  assert.throws(
+    () => parseDefinition(performanceDefinition(`${GET_WORKLOAD}\n                  tunables: [concurrencyMechanism]`)),
+    (err: unknown) => err instanceof InvalidDefinitionError && /must name a key in the run's variables/.test(err.message),
+  );
+});
+
+test("rejects a tunable that only matches an inherited property", () => {
+  assert.throws(
+    () => parseDefinition(performanceDefinition(`${GET_WORKLOAD}\n                  tunables: [toString]`)),
+    (err: unknown) => err instanceof InvalidDefinitionError && /must name a key in the run's variables/.test(err.message),
+  );
+});
+
+test("rejects tunables that aren't a list", () => {
+  assert.throws(
+    () => parseDefinition(performanceDefinition(`${GET_WORKLOAD}\n                  tunables: poolSize`)),
+    (err: unknown) => err instanceof InvalidDefinitionError && /must be a list/.test(err.message),
+  );
+});

@@ -27,6 +27,7 @@
                   performance: {
                     workload: '{{environments.perf.workloads.kvGet}}',
                     variables: '{{environments.perf.pooledVariables}}',
+                    tunables: '{{environments.perf.tunables}}',
                     driverVer: '{{environments.perf.driverVer}}',
                     performerVer: '{{environments.perf.performerVer}}',
                   },
@@ -37,6 +38,7 @@
                   performance: {
                     workload: '{{environments.perf.workloads.kvReplace}}',
                     variables: '{{environments.perf.pooledVariables}}',
+                    tunables: '{{environments.perf.tunables}}',
                     driverVer: '{{environments.perf.driverVer}}',
                     performerVer: '{{environments.perf.performerVer}}',
                   },
@@ -47,6 +49,7 @@
                   performance: {
                     workload: '{{environments.perf.workloads.kvInsert}}',
                     variables: '{{environments.perf.insertVariables}}',
+                    tunables: '{{environments.perf.tunables}}',
                     driverVer: '{{environments.perf.driverVer}}',
                     performerVer: '{{environments.perf.performerVer}}',
                   },
@@ -57,6 +60,7 @@
                   performance: {
                     workload: '{{environments.perf.workloads.txnWrite}}',
                     variables: '{{environments.perf.pooledVariables}}',
+                    tunables: '{{environments.perf.tunables}}',
                     driverVer: '{{environments.perf.driverVer}}',
                     performerVer: '{{environments.perf.performerVer}}',
                   },

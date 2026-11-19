@@ -42,6 +42,7 @@ const environments: EnvironmentsFile = {
     docker: { "kv-memory": 28000 },
     pooledVariables: { forSeconds: 300, horizontalScaling: 20, poolSize: 10000 },
     insertVariables: { forSeconds: 300, horizontalScaling: 20, docNum: 10000000 },
+    tunables: ["concurrencyMechanism"],
     workloads: { kvGet: { operations: [] }, kvReplace: { operations: [] }, kvInsert: { operations: [] }, txnWrite: { operations: [] } },
   },
   capella: {

@@ -197,7 +197,12 @@
                       poolSize: 10000,
                       // Number of concurrent workload copies. Always sent; defaults to 1.
                       horizontalScaling: 1,
+                      // concurrencyMechanism: 'multiprocessing',
                     },
+                    // Variables also sent to the performer as SDK tunables. Each must name a
+                    // variable above, so uncomment both lines together. The Python performer
+                    // reads concurrencyMechanism only from here.
+                    // tunables: ["concurrencyMechanism"],
                     // Bump when a change makes older numbers incomparable. The perf presets
                     // take these from environments.json5 (`perf`); a definition file states
                     // them directly, as {{environments...}} placeholders only work in presets.

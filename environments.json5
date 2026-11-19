@@ -252,6 +252,10 @@
       docNum: 10000000,
     },
 
+    // Variables also sent to the performer as SDK tunables. The Python performer only picks
+    // its executor from the tunable, so without this it ignores concurrencyMechanism.
+    tunables: ["concurrencyMechanism"],
+
     // The standard workloads, each stored verbatim as part of its datapoint's identity: any
     // change here starts a new baseline. kvGet, kvReplace and txnWrite use pooledVariables;
     // kvInsert uses insertVariables.

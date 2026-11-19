@@ -653,6 +653,23 @@ function validatePerformanceVariables(value: unknown, path: string): Record<stri
   return out;
 }
 
+/** Each tunable must name a variable, since the variable supplies its value. */
+function validatePerformanceTunables(
+  value: unknown,
+  variables: Record<string, string | number | boolean> | undefined,
+  path: string,
+): string[] {
+  if (!Array.isArray(value)) {
+    throw new InvalidDefinitionError(`"${path}" must be a list of variable names; got ${JSON.stringify(value)}`);
+  }
+  for (const name of value) {
+    if (!isString(name) || variables === undefined || !Object.hasOwn(variables, name)) {
+      throw new InvalidDefinitionError(`"${path}" entry ${JSON.stringify(name)} must name a key in the run's variables`);
+    }
+  }
+  return [...new Set(value as string[])];
+}
+
 function validateOptionalInt(record: Record<string, unknown>, key: string, path: string): number | undefined {
   const value = record[key];
   if (value === undefined) return undefined;
@@ -702,15 +719,18 @@ function validatePerformanceGrpc(value: unknown, path: string): PerformanceGrpcS
 
 function validatePerformanceSection(value: unknown, path: string): PerformanceSection {
   const record = requireRecord(value, path);
-  rejectUnknown(record, ["workload", "variables", "driverVer", "performerVer", "grpc", "cluster"], path);
+  rejectUnknown(record, ["workload", "variables", "tunables", "driverVer", "performerVer", "grpc", "cluster"], path);
   if (record.workload === undefined) {
     throw new InvalidDefinitionError(`Missing required field: ${path}.workload`);
   }
   const driverVer = validateOptionalInt(record, "driverVer", path);
   const performerVer = validateOptionalInt(record, "performerVer", path);
+  const variables = record.variables !== undefined ? validatePerformanceVariables(record.variables, `${path}.variables`) : undefined;
+  const tunables = record.tunables !== undefined ? validatePerformanceTunables(record.tunables, variables, `${path}.tunables`) : undefined;
   return {
     workload: validatePerformanceWorkload(record.workload, `${path}.workload`),
-    ...(record.variables !== undefined ? { variables: validatePerformanceVariables(record.variables, `${path}.variables`) } : {}),
+    ...(variables !== undefined ? { variables } : {}),
+    ...(tunables !== undefined ? { tunables } : {}),
     ...(driverVer !== undefined ? { driverVer } : {}),
     ...(performerVer !== undefined ? { performerVer } : {}),
     ...(record.grpc !== undefined ? { grpc: validatePerformanceGrpc(record.grpc, `${path}.grpc`) } : {}),
