@@ -138,9 +138,8 @@ test("a CNG cluster uses a flat couchbase2 connectionString (no driver/performer
   // No classic driver or performer blocks.
   assert.equal(access.driver, undefined);
   assert.equal(access.performer, undefined);
-  // The FIT proxy doesn't support couchbase2 yet, and DNS SRV is off for CNG.
-  assert.equal(access.proxy, null);
-  // rest.hostname strips the :443 port; rest.port carries it explicitly.
+  assert.equal((access.proxy as Record<string, unknown>).hostname, "host.docker.internal");
+  // DNS SRV is off for CNG; rest.hostname strips the :443 port; rest.port carries it explicitly.
   assert.deepEqual(access.rest, { hostname: "ui-host", resolveDnsSrv: false, port: 443 });
   assert.equal(config["//"], AUTO_GENERATED_MARKER);
   assert.deepEqual(config.excludeTests, ["situational"]);
