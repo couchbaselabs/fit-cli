@@ -10,6 +10,7 @@ import YAML from "yaml";
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { runScriptPrefix } from "../../../util/non-fit/fit-cli-log.js";
 import { PORT_IN_USE_POLICIES, type PortInUsePolicy } from "../../performers/util/performer-port.js";
+import { PERFORMER_LOG_LEVELS, type PerformerLogLevel } from "../../performers/util/performer-log-level.js";
 import {
   CLUSTER_EXISTS_POLICIES,
   type ClusterExistsPolicy,
@@ -370,9 +371,20 @@ function isPortInUsePolicy(value: unknown): value is PortInUsePolicy {
   return isString(value) && (PORT_IN_USE_POLICIES as readonly string[]).includes(value);
 }
 
+function validatePerformerLogLevel(value: unknown, path: string): PerformerLogLevel {
+  const level = isString(value) ? value.toLowerCase() : undefined;
+  const match = PERFORMER_LOG_LEVELS.find((allowed) => allowed === level);
+  if (!match) {
+    throw new InvalidDefinitionError(
+      `"${path}" must be one of ${PERFORMER_LOG_LEVELS.join(", ")} when present; got ${JSON.stringify(value)}`,
+    );
+  }
+  return match;
+}
+
 function validatePerformer(value: unknown, path: string): PerformerSetup {
   const record = requireRecord(value, path);
-  rejectUnknown(record, ["image", "port", "onPortInUse", "sdk", "version"], path);
+  rejectUnknown(record, ["image", "port", "onPortInUse", "logLevel", "sdk", "version"], path);
   if (record.sdk !== undefined || record.version !== undefined) {
     throw new InvalidDefinitionError(
       `"${path}" no longer takes "sdk"/"version"; use a single "image" like java-fit-performer:main` +
@@ -395,6 +407,9 @@ function validatePerformer(value: unknown, path: string): PerformerSetup {
       );
     }
     performer.onPortInUse = record.onPortInUse;
+  }
+  if (record.logLevel !== undefined) {
+    performer.logLevel = validatePerformerLogLevel(record.logLevel, `${path}.logLevel`);
   }
   return performer;
 }

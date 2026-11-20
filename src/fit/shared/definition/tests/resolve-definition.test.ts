@@ -147,6 +147,18 @@ test("resolveSession applies performer defaults and strips redundant clusterAcce
   assert.deepEqual(resolved.runs[0]?.fitConfig, { config: { excludeTests: ["openshift"] } });
 });
 
+test("the performer logLevel reaches every execution run of its session", () => {
+  const def = definition();
+  const session = def.instances[0] && "clusters" in def.instances[0] ? def.instances[0].clusters[0]?.sessions[0] : undefined;
+  assert.ok(session);
+  session.performer.logLevel = "info";
+  const group = buildExecutionGroups(resolveDefinition(def).instances)[0];
+  assert.equal(group?.type, "functional");
+  if (group?.type !== "functional") return;
+  assert.equal(group.sessions[0]?.performerLogLevel, "info");
+  assert.equal(group.sessions[0]?.runs[0]?.performerLogLevel, "info");
+});
+
 test("resolveDefinition uses run-level fitConfig for useExisting clusters", () => {
   const resolved = resolveDefinition({
     version: 1,

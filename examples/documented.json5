@@ -74,6 +74,8 @@
                 //   restart - stop what's there and bring up a fresh performer (default).
                 //   reuse   - assume a performer is already running and test against it.
                 // onPortInUse: 'restart',
+                // The performer's LOG_LEVEL: trace, debug, info, warn or error (default debug).
+                // logLevel: 'debug',
               },
               runs: [
                 {
