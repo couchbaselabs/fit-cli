@@ -19,6 +19,8 @@
               performer: {
                 image: '{{PERFORMER_IMAGE}}',
                 onPortInUse: 'reuse',
+                // Debug SDK logging costs throughput, so perf runs log at info.
+                logLevel: 'info',
               },
               runs: [
                 // KV get.

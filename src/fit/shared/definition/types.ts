@@ -2,6 +2,7 @@
  * The shape of a `fit` YAML definition file.
  */
 import type { PortInUsePolicy } from "../../performers/util/performer-port.js";
+import type { PerformerLogLevel } from "../../performers/util/performer-log-level.js";
 import type { CapellaCloudProvider, CbdinoclusterDef } from "../../../cluster/cluster-create/build-cluster-def.js";
 import type { ClusterExistsPolicy } from "../../../cluster/cluster-create/cluster-exists-policy.js";
 import type { JsonValue, PieceData } from "../../../util/non-fit/config-pieces.js";
@@ -178,6 +179,8 @@ export interface PerformerSetup {
   image: string;
   port?: number;
   onPortInUse?: PortInUsePolicy;
+  /** The performer's `LOG_LEVEL`. Defaults to `debug`. */
+  logLevel?: PerformerLogLevel;
 }
 
 /** Named test presets that expand to a set of test classes. */
