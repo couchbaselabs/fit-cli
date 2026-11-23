@@ -29,6 +29,7 @@
                     variables: '{{environments.perf.pooledVariables}}',
                     driverVer: '{{environments.perf.driverVer}}',
                     performerVer: '{{environments.perf.performerVer}}',
+                    grpc: '{{environments.perf.grpc}}',
                   },
                 },
                 // KV replace.
@@ -39,6 +40,7 @@
                     variables: '{{environments.perf.pooledVariables}}',
                     driverVer: '{{environments.perf.driverVer}}',
                     performerVer: '{{environments.perf.performerVer}}',
+                    grpc: '{{environments.perf.grpc}}',
                   },
                 },
                 // KV insert.
@@ -49,6 +51,7 @@
                     variables: '{{environments.perf.insertVariables}}',
                     driverVer: '{{environments.perf.driverVer}}',
                     performerVer: '{{environments.perf.performerVer}}',
+                    grpc: '{{environments.perf.grpc}}',
                   },
                 },
                 // Transactions: replace + insert.
@@ -59,6 +62,7 @@
                     variables: '{{environments.perf.pooledVariables}}',
                     driverVer: '{{environments.perf.driverVer}}',
                     performerVer: '{{environments.perf.performerVer}}',
+                    grpc: '{{environments.perf.grpc}}',
                   },
                 },
               ],
