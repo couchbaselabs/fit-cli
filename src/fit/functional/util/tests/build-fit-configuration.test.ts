@@ -138,14 +138,26 @@ test("a CNG cluster uses a flat couchbase2 connectionString (no driver/performer
   // No classic driver or performer blocks.
   assert.equal(access.driver, undefined);
   assert.equal(access.performer, undefined);
-  // The FIT proxy doesn't support couchbase2 yet, and DNS SRV is off for CNG.
-  assert.equal(access.proxy, null);
-  // rest.hostname strips the :443 port; rest.port carries it explicitly.
+  assert.equal((access.proxy as Record<string, unknown>).hostname, "host.docker.internal");
+  // DNS SRV is off for CNG; rest.hostname strips the :443 port; rest.port carries it explicitly.
   assert.deepEqual(access.rest, { hostname: "ui-host", resolveDnsSrv: false, port: 443 });
   assert.equal(config["//"], AUTO_GENERATED_MARKER);
   assert.deepEqual(config.excludeTests, ["situational"]);
   // skipBucketCreation: the test-driver must not try to create buckets over classic.
   assert.equal(config.skipBucketCreation, true);
+});
+
+test("a CNG cluster behind the shared gateway gets verified TLS (tls: {})", () => {
+  const config = buildFitConfiguration({
+    scheme: "couchbases",
+    defaultHostname: "ui-host:443",
+    flavour: "self-managed",
+    credentials,
+    tls: { insecure: true },
+    cng: { performerConnectionString: "couchbase2://cng-host:443", tls: {} },
+  });
+  // The test-driver reads {} as TLS with the default trust store; null would mean no TLS.
+  assert.deepEqual((config.clusterAccess as Record<string, unknown>).tls, {});
 });
 
 test("a definition fitConfig piece can override defaults while runtime fields still win", () => {

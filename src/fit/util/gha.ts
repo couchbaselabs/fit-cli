@@ -16,6 +16,7 @@ import { printToStderrWithoutTimestamps } from "../../util/non-fit/fit-cli-log.j
 import { stripAnsi } from "../../util/non-fit/proc.js";
 import { parseJunitDataFromDir, renderJunitMarkdown } from "../shared/run-test-driver/junit-to-markdown.js";
 import { readSituationalResultsCsv, renderSituationalResultsMarkdown } from "../shared/run-test-driver/situational-results.js";
+import { renderPerfReportMarkdownTable, type PerfBundleReport } from "../performance/perf-report/perf-report.js";
 
 /**
  * GitHub discards the entire step summary — not just the excess — once the file passes
@@ -182,6 +183,8 @@ interface RunSummary {
   surefireDir?: string;
   /** Local path to the collected situational-results CSV; appended as a table below the JUnit one if present. */
   situationalResultsCsv?: string;
+  /** Performance runs only: one row per result bundle. These runs have no surefire report. */
+  perfReports?: readonly PerfBundleReport[];
 }
 
 /**
@@ -200,8 +203,10 @@ export function renderRunSummaryBlock(args: {
   junitMarkdown?: string;
   /** Pre-rendered via renderSituationalResultsMarkdown. */
   situationalMarkdown?: string;
+  /** Pre-rendered via renderPerfReportMarkdownTable. */
+  perfMarkdown?: string;
 }): string {
-  const { pathLabel, sdk, ok, summary, junitMarkdown, situationalMarkdown } = args;
+  const { pathLabel, sdk, ok, summary, junitMarkdown, situationalMarkdown, perfMarkdown } = args;
   const status =
     ok || !summary
       ? ok
@@ -227,7 +232,7 @@ export function renderRunSummaryBlock(args: {
   // Situational-only: the authoritative pass/fail signal for these scenarios comes from
   // the performer's scoring, not JUnit assertions, so this table is the more meaningful
   // one — appended below the JUnit table, matching fit-app-deployment's ordering.
-  for (const markdown of [junitMarkdown, situationalMarkdown]) {
+  for (const markdown of [junitMarkdown, situationalMarkdown, perfMarkdown]) {
     if (!markdown) continue;
     lines.push(markdown.trimEnd());
     lines.push("");
@@ -251,7 +256,7 @@ export function appendRunSummaryToGhaSummary(result: RunSummary, budgetBytes: nu
     return;
   }
 
-  const { pathLabel, sdk, ok, summary, surefireDir, situationalResultsCsv } = result;
+  const { pathLabel, sdk, ok, summary, surefireDir, situationalResultsCsv, perfReports } = result;
   const sizeBefore = summaryFileSize();
 
   // Parsed once, rendered twice — with failure detail sized to the budget still unspent,
@@ -276,12 +281,14 @@ export function appendRunSummaryToGhaSummary(result: RunSummary, budgetBytes: nu
     }
   }
 
+  const perfMarkdown = perfReports && perfReports.length > 0 ? renderPerfReportMarkdownTable(perfReports) : undefined;
+
   // The JUnit markdown is embedded in a block that also carries the <details> wrapper, the
   // Metric/Value table and any situational table. Measure those and hand the renderer only
   // what is genuinely left, or it sizes its elision windows to the whole remaining budget
   // and the finished block overshoots — which the ladder then rejects wholesale, costing
   // all the detail we were trying to preserve.
-  const wrapperBytes = Buffer.byteLength(renderRunSummaryBlock({ pathLabel, sdk, ok, summary, situationalMarkdown }), "utf8");
+  const wrapperBytes = Buffer.byteLength(renderRunSummaryBlock({ pathLabel, sdk, ok, summary, situationalMarkdown, perfMarkdown }), "utf8");
   const junitBudget = Math.max(0, remainingForThisRun - wrapperBytes);
 
   let junitFull: string | undefined;
@@ -300,8 +307,8 @@ export function appendRunSummaryToGhaSummary(result: RunSummary, budgetBytes: nu
   // because with no JUnit or situational data these collapse onto each other, and an
   // identical candidate shouldn't be reported as a distinct form we gave up.
   const candidates = [
-    renderRunSummaryBlock({ pathLabel, sdk, ok, summary, junitMarkdown: junitFull, situationalMarkdown }),
-    renderRunSummaryBlock({ pathLabel, sdk, ok, summary, junitMarkdown: junitLean, situationalMarkdown }),
+    renderRunSummaryBlock({ pathLabel, sdk, ok, summary, junitMarkdown: junitFull, situationalMarkdown, perfMarkdown }),
+    renderRunSummaryBlock({ pathLabel, sdk, ok, summary, junitMarkdown: junitLean, situationalMarkdown, perfMarkdown }),
     renderRunSummaryBlock({ pathLabel, sdk, ok, summary }),
     renderRunSummaryBlock({ pathLabel, sdk, ok }),
   ].filter((block, i, all) => all.indexOf(block) === i);

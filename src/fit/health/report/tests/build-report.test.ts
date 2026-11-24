@@ -7,7 +7,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { RUN_RECORD_SCHEMA, addOutcome, type RunRecord } from "../../record/run-record.js";
-import { buildHealthReport, presetWhere, RECENT_DAYS, reportFindings } from "../build-report.js";
+import type { RunManifest } from "../../record/run-manifest.js";
+import { ACTIVE_RUNS, buildHealthReport, presetShort, presetWhere, RECENT_DAYS, reportFindings } from "../build-report.js";
 import { startedTests, stoppedRunningTests, stoppedTests } from "../digest.js";
 import { buildSeries, testHistories } from "../series.js";
 
@@ -131,9 +132,34 @@ test("a series that last ran before the window is not active", () => {
   assert.equal(report.series.find((s) => s.preset === "qe-set")!.active, false);
 });
 
+test("a series counts while it was tried in one of the SDK's last ACTIVE_RUNS nightly runs", () => {
+  const cng = (d: string, over: Partial<RunRecord> = {}) => rec(d, { preset: "op-cng-func-lite", ...over });
+  const activeOn = (rs: RunRecord[], end: string, manifests: RunManifest[] = []) =>
+    buildHealthReport("dotnet", rs, manifests, { end }).series.find((s) => s.preset === "op-cng-func-lite")!.active;
+  // CNG dropped out of the nightly after the 10th; on-prem ran on.
+  const dropped = [...days(1, 20).map((d) => rec(d)), ...days(1, 10).map((d) => cng(d))];
+  assert.equal(ACTIVE_RUNS, 3);
+  assert.equal(activeOn(dropped, "2026-09-12"), true, "missing from 2 runs: still counted, and so not clean");
+  assert.equal(activeOn(dropped, "2026-09-13"), false, "missing from 3 runs: no longer counted");
+  // Runs, not days: an SDK whose nightly stopped retires nothing.
+  assert.equal(activeOn(days(1, 10).flatMap((d) => [rec(d), cng(d)]), "2026-09-25"), true);
+  // An abort is a try: a preset that aborts every night is broken, and still counts.
+  const aborting = [...days(1, 20).map((d) => rec(d)), ...days(1, 5).map((d) => cng(d)), ...days(6, 20).map((d) => cng(d, { outcome: "aborted", counts: undefined }))];
+  assert.equal(activeOn(aborting, "2026-09-20"), true);
+  // A run whose every preset fit-cli skipped has no record, but its log was read: it is a run.
+  const skippedAll = (d: string): RunManifest => ({ schema: 1, sdk: "dotnet", runId: 900, runAttempt: 1, date: d, ci: { repo: "r", runId: 900, runAttempt: 1 }, status: "ok", records: [] });
+  const allSkipped = [...days(1, 10).flatMap((d) => [rec(d), cng(d)])];
+  assert.equal(activeOn(allSkipped, "2026-09-13", days(11, 13).map(skippedAll)), false);
+  // An unreadable log can't say what was tried, so it is not a run.
+  assert.equal(activeOn(allSkipped, "2026-09-13", days(11, 13).map((d) => ({ ...skippedAll(d), status: "parse_error" as const }))), true);
+});
+
 test("labels say where a preset runs", () => {
   assert.equal(presetWhere("op-capella-pe-sit-lite", {}), "Capella · private endpoint");
   assert.equal(presetWhere("op-capella-sit-lite", {}), "Capella · public endpoint");
+  assert.equal(presetShort("op-capella-pe-sit-lite", {}), "Capella PE");
+  assert.equal(presetShort("op-capella-sit-lite", {}), "Capella");
+  assert.equal(presetShort("op-cng-func-lite", {}), "CNG");
   assert.equal(presetWhere("op-cng-func-lite", {}), "CNG");
   assert.equal(presetWhere("op-onprem-func-lite", {}), "on-prem");
   assert.equal(presetWhere("qe-set", {}), "qe-set preset");

@@ -4,12 +4,15 @@ This is a CLI tool to help make FIT easier to use.  It lets you:
 * Run a definition file locally.
 * Run a definition file on a clean AWS EC2 instance you can SSH onto.  This is the exactly same command CI will ultimately execute, so you can reproduce (and debug!) CI locally.
 * See which FIT tests each SDK fails, night by night (`fit health`; see [FIT health](#fit-health)).
+* Performance testing.
+* CNG testing.
+* Analytics testing.
+
 
 Currently not supported (but we want to get working):
-
-* CNG testing.
-* Performance testing.
-* Analytics testing.
+* GCP support.  (It's close)
+* Azure support.
+* PE for some cluster variants (like Operational Insights).
 
 Everything else is expected to work, bugs excepted.
 
@@ -81,18 +84,8 @@ The AWS region and VPC are fixed (region `us-west-2`, VPC `fit-cli-vpc`, managed
 * Simplifies and derisks where to look for user's instances for cleanup.
 * It means we always have a VPC and avoid hitting VPCIdNotSpecified if the user specifies a region that does not have a default one.
 
-### Resuming
-The output will guide you through how to resume where a failure happened, something like:
-
-```
-fit run definition --resume-at=after-cluster-creation examples/test.yaml
-```
-
-This can save valuable time when iterating a definition file.  It will try its best to resume, including checking that preceding steps such as cluster creation are resumable from.
-
-But note that this is somewhat temperamental and experimental.  You may hit issues and patches are welcome.
-
-You can also get very far by just rerunning the full definition file and using the performer onPortInUse and cluster useExisting settings to reuse existing resources.
+### Iterating quickly
+Standing up an instance, cluster and performer is slow.  To avoid redoing it every iteration, answer yes to "Leave everything up" at the end of an interactive run, then rerun the definition file with the performer `onPortInUse` and cluster `useExisting` settings to reuse those resources (or choose "an existing AWS EC2 instance" when asked where to run).
 
 ## Running a single step or flow
 
@@ -111,11 +104,12 @@ User-facing (using the installed binary):
 - `fit help` — show help.
 - `fit wizard` — run the interactive wizard.
 - `fit run preset <preset>` — generate a preset definition file and run it.
-- `fit run definition <file>` — run an existing definition file (see Resuming for the resume flags).
+- `fit run definition <file>` — run an existing definition file.
 - `fit definition validate | generate-desc` — author or inspect a definition file.
 - `fit preset list | expand | generate` — list, expand or generate presets.
+- `fit config environments` prints environments.json5 as JSON on stdout and nothing else, for scripts and CI to read with `jq`. It holds no secrets.
 - `fit cloud-instances list | manage | delete | remove-all` — manage the EC2 instances fit-cli launched.
-- `fit capella-clusters list | cleanup` sweeps the Capella clusters and projects that failed runs left behind. `cleanup` removes the expired clusters in the environment's fit-cli project, and the expired legacy `cbdc2_` projects anywhere in the organization with their clusters. An expiry means the owner is done with it. Live clusters are never touched. Clusters Capella failed to destroy are left and flagged. `cleanup --dry-run` reports what would go without deleting it.
+- `fit capella-clusters list | cleanup` sweeps the Capella clusters and projects that failed runs left behind. `cleanup` removes the expired clusters that fit-cli runs created in the environment's fit-cli project, and the expired legacy `cbdc2_` projects that fit-cli runs created, with their clusters. Nothing that other teams made is touched. Live clusters are never touched. Clusters Capella failed to destroy are left and flagged. `cleanup --dry-run` reports what would go without deleting it.
 - `fit performer build <family> <ref>` — dispatch a performer image build on GitHub Actions (e.g. `fit performer build jvm refs/changes/01/248901/3`), wait for it, and print the resulting image names.
 - `fit performer list [<sdk>]` — list the prebuilt performer container images published to GHCR for an SDK (e.g. `fit performer list scala`), or for every SDK if none is given.
 - `fit performer run <sdk> [version]` — pull and start a single prebuilt performer image, for manual testing outside a full FIT run (e.g. `fit performer run scala`). Leaves it running; stop it yourself when done.
@@ -124,7 +118,7 @@ User-facing (using the installed binary):
 - `fit caps table | sync` — show which FIT capabilities each SDK's performer reports (see Capabilities).
 - `fit health report | backfill | check | reparse | import-logs | notes | settings <sdk>` — which FIT tests an opted-in SDK fails consistently or intermittently, and what started or stopped failing, from its nightly runs; `notes` and `settings` show or set its hand-written notes and where its output goes (see `specs/health.md`).
 - `fit health site` — build the health Pages site from one run's reports: how the other SDKs fare on each failing test, each SDK's page, and the top page (each SDK's last 30 nights, one chart each). `fit health opt-ins` lists the opted-in SDKs.
-- `fit ingest situational` drains the situational results uploaded to `s3://fit-cli/incoming/` into the perf Postgres database, moving each run to `processed/` or `failed/`. A run is only taken once it holds a `.done` marker, which the uploader writes as the last object of the run, so a half-uploaded run is never read. Meant for the cron on the database host, which connects as the `results_ingester` role and reads its password from the AWS Secrets Manager secret `performance-sdk/results-ingester` using its own IAM role (see `--help`).
+- `fit ingest situational` drains the situational and performance results uploaded to `s3://fit-cli/incoming/` into the perf Postgres database, moving each run to `processed/` or `failed/`. A run is only taken once it holds a `.done` marker, which the uploader writes as the last object of the run, so a half-uploaded run is never read. Meant for the cron on the database host, which connects as the `results_ingester` role and reads its password from the AWS Secrets Manager secret `performance-sdk/results-ingester` using its own IAM role (see `--help`).
 - `fit external-services otel start | stop` — start or stop the local otel stack (an OTel collector, Jaeger and Prometheus) for manual testing. A functional `fit run` already does this automatically.
 - `fit external-services otel replay <dump-dir>` — bring the Jaeger and Prometheus UIs back up over a finished run's traces and metrics.
 
@@ -134,7 +128,7 @@ For development (from source with Bun):
 - `bun run test` — run the unit tests.  Note - these always need to be kept instant - business logic only.  If it's slow, just don't test it.
 
 ## Capella
-When running locally, we use Capella creds from your fit-cli config.  Generally you just need to provide your email address.  We default to using Capella's production environment.
+When running locally, we use Capella creds from your fit-cli config.  Generally you just need to provide your email address.  We default to the Capella environment set by `defaults.defaultCapellaEnvironment` in environments.json5 (dev).
 When running on CI, the user chooses what Capella environment to use (stage, dev, etc.) and we use previously-setup accounts for those. 
 cbdinocluster's cloud deployer authenticates with a Capella v4 organization API key.  By default the shared per-environment key is read from AWS Secrets Manager; override it with CAPELLA_API_KEY / CAPELLA_API_SECRET (or `config edit`).  The v2 username/password are still used for custom image deploys, server version changes, and columnar operations.
 

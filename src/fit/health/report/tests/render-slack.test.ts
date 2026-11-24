@@ -67,6 +67,68 @@ test("a quiet fortnight says so rather than posting an empty thread", () => {
   assert.doesNotMatch(d.headline, /Full report/);
 });
 
+test("the Capella vs Capella PE comparison stays on the page, so a quiet night still says so", () => {
+  const capella = { preset: "op-capella-sit-lite", kind: "situational" as const, cluster: "Capella:8.0", params: {} };
+  const capellaPe = { preset: "op-capella-pe-sit-lite", kind: "situational" as const, cluster: "Capella:8.0", params: { privateEndpoint: true } };
+  const rs = days(28).flatMap((d) => [rec(d), rec(d, [], capella), rec(d, [], capellaPe)]);
+  const report = buildHealthReport("dotnet", rs, [], { end: "2026-09-28" });
+  assert.equal(report.comparisons.length, 1);
+  const d = renderSlackDigest(report, ".NET");
+  assert.equal(d.thread, "_Nothing started or stopped failing in the last 14 days._");
+});
+
+test("a thread that starts with a later section has no blank first line", () => {
+  // Failed 10-14 Sep, then not in the results: the thread is only "Stopped running".
+  const rs = days(28).map((d, i) => rec(d, i >= 9 && i < 14 ? ["A.b"] : []));
+  const d = renderSlackDigest(buildHealthReport("dotnet", rs, [], { end: "2026-09-28" }), ".NET");
+  assert.match(d.thread, /^\*Stopped running \(last 14 days\)\*\n• `A\.b` — not run since 15 Sep, on-prem$/);
+});
+
+test("a clean night says so, with what passed where", () => {
+  const rs = days(28).map((d) => {
+    const r = rec(d);
+    for (const t of ["A.one", "A.two", "A.three"]) addOutcome(r.tests, t, "p");
+    addOutcome(r.tests, "A.skip", "s");
+    return r;
+  });
+  const d = renderSlackDigest(buildHealthReport("dotnet", rs, [], { end: "2026-09-28" }), ".NET");
+  assert.match(d.headline, /• ✓ Last night was clean: all \*3\* passed · 1 skipped \(on-prem 3\)/);
+  assert.doesNotMatch(d.headline, /Failed last night|full results/);
+});
+
+test("0 failed isn't clean while a counted preset gave no full results, and the post says which", () => {
+  const capellaPe = { preset: "op-capella-pe-sit-lite", kind: "situational" as const, cluster: "Capella:8.0", params: { privateEndpoint: true } };
+  const cng = { preset: "op-cng-func-lite" };
+  const rs = days(28).flatMap((d) => [
+    rec(d),
+    // Capella PE ran every night but the last; CNG left only its CI log last night.
+    ...(d === "2026-09-28" ? [] : [rec(d, [], capellaPe)]),
+    rec(d, [], d === "2026-09-28" ? { ...cng, source: "run-log-scrape", passesKnown: false } : cng),
+  ]);
+  const d = renderSlackDigest(buildHealthReport("dotnet", rs, [], { end: "2026-09-28" }), ".NET");
+  // A CI log names failures only, so its 0 is a minimum.
+  assert.match(d.headline, /Failed last night: \*at least 0\*/);
+  assert.match(d.headline, /• Not clean: no full results last night from CNG \(CI log only\) · Capella PE \(no results\)\n/);
+  assert.doesNotMatch(d.headline, /was clean/);
+  // With a failure, the night isn't clean anyway: the missing preset is still named.
+  const failing = [...rs.filter((r) => r.date !== "2026-09-28" || r.preset !== "op-onprem-func-lite"), rec("2026-09-28", ["A.b"])];
+  const f = renderSlackDigest(buildHealthReport("dotnet", failing, [], { end: "2026-09-28" }), ".NET");
+  assert.match(f.headline, /• No full results last night from .*Capella PE \(no results\)/);
+});
+
+test("a night with no usable results is stated, not left out", () => {
+  const rs = [...days(27).map((d) => rec(d)), rec("2026-09-28", [], { outcome: "aborted", counts: undefined, abortedAt: "FatalToCluster" })];
+  const d = renderSlackDigest(buildHealthReport("dotnet", rs, [], { end: "2026-09-28" }), ".NET");
+  assert.match(d.headline, /• Last night: no usable results/);
+  assert.doesNotMatch(d.headline, /Failed last night|was clean/);
+});
+
+test("a series that stopped counting is said in the headline", () => {
+  const rs = [...days(28).map((d) => rec(d)), ...days(20).map((d) => rec(d, [], { preset: "op-cng-func-lite" }))];
+  const d = renderSlackDigest(buildHealthReport("dotnet", rs, [], { end: "2026-09-28" }), ".NET");
+  assert.match(d.headline, /• Stopped counting, not tried in the last 3 nightly runs: CNG \(last 20 Sep\)/);
+});
+
 test("long lists are cut short, and Slack's control characters are escaped", () => {
   const many = Array.from({ length: 20 }, (_, i) => `C${i}.t`);
   const rs = days(28).map((d, i) => rec(d, i >= 25 ? many : []));

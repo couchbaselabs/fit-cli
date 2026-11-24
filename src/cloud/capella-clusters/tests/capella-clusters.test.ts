@@ -7,8 +7,10 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { allocatePurpose } from "../../../cluster/cluster-create/allocate-purpose.js";
 import type { ResolvedCapellaConfig } from "../../../fit/util/config.js";
 import {
+  CLEANUP_PURPOSE,
   CLEANUP_TIMEOUT,
   capellaInitEnv,
   cleanupArgs,
@@ -93,13 +95,17 @@ test("destroyFailedAnnotation reports a missing purpose as none", () => {
   assert.equal(line, "::warning title=Capella destroyFailed needs a human::stuck purpose none in dev organization");
 });
 
-test("cleanupArgs bounds a real cleanup by the timeout", () => {
-  assert.deepEqual(cleanupArgs(false), ["cleanup", "cloud", "--timeout", CLEANUP_TIMEOUT]);
-  assert.equal(CLEANUP_TIMEOUT, "90m");
+test("cleanupArgs limits a real cleanup to fit-cli's clusters and bounds it by the timeout", () => {
+  assert.deepEqual(cleanupArgs(false), ["cleanup", "cloud", "--purpose", "fitcli", "--timeout", CLEANUP_TIMEOUT]);
+  assert.equal(CLEANUP_TIMEOUT, "30m");
 });
 
-test("cleanupArgs asks cbdinocluster for a dry run with no timeout", () => {
-  assert.deepEqual(cleanupArgs(true), ["cleanup", "cloud", "--dry-run"]);
+test("cleanupArgs limits a dry run to fit-cli's clusters, with no timeout", () => {
+  assert.deepEqual(cleanupArgs(true), ["cleanup", "cloud", "--purpose", "fitcli", "--dry-run"]);
+});
+
+test("every fit-cli stamp falls under the cleanup purpose", () => {
+  assert.ok(allocatePurpose().startsWith(`${CLEANUP_PURPOSE}-`));
 });
 
 test("formatClustersTable shows the purpose and marks the expired clusters", () => {

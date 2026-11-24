@@ -9,6 +9,7 @@
  */
 import type { ChangeAnalysis, DriverChanges, SdkChanges } from "./changes.js";
 import type { CrossSdk } from "./cross.js";
+import { isCountedOn } from "./clean.js";
 import { buildDigest, type Digest } from "./digest.js";
 import { sdkCommitOf, type RunManifest } from "../record/run-manifest.js";
 import type { RunRecord } from "../record/run-record.js";
@@ -32,6 +33,13 @@ import { SDKS } from "../../../util/sdk/sdks.js";
 
 /** The "what changed" lists cover the last two weeks. */
 export const RECENT_DAYS = 14;
+/**
+ * A series counts while it was tried (results, or an abort) in one of the SDK's last this-many
+ * nightly runs. Runs, not days: an SDK whose nightly didn't run retires nothing, and one that
+ * runs weekly isn't judged by the calendar. A preset dropped from the nightly, or one fit-cli
+ * skips every night, stops counting after this many runs.
+ */
+export const ACTIVE_RUNS = 3;
 /** How far back a report looks, in calendar days ending at its end date. The store keeps everything. */
 export const HISTORY_DAYS = 90;
 
@@ -147,6 +155,7 @@ export function nightTests(record: RunRecord): NightTests {
 export interface ReportSeries {
   id: string;
   label: string;
+  /** For a count's split: "on-prem", "CNG", "Capella", "Capella PE" (presetShort). */
   short: string;
   preset: string;
   kind: RunRecord["kind"];
@@ -172,8 +181,16 @@ export interface ReportSeries {
   tests: ReportTest[];
   /** Tests that stopped running more than RECENT_DAYS days ago: left out of `tests` altogether. */
   stoppedRunningEarlier: number;
-  /** False when the series last ran before the window: shown, but kept out of the headline. */
+  /**
+   * False when the series wasn't tried (results or an abort) in any of the SDK's last ACTIVE_RUNS
+   * nightly runs, or not in the window at all: shown, but kept out of the headline.
+   */
   active: boolean;
+  /**
+   * For a series that stopped counting: the last night it was tried. It still counts on the
+   * nights up to then (clean.ts isCountedOn) - it was in the nightly - so its history stays.
+   */
+  countedUntil?: string;
 }
 
 export interface ParamComparison {
@@ -196,13 +213,15 @@ export interface HealthReport {
   start: string;
   end: string;
   dates: string[];
-  /** Nights with no functional results at all (every functional run aborted or missing). */
+  /** Nights with no results at all from the counted series (clean.ts): every run aborted or missing. */
   blackout: string[];
   /**
    * `windowDays`: the days a test is classified over. `recentDays`: how far back "started" and
    * "stopped failing" (and "stopped running") look.
    */
   classes: { order: readonly TestClass[]; labels: Record<TestClass, string>; blurbs: Record<TestClass, string>; windowDays: number; recentDays: number };
+  /** A series counts while the SDK's last this-many nightly runs tried it (ACTIVE_RUNS). */
+  activeRuns: number;
   /** Every SDK's display name by its value ("dotnet" -> ".NET"), for naming other SDKs. */
   sdkNames: Record<string, string>;
   series: ReportSeries[];
@@ -230,6 +249,15 @@ export function presetWhere(preset: string, params: Record<string, unknown>): st
   return `${preset} preset`;
 }
 
+/**
+ * Where a preset runs, in the few characters a count's split has ("0 on-prem · 1 Capella PE"):
+ * the Capella presets are "Capella" and "Capella PE". Labels and headings keep presetWhere.
+ */
+export function presetShort(preset: string, params: Record<string, unknown>): string {
+  const where = presetWhere(preset, params);
+  return where === "Capella · private endpoint" ? "Capella PE" : where === "Capella · public endpoint" ? "Capella" : where;
+}
+
 type Manifests = ReadonlyMap<string, RunManifest>;
 
 function reportRun(ci: RunRecord["ci"], repo: string | undefined): ReportRun {
@@ -254,7 +282,7 @@ function reportNight(r: RunRecord, manifest: RunManifest | undefined, repo: stri
   };
 }
 
-function reportSeries(s: Series, end: string, notes: ReportNotes, manifests: Manifests, repo: string | undefined): ReportSeries {
+function reportSeries(s: Series, end: string, notes: ReportNotes, manifests: Manifests, repo: string | undefined, recentRuns: ReadonlySet<string>): ReportSeries {
   const histories = testHistories(s);
   const degraded = new Set(s.degraded);
   const tests: ReportTest[] = [];
@@ -318,11 +346,13 @@ function reportSeries(s: Series, end: string, notes: ReportNotes, manifests: Man
   const where = presetWhere(s.preset, s.params);
   const kind = s.kind === "functional" ? "Functional" : "Situational";
   const multiCluster = s.id.split("|").length > 2;
-  const lastRan = s.ran.at(-1) ?? s.aborted.at(-1)?.date;
+  const tried = [...s.ran, ...s.aborted.map((a) => a.date)].sort();
+  const lastTried = tried.at(-1);
+  const active = !!lastTried && daysBetween(lastTried, end) < WINDOW_DAYS && tried.some((d) => recentRuns.has(d));
   return {
     id: s.id,
     label: `${kind} · ${where}${s.variant ? ` · ${s.variant}` : ""}${multiCluster && clusters[0] ? ` (${clusters[0].cluster})` : ""}`,
-    short: where,
+    short: presetShort(s.preset, s.params),
     preset: s.preset,
     kind: s.kind,
     params: s.params,
@@ -338,7 +368,8 @@ function reportSeries(s: Series, end: string, notes: ReportNotes, manifests: Man
     counts,
     tests,
     stoppedRunningEarlier,
-    active: !!lastRan && daysBetween(lastRan, end) < WINDOW_DAYS,
+    active,
+    ...(!active && lastTried ? { countedUntil: lastTried } : {}),
   };
 }
 
@@ -419,13 +450,19 @@ export function buildHealthReport(
   };
   const manifestOf: Manifests = new Map(manifests.map((m) => [`${m.runId}-${m.runAttempt}`, m]));
   const repo = inRange.at(-1)?.ci.repo;
+  // The SDK's last ACTIVE_RUNS nightly runs: nights with a record, or with a log that was read
+  // (a night fit-cli skipped every preset of has no record). An unreadable log isn't counted: it
+  // can't say what was tried.
+  const runNights = [...new Set([...records.map((r) => r.date), ...manifests.filter((m) => m.status === "ok").map((m) => m.date)])]
+    .filter((d) => d <= end)
+    .sort();
+  const recentRuns = new Set(runNights.slice(-ACTIVE_RUNS));
   const series = built
-    .map((s) => reportSeries(s, end, notes, manifestOf, repo))
+    .map((s) => reportSeries(s, end, notes, manifestOf, repo, recentRuns))
     .sort((a, b) => rank(a) - rank(b) || a.id.localeCompare(b.id));
-  const functional = series.filter((s) => s.kind === "functional");
-  // No usable functional results from any preset: none ran, or every one that did was
-  // degraded or truncated that night (perNight is null for those).
-  const blackout = dates.filter((d) => !functional.some((s) => d in s.perNight && s.perNight[d] !== null));
+  // No usable results from any preset counted that night (clean.ts): none ran, or every one that
+  // did was degraded or truncated (perNight is null for those).
+  const blackout = dates.filter((d) => !series.some((s) => isCountedOn(s, d) && d in s.perNight && s.perNight[d] !== null));
 
   const report: Omit<HealthReport, "digest"> = {
     sdk,
@@ -436,6 +473,7 @@ export function buildHealthReport(
     dates,
     blackout,
     classes: { order: CLASS_ORDER, labels: CLASS_LABELS, blurbs: CLASS_BLURBS, windowDays: WINDOW_DAYS, recentDays: RECENT_DAYS },
+    activeRuns: ACTIVE_RUNS,
     sdkNames: Object.fromEntries(SDKS.map((s) => [s.value, s.name])),
     series,
     comparisons: paramComparisons(series, historyOf),

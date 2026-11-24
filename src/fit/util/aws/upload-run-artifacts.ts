@@ -33,6 +33,14 @@ export function artifactUploadEnabled(env: NodeJS.ProcessEnv = process.env): boo
 }
 
 /**
+ * Where {@link maybeUploadRunArtifacts} puts `runDir`'s zip. Known before the zip exists,
+ * so a run's result files can link to its archive while the run is still going.
+ */
+export function runArtifactsZipKey(runDir: string): string {
+  return `s3://${ARTIFACTS_BUCKET}/${ARTIFACTS_PREFIX}/${basename(runDir)}.zip`;
+}
+
+/**
  * Zip `runDir` and upload it to s3://fit-cli/runs/<dirName>.zip. Returns the
  * destination URI on success, or null when skipped (disabled / dir missing) or
  * failed — it never throws, so it's safe to call from a teardown/finally path.
@@ -45,9 +53,8 @@ export async function maybeUploadRunArtifacts(runDir: string, env: NodeJS.Proces
     return null;
   }
   const s3Base = `s3://${ARTIFACTS_BUCKET}/${ARTIFACTS_PREFIX}/`;
-  const dirName = basename(runDir);
   const zipPath = `${runDir}.zip`;
-  const zipKey = `${s3Base}${dirName}.zip`;
+  const zipKey = runArtifactsZipKey(runDir);
   try {
     fitCliInfo(`${runScriptPrefix("archive")} s3-upload --zip ${runDir} ${s3Base}`);
     await zipDirectory(runDir, zipPath);

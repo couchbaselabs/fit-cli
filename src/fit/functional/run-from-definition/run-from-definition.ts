@@ -2,7 +2,7 @@
  * Workflow: run FIT tests from a `fit` definition file. The cluster, SDK and
  * test selection all come from the file; the only prompts are where to execute
  * the run (local or a clean EC2 instance) and, at the end, whether to leave
- * everything up for debugging and resuming.
+ * everything up for debugging.
  *
  * Runs come in two flavours. `functional` runs test against the shared cluster
  * set up once for the execution group. `situational` runs (FIT/SIT) let
@@ -14,21 +14,16 @@
  * The cluster is shared across the whole execution group; each run stands up its own
  * performer and runs its own tests. Provisioning an instance, preparing its
  * workspace, standing up a cluster and building a performer are all slow, so a
- * run can leave them up and a later invocation can `--resume-at` a point to
- * reuse everything up to it instead of redoing the work:
- *   bun run run definition <file.yaml>                                          # everything
- *   bun run run definition --resume-at=after-instance-creation <file>  # reuse instance
- *   bun run run definition --resume-at=after-remote-preparation <file>  # reuse prepared box
- *   bun run run definition --resume-at=after-cluster-creation <file>    # reuse cluster
- *   bun run run definition --resume-at=after-performer <file>           # reuse cluster + performer
+ * run can leave them up; a later run can then reuse them via the performer's
+ * `onPortInUse: reuse` and the cluster's `useExisting` settings.
+ *   bun run run definition <file.yaml>
  *
  * Run on its own:
  *   bun src/fit/functional/run-from-definition/run-from-definition.ts <file.yaml>
  *
  * Existing-cluster modes (`setup.cluster.connection` and
  * `setup.cluster.useExisting`) are resolved directly from the file; a
- * cbdinocluster plan is allocated during the cluster phase and recorded in the
- * run state so `--resume-at` can pick it back up.
+ * cbdinocluster plan is allocated during the cluster phase.
  */
 import { randomUUID } from "node:crypto";
 import { copyFileSync, cpSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -43,8 +38,10 @@ import {
   type RunOutput,
 } from "../../../util/non-fit/artifacts.js";
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
-import { clearLogContext, runDefinitionPrefix, fitCliError, fitCliWarn, popLogContext, printWithoutTimestamps, runScriptPrefix, setLogContext } from "../../../util/non-fit/fit-cli-log.js";
-import { createLogFile, run as runLocalCommand } from "../../../util/non-fit/proc.js";
+import { activeRepoDirOverrideNames } from "../../util/repo-dir-overrides.js";
+import { checkLocalCapellaEndpointReachable } from "../util/check-local-capella-control-plane.js";
+import { clearLogContext, fitCliError, fitCliWarn, popLogContext, runScriptPrefix, setLogContext } from "../../../util/non-fit/fit-cli-log.js";
+import { run as runLocalCommand } from "../../../util/non-fit/proc.js";
 import {
   defaultsToNonInteractive,
   ensureRunDir,
@@ -70,6 +67,7 @@ import {
   localClusterCommandExecutor,
   type ClusterCommandExecutor,
 } from "../../../cluster/cluster-create/allocate-cluster.js";
+import type { SelectedCluster } from "../../../cluster/cluster-select/cluster-select.js";
 import { runClusterDiag } from "../../../cluster/cluster-diag/cluster-diag.js";
 import { printClusterUiAccess } from "../../../cluster/cluster-diag/cluster-ui-link.js";
 import { prepareCbdinoclusterInit, remoteCbdinoclusterCloudEnabled, removeCapellaApiKeyPool, removeCluster, removeRunCapellaClusters, setupDeclarativeCluster } from "../../../cluster/cluster-create/setup-declarative-cluster.js";
@@ -92,7 +90,6 @@ import {
 } from "../../../cluster/cluster-create/cng-openshift.js";
 import {
   checkBuildAndRunPerformer,
-  performerLogStem,
   stopManagedPerformer,
   type RunningPerformer,
 } from "../../performers/check-build-and-run-performer/check-build-and-run-performer.js";
@@ -101,11 +98,13 @@ import { generateFitConfiguration } from "../../shared/fit-configuration/generat
 import { resourceCreationPiece, type ClusterCreatingConfig } from "../util/build-fit-configuration.js";
 import { shouldSkipCngGroup, shouldSkipCngRun } from "../util/cng-skip.js";
 import { EXTERNAL_SERVICES } from "../../external-services/registered-external-services.js";
+import { otelCollectorOtlpGrpc } from "../../external-services/otel/otel-external-service.js";
 import { externalServicesConfigPiece, findExternalService, stopExternalServices, type ExternalService, type ExternalServiceHandle } from "../../external-services/external-service.js";
 import { generateSituationalConfiguration } from "../../situational/configuration/generate-situational-configuration.js";
 import { RESULTS_BUCKET, uploadSituationalResults } from "../../situational/upload-results/upload-results.js";
 import { parseScoresJson5 } from "../../ingest/parse.js";
-import { artifactUploadEnabled } from "../../util/aws/upload-run-artifacts.js";
+import { addDebugLinksToResults, environmentDebugLinkContext, type DebugLinkContext } from "../../shared/results/results-debug-links.js";
+import { resultsUploadSkipReason } from "../../shared/results/results-upload-policy.js";
 import { DEFAULT_CBDINO_SETTINGS, SITUATIONAL_RESULTS_DIR_NAME, SITUATIONAL_SERVER_LOGS_DEST_PATH, type CbdinoSettings } from "../../situational/configuration/build-situational-configuration.js";
 import { loadEnvironments } from "../../util/environments.js";
 import {
@@ -113,6 +112,7 @@ import {
   uploadRemoteCapellaConfig,
   type FitExecutionContext,
 } from "../../shared/util/remote-fit-run.js";
+import { prebuildRemoteFitCliBinary } from "../../shared/util/remote-fit-binary.js";
 import {
   startRemoteAwsCredsRefresher,
   uploadRemoteAwsCredentials,
@@ -122,14 +122,19 @@ import { loadDefinition } from "../../shared/definition/parse-definition.js";
 import {
   buildExecutionGroups,
   resolveDefinition,
+  runPresets,
+  type ResolvedClusterBoundExecutionRun,
   type ResolvedExecutionGroup,
   type ResolvedExecutionRun,
   type ResolvedFitConfig,
   type ResolvedFunctionalExecutionGroup,
   type ResolvedFunctionalExecutionRun,
+  type ResolvedPerformanceExecutionRun,
   type ResolvedSituationalExecutionGroup,
   type ResolvedSituationalExecutionRun,
 } from "../../shared/definition/resolve-definition.js";
+import { describePerfWorkload, runPerfDriver, type PerfRunResult } from "../../performance/run-perf-driver/run-perf-driver.js";
+import { perfBundleReports, renderPerfReportTable, type PerfBundleReport } from "../../performance/perf-report/perf-report.js";
 import {
   ANALYTICS_TEST_DRIVER_MODULE,
   DEFAULT_TEST_DRIVER_MODULE,
@@ -154,7 +159,6 @@ import {
 } from "../../shared/util/performer-cluster-sanity.js";
 import { writeAgentsGuide } from "../../shared/util/write-agents-guide.js";
 import {
-  reconnectExecutionTarget,
   resolveExecutionGroupTarget,
   selectExistingInstanceForOverride,
   type ExecutionOverride,
@@ -167,24 +171,6 @@ import {
   type FailureFacts,
 } from "../../shared/failure-classification.js";
 import { RunFailureTracker, type FailureContext } from "../../shared/run-failure-tracker.js";
-import {
-  extractResumeAt,
-  extractResumeSelector,
-  parseResumePoint,
-  phasesForResumePoint,
-  type ResumePoint,
-  type ResumeSelector,
-  type RunPhases,
-} from "./resume.js";
-import {
-  readRunState,
-  runStatePath,
-  writeRunState,
-  type ResumeClusterState,
-  type ResumePerformerState,
-  type ResumeTargetState,
-  type RunState,
-} from "./resume-state.js";
 import { appendRunSummaryToGhaSummary, emitGhaNotice, RUN_FINISHED_MARKER } from "../../util/gha.js";
 import { junitToPlainTextFromDir } from "../../shared/run-test-driver/junit-to-markdown.js";
 import { readSituationalResultsCsv, renderSituationalResultsPlainText } from "../../shared/run-test-driver/situational-results.js";
@@ -196,10 +182,10 @@ import { readSituationalResultsCsv, renderSituationalResultsPlainText } from "..
  */
 const PRIVATE_ENDPOINT_SANITY_RETRY_TIMEOUT_MS = 120_000;
 
-/** True for a functional iteration that has resolved to a concrete cluster. */
+/** True for a cluster-bound iteration (functional or performance) that has resolved to a concrete cluster. */
 function functionalWithCluster(
-  run: ResolvedFunctionalExecutionRun,
-): run is ResolvedFunctionalExecutionRun & { cluster: NonNullable<ResolvedFunctionalExecutionRun["cluster"]> } {
+  run: ResolvedClusterBoundExecutionRun,
+): run is ResolvedClusterBoundExecutionRun & { cluster: NonNullable<ResolvedFunctionalExecutionRun["cluster"]> } {
   return run.cluster !== undefined;
 }
 
@@ -357,10 +343,10 @@ export function runLabelParts(
     sdkValue: run.sdk.value,
     ...(run.performerVersion ? { performerVersion: run.performerVersion } : {}),
     type: run.type,
-    ...(run.testSelection.presets ? { presets: run.testSelection.presets } : {}),
+    ...(runPresets(run) ? { presets: runPresets(run) } : {}),
     ...(cng ? { cng } : {}),
     ...(run.type === "situational" && run.privateEndpoint !== undefined ? { privateEndpoint: true } : {}),
-    ...(run.type === "functional" && run.cluster?.privateEndpoint ? { privateEndpoint: true } : {}),
+    ...(run.type !== "situational" && run.cluster?.privateEndpoint ? { privateEndpoint: true } : {}),
   };
 }
 
@@ -423,34 +409,56 @@ function isCapellaGroup(group: ResolvedExecutionGroup): boolean {
 }
 
 /**
- * Situational runs upload their result files to S3, but only from CI - a local run
- * leaves them on disk (see uploadCollectedResults). So only ask for AWS credentials
- * when the upload will actually happen.
+ * Situational and performance runs upload their result files to S3 only with
+ * `--results-upload` (see resultsUploadSkipReason). So only ask for AWS credentials when the
+ * upload will actually happen.
  */
-export function needsResultsUpload(
-  executionGroups: ResolvedExecutionGroup[],
-  startCycleIndex: number,
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return artifactUploadEnabled(env) && executionGroups.slice(startCycleIndex).some((group) => group.type === "situational");
+export function needsResultsUpload(executionGroups: ResolvedExecutionGroup[], resultsUpload: boolean): boolean {
+  return resultsUpload && hasResultFiles(executionGroups);
+}
+
+/** Whether any of these groups has runs that write result files: situational or performance. */
+function hasResultFiles(groups: readonly ResolvedExecutionGroup[]): boolean {
+  return groups.some(
+    (group) =>
+      group.type === "situational" ||
+      group.sessions.some((session) => session.runs.some((run) => run.type === "performance")),
+  );
+}
+
+/** Whether any of these groups has a performance run that executes on a remote instance. */
+export function runsPerfRemotely(groups: readonly ResolvedExecutionGroup[], executionOverride: ExecutionOverride): boolean {
+  return groups.some(
+    (group) =>
+      group.type !== "situational" &&
+      executesRemotely(group, executionOverride) &&
+      group.sessions.some((session) => session.runs.some((run) => run.type === "performance")),
+  );
+}
+
+/** Whether a group ends up on a cloud instance, given the run-wide execution override. */
+function executesRemotely(group: ResolvedExecutionGroup, executionOverride: ExecutionOverride): boolean {
+  switch (executionOverride.kind) {
+    case "localhost":
+      return false;
+    case "aws":
+    case "existing":
+      return true;
+    case "definition":
+      return group.instance.kind !== "localhost";
+  }
 }
 
 /**
  * GitHub creds are only needed so cbdinocluster/CAO can pull private ghcr.io/cb-rhcc
- * images. Only true when some upcoming group will actually provision via cbdinocluster —
- * groups on `clusterMode: "connection"` or `"useExisting"`, or a resumed run that skips
- * cluster setup entirely, never touch it.
+ * images. Only true when some group will actually provision via cbdinocluster —
+ * groups on `clusterMode: "connection"` or `"useExisting"` never touch it.
  */
-function needsGithubCredentials(phases: RunPhases, executionGroups: ResolvedExecutionGroup[], startCycleIndex: number): boolean {
-  return (
-    phases.setupCluster &&
-    executionGroups
-      .slice(startCycleIndex)
-      .some(
-        (group) =>
-          (group.type === "functional" && group.clusterMode === "cbdinocluster") ||
-          (group.type === "situational" && group.cng),
-      )
+function needsGithubCredentials(executionGroups: ResolvedExecutionGroup[]): boolean {
+  return executionGroups.some(
+    (group) =>
+      (group.type === "functional" && group.clusterMode === "cbdinocluster") ||
+      (group.type === "situational" && group.cng),
   );
 }
 
@@ -482,6 +490,19 @@ async function uploadCapellaCredsForCloudDeployer(
   return capella.endpoint;
 }
 
+/** How a test-driven run's test selection reads in the run header. */
+function testSelectionLabel(testSelection: FitTestSelection): string {
+  const presetLabels = (testSelection.presets ?? []).map((p) =>
+    p === "all-transactions" ? "all transactions tests" : "all non-transactions tests",
+  );
+  if (presetLabels.length) {
+    return [...presetLabels, ...(testSelection.extraClasses ?? [])].join(" + ");
+  }
+  return testSelection.mavenTestSelector
+    ? `${testSelection.selectedTests.length} test(s): ${testSelection.mavenTestSelector}`
+    : "all tests";
+}
+
 /** Print what an iteration resolved to, so a CI log shows the run's inputs. */
 function announce(
   group: ResolvedExecutionGroup,
@@ -508,17 +529,10 @@ function announce(
     progress: `${globalIterationIndex + 1}/${totalGlobalIterations}`,
     cluster: clusterSeg,
     performer: performerLabel(run.path, run.sdk.value, run.performerVersion),
-    run: runLabel(run.path, run.type, run.testSelection.presets, cng),
+    run: runLabel(run.path, run.type, runPresets(run), cng),
   });
-  const { testSelection } = run;
-  const presetLabels = (testSelection.presets ?? []).map((p) =>
-    p === "all-transactions" ? "all transactions tests" : "all non-transactions tests",
-  );
-  const testsLabel = presetLabels.length
-    ? [...presetLabels, ...(testSelection.extraClasses ?? [])].join(" + ")
-    : testSelection.mavenTestSelector
-      ? `${testSelection.selectedTests.length} test(s): ${testSelection.mavenTestSelector}`
-      : "all tests";
+  // A perf run has no tests to announce — describe the workload it drives instead.
+  const workLabel = run.type === "performance" ? describePerfWorkload(run.performance) : testSelectionLabel(run.testSelection);
   console.log(`\n=== ${formatRunLabel(run.path, parts)} (${group.instance.kind}, ${run.type}) ===`);
   const instSeg = instanceLabel(run.path, parts.instanceKind);
   const instDesc =
@@ -557,7 +571,7 @@ function announce(
   console.log(`  ${perfSeg}:  ${perfDesc}`);
   const runSeg = runLabel(run.path, parts.type, parts.presets, parts.cng);
   if (runSeg) {
-    const typeStr = parts.type === "functional" ? "Functional" : "Situational";
+    const typeStr = parts.type === "functional" ? "Functional" : parts.type === "performance" ? "Performance" : "Situational";
     const cngSuffix = parts.cng ? " (Cloud Native Gateway)" : "";
     const runDesc =
       parts.presets?.length === 1
@@ -566,7 +580,7 @@ function announce(
     console.log(`  ${runSeg}:  ${runDesc}`);
   }
   console.log(`  SDK:     ${run.sdk.name}`);
-  console.log(`  Tests:   ${testsLabel}`);
+  console.log(`  ${run.type === "performance" ? "Workload:" : "Tests:  "} ${workLabel}`);
   console.log(`  Performer port: ${run.performerPort}`);
   if (run.performerVersion) {
     console.log(`  Performer version: ${run.performerVersion}`);
@@ -675,7 +689,7 @@ export async function setupCluster(
   githubCredentials?: { user: string; token: string },
 ): Promise<RunOutput & {
   group: ResolvedFunctionalExecutionGroup;
-  clusterState?: ResumeClusterState;
+  clusterState?: GroupClusterState;
   cleanup?: CbdinoclusterCleanup;
 }> {
   if (group.clusterMode === "connection") {
@@ -705,7 +719,7 @@ export async function setupCluster(
       execution,
       clusterDir,
     );
-    const clusterState: ResumeClusterState | undefined = outcome.cluster
+    const clusterState: GroupClusterState | undefined = outcome.cluster
       ? {
           cluster: outcome.cluster,
           allocated: outcome.allocated,
@@ -746,8 +760,11 @@ async function setupPerformer(
   fitPerformerGerritRef: string | undefined,
   run: ResolvedExecutionRun,
 ): Promise<RunningPerformer | undefined> {
+  // Every cluster-bound run needs this, not just the test-driver ones: a perf run's performer
+  // has to reach the cluster container too, and starting it off that network fails the
+  // performer/cluster sanity check rather than anything more obviously network-shaped.
   const clusterDockerEnvironment =
-    run.type === "functional" && run.cluster
+    run.type !== "situational" && run.cluster
       ? await detectClusterDockerEnvironment(run.cluster, {
           captureCommand: (command, args) => execution.capture(command, args),
           dockerCommand: execution.dockerCommand,
@@ -768,6 +785,7 @@ async function setupPerformer(
     run.onPortInUse,
     run.performerPort,
     fitPerformerGerritRef,
+    run.performerLogLevel,
   );
 }
 
@@ -788,6 +806,12 @@ export interface RunResultSummary {
   surefireDir?: string;
   /** Local path to the collected situational-results CSV; set only for situational runs. */
   situationalResultsCsv?: string;
+  /**
+   * One row per result bundle this run produced; set only for performance runs, which have
+   * no surefire report and would otherwise show as "no test report available" despite having
+   * measured everything they were asked to.
+   */
+  perfReports?: readonly PerfBundleReport[];
 }
 
 /** Sink the run loop passes down so each run records its result as it finishes. */
@@ -941,6 +965,163 @@ export function testFailureFacts(testRun: TestRunResult): FailureFacts {
   return { explainedByTestResults: testRun.summary !== undefined && !didFitTestDriverPass(testRun.summary) };
 }
 
+/** What a run needs to know to publish its result files — shared by situational and performance runs. */
+export interface ResultsPublishing {
+  /** Groups this invocation's runs in S3: the first key segment under incoming/ (see upload-results.ts). */
+  runGroupId: string;
+  /** `--results-upload`: upload the files, or keep them — see resultsUploadSkipReason. */
+  upload: boolean;
+  /** What fit-cli knows about the run for its debug links (see results-debug-links.ts). */
+  debugLinks: DebugLinkContext;
+}
+
+/**
+ * Post-run step for a performance run: add debug links to its bundle, then upload it to the
+ * results bucket or keep it, by the same rule as situational results. The bundle is already
+ * local either way — a remote run's was collected by runPerfDriver.
+ *
+ * Only this run's own bundle is touched: a resumed run's results dir can still hold earlier
+ * attempts'. And only a run that produced usable results is published, since a bundle with
+ * no timings would otherwise become a datapoint. Never throws — the run already happened.
+ */
+export async function publishPerfResults(
+  perfRun: Pick<PerfRunResult, "ok" | "perfResultsDir" | "assessment">,
+  publishing: ResultsPublishing,
+  upload: typeof uploadSituationalResults = uploadSituationalResults,
+): Promise<RunOutput> {
+  const resultsDir = perfRun.perfResultsDir;
+  if (!resultsDir) {
+    return { artifacts: [], details: [] };
+  }
+  const onlyDirs = perfRun.assessment.bundles.map((bundle) => basename(bundle));
+  if (perfRun.ok && onlyDirs.length === 0 && perfRun.assessment.skipped.length > 0) {
+    // Skipped (see workloadSkipReason): there is no datapoint, so nothing to link or upload.
+    console.log(`\nNothing to upload from ${resultsDir}: the run was skipped.`);
+    return { artifacts: [], details: [] };
+  }
+  addDebugLinksToResults(resultsDir, publishing.debugLinks, { onlyDirs });
+
+  if (!perfRun.ok) {
+    console.log(`
+Result files kept at ${resultsDir}. Not uploaded: the run produced no usable results.`);
+    return { artifacts: [], details: [] };
+  }
+  const skipReason = resultsUploadSkipReason(publishing.upload);
+  if (skipReason) {
+    console.log(`
+Result files kept at ${resultsDir}. Not uploaded: ${skipReason}.`);
+    return { artifacts: [], details: [{ label: "Preserved results", value: resultsDir }] };
+  }
+  try {
+    return await upload(resultsDir, RESULTS_BUCKET, { fallbackId: publishing.runGroupId, onlyDirs });
+  } catch (err) {
+    fitCliError(
+      `\nUploading the run's result files failed: ${(err as Error).message}\n` +
+        `  Files: ${resultsDir}\n` +
+        `  Upload by hand: bun src/fit/situational/upload-results/upload-results.ts ${resultsDir} --situational-run-id ${publishing.runGroupId}`,
+    );
+    return { artifacts: [], details: [] };
+  }
+}
+
+/**
+ * Run one performance workload against the session's cluster and performer.
+ *
+ * The functional sibling of {@link runTests}, minus everything that is about
+ * tests: no FITConfiguration.json (the perf driver is configured entirely by the
+ * TestSuite YAML fit-cli generates for it), no test selection, and no surefire
+ * reports. Pass/fail comes from the result bundle instead — see
+ * {@link assessPerfBundles}.
+ *
+ * When the box's otel stack is up, the performer sends its metrics and traces there, and the
+ * stack's teardown dumps them into the instance's `otel/` artifacts like a functional run's.
+ */
+async function runPerformance(
+  execution: FitExecutionContext,
+  clusterMode: ResolvedFunctionalExecutionGroup["clusterMode"],
+  run: ResolvedPerformanceExecutionRun,
+  performer: RunningPerformer | undefined,
+  dependencies: Omit<RunTestsDependencies, "purpose"> = {},
+  clusterVersion?: string,
+  instanceKind: "aws" | "gcp" | "localhost" = execution.kind === "remote" ? "aws" : "localhost",
+  publishing?: ResultsPublishing,
+  externalServices: readonly ExternalServiceHandle[] = [],
+): Promise<RunOutput> {
+  if (!run.cluster) {
+    fitCliWarn(missingClusterMessage(clusterMode));
+    return { artifacts: [], details: [] };
+  }
+
+  const runClusterDiagFn = dependencies.runClusterDiagFn ?? runClusterDiag;
+  const runPerformerClusterSanityCheckFn =
+    dependencies.runPerformerClusterSanityCheckFn ?? runPerformerClusterSanityCheck;
+
+  const artifacts: Artifact[] = [];
+  const details: Detail[] = [];
+
+  if (
+    !(await runClusterDiagFn(run.cluster, {
+      captureCommand: (cmd, args, cwd, runOpts) => execution.capture(cmd, args, cwd, runOpts),
+    }))
+  ) {
+    throwFatalToCluster("Cluster sanity test failed; this execution group cannot continue.");
+  }
+
+  const performerSanity = await runPerformerClusterSanityCheckFn(run.cluster, performer?.containerId, {
+    captureCommand: (command, args) => execution.capture(command, args),
+    dockerCommand: execution.dockerCommand,
+  });
+  artifacts.push(...performerSanity.artifacts);
+  if (!performerSanity.ok) {
+    throwFatalToSession("Performer cluster sanity check failed; stopping this iteration.");
+  }
+
+  const perfRun = await runPerfDriver(execution, run.path, {
+    sdk: run.sdk,
+    ...(run.performerVersion !== undefined ? { performerVersion: run.performerVersion } : {}),
+    cluster: run.cluster,
+    // The driver runs on the execution host, where the performer container's port is published.
+    performerHost: "localhost",
+    performerPort: run.performerPort,
+    performance: run.performance,
+    otelCollectorOtlpGrpc: otelCollectorOtlpGrpc(externalServices),
+  });
+  artifacts.push(...perfRun.artifacts);
+
+  const isCapella = run.cluster.flavour === "internal-capella" || run.cluster.flavour === "production-capella";
+  const pathLabel = formatRunLabel(
+    run.path,
+    runLabelParts(instanceKind, clusterMode, run, clusterVersion, run.cluster.cng !== undefined, isCapella, false),
+  );
+  const iterationLabel = (label: string) => `Run ${run.path.runIndex ?? 0} ${label}`;
+  details.push(
+    { label: iterationLabel("Details"), value: pathLabel },
+    { label: iterationLabel("SDK"), value: run.sdk.name },
+    { label: iterationLabel("Cluster"), value: `${run.cluster.scheme}://${run.cluster.defaultHostname}` },
+    ...perfRun.details,
+  );
+  if (publishing) {
+    const published = await publishPerfResults(perfRun, publishing);
+    artifacts.push(...published.artifacts);
+    details.push(...published.details);
+  }
+  const perfReports = perfBundleReports(perfRun.assessment.bundles);
+  dependencies.recordResult?.({
+    path: run.path,
+    pathLabel,
+    sdk: run.sdk.name,
+    type: run.type,
+    ok: perfRun.ok,
+    ...(perfReports.length > 0 ? { perfReports } : {}),
+  });
+  if (!perfRun.ok) {
+    throwFatalToSession(
+      `The performance run produced no usable results: ${perfRun.assessment.reasons.join("; ") || "the perf driver failed"}.`,
+    );
+  }
+  return { artifacts, details };
+}
+
 /** Expand situational named presets into concrete class selectors. */
 function expandSituationalPresets(selection: FitTestSelection, cng: boolean): FitTestSelection {
   if (!selection.presets?.length) return selection;
@@ -1038,8 +1219,8 @@ async function withResolvedSituationalCbdino(
 /**
  * The cbdino settings for a situational run. A CNG run deploys via the Couchbase
  * Autonomous Operator instead of a Capella cloud cluster, so it needs the CNG
- * server/operator/gateway versions (from environments.json5) rather than the
- * Capella-cluster default — the driver's CbDinoYamlWrangler only writes an
+ * server/operator/gateway versions (from environments.json5; the server version can
+ * be overridden per run with a cb-rhcc build) rather than the Capella-cluster default — the driver's CbDinoYamlWrangler only writes an
  * `operator-version`/`gateway-version` into cbdinocluster's config when it sees a
  * `cao` deployer.
  */
@@ -1066,8 +1247,13 @@ export function situationalCbdinoSettings(
   const { cngClusterVersion, caoOperatorVersion, cngVersion } = loadEnvironments().defaults;
   return {
     ...DEFAULT_CBDINO_SETTINGS,
-    version: cngClusterVersion,
-    cao: { operatorVersion: caoOperatorVersion, gatewayVersion: cngVersion },
+    version: versionOverride ?? cngClusterVersion,
+    cao: {
+      operatorVersion: caoOperatorVersion,
+      gatewayVersion: cngVersion,
+      // Expose the cluster through ROSA's shared gateway, so the driver can verify TLS (see specs/cng.md).
+      ...(cngKubernetesBackend() === "openshift" ? { ingress: "gateway" } : {}),
+    },
     enablePrivateEndpoint: privateEndpoint,
   };
 }
@@ -1086,6 +1272,10 @@ export async function runSituationalTests(
     recordResult?: RecordRunResult;
     /** One per runFromDefinition call, not per run. */
     situationalRunId: string;
+    /** See {@link ResultsPublishing.upload}. */
+    resultsUpload?: boolean;
+    /** Key under `capella` in environments.json5, for the run's Capella debug links. */
+    capellaEnvironment?: string;
     /** The run stamp for the clusters FIT allocates. */
     purpose: string;
   },
@@ -1158,7 +1348,14 @@ export async function runSituationalTests(
   }
 
   try {
-    const uploadOutput = await uploadCollectedResults(execution, driverResultsDir, runRunDir(run.path), situationalRunId);
+    const uploadOutput = await uploadCollectedResults(execution, driverResultsDir, runRunDir(run.path), situationalRunId, uploadSituationalResults, {
+      resultsUpload: dependencies.resultsUpload ?? false,
+      // CNG runs have no Capella cluster, so the driver records no Capella id and no links get built.
+      debugLinks: {
+        ...environmentDebugLinkContext(),
+        ...(dependencies.capellaEnvironment ? { capellaEnvironment: dependencies.capellaEnvironment } : {}),
+      },
+    });
     details.push(...uploadOutput.details);
     artifacts.push(...uploadOutput.artifacts);
   } catch (err) {
@@ -1260,29 +1457,30 @@ export type ResultsCollector = Pick<
 /**
  * Files-mode post-run step: pull the result directories the driver wrote
  * (test-driver/results, one per run) off the execution host into this run's
- * artifact dir, then upload them to the results S3 bucket, where a downstream
- * job loads them into the results database.
+ * artifact dir, add fit-cli's debug links to them, then upload them to the results
+ * S3 bucket, where a downstream job loads them into the results database.
  *
  * Collection and publishing are independent:
  *   - local runs already have their result files;
  *   - remote runs collect and extract them first;
- *   - CI, and a remote (cloud instance) run, publish the resulting files to S3 —
- *     a remote run is byte-for-byte what CI does, so it gets the same treatment;
- *   - a run on your own laptop preserves them locally instead, so interactive
- *     development doesn't surprise-upload to the shared results bucket.
+ *   - whether they are then published or kept is {@link resultsUploadSkipReason}'s call.
+ *
+ * Debug links go in before that decision, so kept files carry them as well and a later
+ * manual upload publishes them too. A remote run's results.tar artifact is the driver's
+ * own output, from before they were added.
  */
-function shouldUploadResults(execution: Pick<ResultsCollector, "kind">, env: NodeJS.ProcessEnv): boolean {
-  return artifactUploadEnabled(env) || execution.kind === "remote";
-}
-
 export async function uploadCollectedResults(
   execution: ResultsCollector,
   driverResultsDir: string,
   localRunDir: string,
   situationalRunId: string,
   upload: typeof uploadSituationalResults = uploadSituationalResults,
-  env: NodeJS.ProcessEnv = process.env,
+  opts: { resultsUpload?: boolean; debugLinks?: DebugLinkContext } = {},
 ): Promise<RunOutput> {
+  const skipReason = resultsUploadSkipReason(opts.resultsUpload ?? false);
+  const addDebugLinks = (dir: string): void => {
+    if (opts.debugLinks) addDebugLinksToResults(dir, opts.debugLinks);
+  };
   if (!(await execution.pathExists(driverResultsDir))) {
     fitCliWarn(
       `\nNo result files found under ${driverResultsDir} - the driver checkout likely predates ` +
@@ -1293,18 +1491,20 @@ export async function uploadCollectedResults(
 
   // A local run has the files on this machine already, so upload them directly.
   if (execution.kind === "local") {
-    // Publish results automatically from CI only. A run on your own laptop keeps the
-    // files locally; upload-results.ts can publish them explicitly.
-    if (!shouldUploadResults(execution, env)) {
+    // A run on your own laptop keeps the files locally; upload-results.ts can
+    // publish them explicitly.
+    if (skipReason) {
       // removeTree wipes driverResultsDir at the start of the next situational
       // run, so copy the results into this run's artifact dir now, or a second
       // local run in a row loses the first one's results with nothing preserved.
       const localResultsDir = join(localRunDir, SITUATIONAL_RESULTS_DIR_NAME);
       rmSync(localResultsDir, { recursive: true, force: true });
       cpSync(driverResultsDir, localResultsDir, { recursive: true });
-      console.log(`\nResult files preserved to ${localResultsDir}. Not uploaded: results go to S3 from CI or a cloud instance only.`);
+      addDebugLinks(localResultsDir);
+      console.log(`\nResult files preserved to ${localResultsDir}. Not uploaded: ${skipReason}.`);
       return { artifacts: [], details: [{ label: "Preserved results", value: localResultsDir }] };
     }
+    addDebugLinks(driverResultsDir);
     return upload(driverResultsDir, RESULTS_BUCKET, { fallbackId: situationalRunId });
   }
 
@@ -1313,8 +1513,8 @@ export async function uploadCollectedResults(
   // path collectFile returns, not the one requested: it keeps large files
   // compressed and returns that path instead.
   const localResultsDir = join(localRunDir, SITUATIONAL_RESULTS_DIR_NAME);
-  // A resumed run reuses the run directory and tar -x overlays rather than
-  // replacing, so clear the previous attempt's extraction and archives first
+  // tar -x overlays rather than replaces, so in case the run directory already
+  // holds a previous attempt, clear its extraction and archives first
   // (results.tar or results.tar.gz, by size), or stale copies get re-uploaded.
   for (const stale of [SITUATIONAL_RESULTS_DIR_NAME, "results.tar", "results.tar.gz"]) rmSync(join(localRunDir, stale), { recursive: true, force: true });
   const remoteTar = `${driverResultsDir}.tar`;
@@ -1334,12 +1534,12 @@ export async function uploadCollectedResults(
     await execution.removeTree(remoteTar).catch(() => {});
   }
 
-  // The tar is the artifact either way. A remote run is byte-for-byte what CI does, so
-  // it always publishes too — only a genuinely local run keeps the extracted copy
-  // instead: an unpacked tree is easier to read than a tar.
-  if (!shouldUploadResults(execution, env)) {
-    console.log(`\nCollected result files to ${localResultsDir}. Not uploaded: results go to S3 from CI or a cloud instance only.`);
-    return { artifacts, details: [] };
+  addDebugLinks(localResultsDir);
+  // The tar is the artifact either way. A run that doesn't publish keeps the extracted
+  // copy too: an unpacked tree is easier to read than a tar.
+  if (skipReason) {
+    console.log(`\nCollected result files to ${localResultsDir}. Not uploaded: ${skipReason}.`);
+    return { artifacts, details: [{ label: "Preserved results", value: localResultsDir }] };
   }
 
   const uploaded = await upload(localResultsDir, RESULTS_BUCKET, { fallbackId: situationalRunId });
@@ -1350,53 +1550,6 @@ export async function uploadCollectedResults(
   return { artifacts: [...artifacts, ...uploaded.artifacts], details: uploaded.details };
 }
 
-/**
- * Reconstruct the performer a previous run left running for this iteration,
- * after checking its container is still up. Returns undefined (explaining why)
- * if the run state has no performer for the run or the container is gone.
- */
-async function resumePerformer(
-  execution: FitExecutionContext,
-  run: ResolvedExecutionRun,
-  savedState: RunState | undefined,
-  globalIterationIndex: number,
-): Promise<RunningPerformer | undefined> {
-  const saved = savedState?.performers.find((performer) => performer.globalRunIndex === globalIterationIndex);
-  if (!saved?.containerId) {
-    fitCliError(
-      `\nresume: the run state has no performer for run ${globalIterationIndex + 1}. ` +
-        "Re-run with --resume-at=after-cluster-creation to rebuild it.",
-    );
-    return undefined;
-  }
-
-  const running = (
-    await execution
-      .capture(execution.dockerCommand, ["ps", "--filter", `id=${saved.containerId}`, "--format", "{{.ID}}"])
-      .catch(() => "")
-  ).trim();
-  if (!running) {
-    fitCliError(
-      `\nresume: the saved performer container ${saved.containerId} is no longer running. ` +
-        "Re-run with --resume-at=after-cluster-creation to rebuild it.",
-    );
-    return undefined;
-  }
-
-  console.log(`\n→ resume: reusing performer container ${saved.containerId} for run ${globalIterationIndex + 1}.`);
-  const logFile = createLogFile(performerLogStem(run.path, run.sdk, run.performerVersion));
-  return {
-    containerId: saved.containerId,
-    logFile,
-    artifacts: [artifactFromPath(logFile, `${run.sdk.name} performer logs captured for this FIT run`)],
-    details: [],
-  };
-}
-
- function printResumeHint(point: ResumePoint, definitionPath: string, path: DefinitionRunPath, includeRun: boolean): void {
-  console.log(`\n→ Resume from here: ${formatResumeCommand(point, definitionPath, resumeSelectorFromPath(path, includeRun))}`);
-}
-
 /** Run one iteration: stand up (or reuse) its performer, then run the tests. */
 interface IterationInputs {
   execution: FitExecutionContext;
@@ -1404,16 +1557,18 @@ interface IterationInputs {
   functionalClusterMode?: ResolvedFunctionalExecutionGroup["clusterMode"];
   fitPerformerGerritRef?: string;
   run: ResolvedExecutionRun;
-  setupPerformerPhase: boolean;
-  savedState?: RunState;
-  globalIterationIndex: number;
-  definitionPath: string;
   recordResult: RecordRunResult;
   /** Read only by situational runs. */
   situationalRunId: string;
-  /** The run stamp FIT puts on the clusters it allocates. See {@link runStamp}. */
+  /** The run stamp FIT puts on the clusters it allocates. See {@link allocatePurpose}. */
   purpose: string;
   functionalClusterVersion?: string;
+  /** See {@link ResultsPublishing.upload}. */
+  resultsUpload: boolean;
+  /** The group's Capella environment, for the run's debug links. */
+  capellaEnvironment: string;
+  /** The Couchbase cluster UUID of a Capella cluster fit-cli allocated, for a perf run's debug links. */
+  capellaClusterUuid?: string;
   existingPerformer?: RunningPerformer;
   instanceKind?: "aws" | "gcp" | "localhost";
   /** The box's active external services (e.g. otel), if any were started for this box. */
@@ -1421,7 +1576,7 @@ interface IterationInputs {
 }
 
 async function runIteration(inputs: IterationInputs): Promise<{ output: RunOutput; performer?: RunningPerformer }> {
-  const { execution, functionalClusterMode, fitPerformerGerritRef, run, setupPerformerPhase, savedState, globalIterationIndex, definitionPath, recordResult, situationalRunId, purpose, functionalClusterVersion, existingPerformer, instanceKind, externalServices = [] } = inputs;
+  const { execution, functionalClusterMode, fitPerformerGerritRef, run, recordResult, situationalRunId, purpose, functionalClusterVersion, resultsUpload, capellaEnvironment, capellaClusterUuid, existingPerformer, instanceKind, externalServices = [] } = inputs;
   const artifacts: Artifact[] = [];
   const details: Detail[] = [];
 
@@ -1431,16 +1586,11 @@ async function runIteration(inputs: IterationInputs): Promise<{ output: RunOutpu
     // Reuse a performer that is already running for this session — no setup needed.
     performer = existingPerformer;
   } else {
-    performer = setupPerformerPhase
-      ? await setupPerformer(execution, fitPerformerGerritRef, run)
-      : await resumePerformer(execution, run, savedState, globalIterationIndex);
+    performer = await setupPerformer(execution, fitPerformerGerritRef, run);
     if (!performer) {
       throwFatalToSession("The performer isn't ready to run; stopping this iteration.");
     }
     artifacts.push(...performer.artifacts);
-    if (setupPerformerPhase && performer.containerId) {
-      printResumeHint("after-performer", definitionPath, run.path, true);
-    }
   }
   if (!performer) {
     throwFatalToSession("The performer isn't ready to run; stopping this iteration.");
@@ -1449,10 +1599,20 @@ async function runIteration(inputs: IterationInputs): Promise<{ output: RunOutpu
   let output: RunOutput;
   try {
     if (run.type === "situational") {
-      output = await runSituationalTests(execution, run, { recordResult, situationalRunId, purpose }, instanceKind);
+      output = await runSituationalTests(execution, run, { recordResult, situationalRunId, resultsUpload, capellaEnvironment, purpose }, instanceKind);
     } else {
       const clusterMode: ResolvedFunctionalExecutionGroup["clusterMode"] = functionalClusterMode ?? "useExisting";
-      output = await runTests(execution, clusterMode, run, performer, { recordResult, purpose }, functionalClusterVersion, instanceKind, externalServices);
+      output = run.type === "performance"
+        ? await runPerformance(execution, clusterMode, run, performer, { recordResult }, functionalClusterVersion, instanceKind, {
+            runGroupId: situationalRunId,
+            upload: resultsUpload,
+            debugLinks: {
+              ...environmentDebugLinkContext(),
+              // Only a Capella cluster fit-cli allocated has a UUID to link to.
+              ...(capellaClusterUuid ? { capellaEnvironment, capellaClusterId: capellaClusterUuid } : {}),
+            },
+          }, externalServices)
+        : await runTests(execution, clusterMode, run, performer, { recordResult, purpose }, functionalClusterVersion, instanceKind, externalServices);
     }
   } catch (err) {
     // When we started this performer ourselves and a FatalToSession error escapes, stop
@@ -1468,51 +1628,6 @@ async function runIteration(inputs: IterationInputs): Promise<{ output: RunOutpu
   return {
     output: { artifacts: combineArtifacts(artifacts), details: combineDetails(details) },
     performer,
-  };
-}
-
-/** Resolve the shared cluster when resuming: reuse the one in the run state. */
-async function resumeCluster(
-  group: ResolvedFunctionalExecutionGroup,
-  savedState: RunState | undefined,
-  execution: FitExecutionContext,
-): Promise<{ group: ResolvedFunctionalExecutionGroup; clusterState?: ResumeClusterState }> {
-  // Existing-cluster modes already carry the cluster from the file, so there's
-  // nothing in the run state to reuse — the resolved iterations are ready.
-  if (group.clusterMode !== "cbdinocluster") {
-    return { group };
-  }
-
-  const clusterState = savedState?.cluster;
-  if (!clusterState) {
-    throw new Error(
-      "resume: the run state has no cbdinocluster to reuse. Re-run without --resume-at to allocate one.",
-    );
-  }
-  console.log(
-    `\n→ resume: reusing cluster ${clusterState.clusterId ?? clusterState.cluster.defaultHostname} from the run state.`,
-  );
-  if (
-    !(await runClusterDiag(clusterState.cluster, {
-      captureCommand: (cmd, args, cwd, runOpts) => execution.capture(cmd, args, cwd, runOpts),
-      ...(clusterState.cluster.privateEndpoint ? { retryTimeoutMs: PRIVATE_ENDPOINT_SANITY_RETRY_TIMEOUT_MS } : {}),
-    }))
-  ) {
-    throw new Error(
-      "resume: the saved cluster is no longer reachable. Re-run without --resume-at to allocate a fresh one.",
-    );
-  }
-  return { group: applyGroupCluster(group, clusterState.cluster), clusterState };
-}
-
-function targetStateFrom(teardown: ExecutionTargetTeardown): ResumeTargetState {
-  return {
-    kind: teardown.kind,
-    ...(teardown.instanceId ? { instanceId: teardown.instanceId } : {}),
-    ...(teardown.owned !== undefined ? { owned: teardown.owned } : {}),
-    ...(teardown.provider ? { provider: teardown.provider } : {}),
-    ...(teardown.gcpZone ? { gcpZone: teardown.gcpZone } : {}),
-    ...(teardown.gcpProject ? { gcpProject: teardown.gcpProject } : {}),
   };
 }
 
@@ -1533,52 +1648,6 @@ function terminateCommandFor(teardown: ExecutionTargetTeardown): string | undefi
   }
   return terminateInstanceCommand(teardown.instanceId);
 }
-
-function hasResumeSelector(selector: ResumeSelector): boolean {
-  return Object.values(selector).some((value) => value !== undefined);
-}
-
-function resumeSelectorFromPath(path: DefinitionRunPath, includeRun: boolean): ResumeSelector {
-  return {
-    instance: path.instanceIndex + 1,
-    ...(!path.clusterlessSession && path.clusterIndex !== undefined ? { cluster: path.clusterIndex + 1 } : {}),
-    ...(path.clusterlessSession && includeRun && path.sessionIndex !== undefined
-      ? { clusterlessSession: path.sessionIndex + 1 }
-      : {}),
-    ...(!path.clusterlessSession && includeRun && path.sessionIndex !== undefined ? { session: path.sessionIndex + 1 } : {}),
-    ...(includeRun && path.runIndex !== undefined ? { run: path.runIndex + 1 } : {}),
-  };
-}
-
-function resumeSelectorFlags(selector: ResumeSelector): string[] {
-  return [
-    ...(selector.instance !== undefined ? [`--resume-instance=${selector.instance}`] : []),
-    ...(selector.cluster !== undefined ? [`--resume-cluster=${selector.cluster}`] : []),
-    ...(selector.clusterlessSession !== undefined ? [`--resume-clusterless-session=${selector.clusterlessSession}`] : []),
-    ...(selector.session !== undefined ? [`--resume-session=${selector.session}`] : []),
-    ...(selector.run !== undefined ? [`--resume-run=${selector.run}`] : []),
-  ];
-}
-
-function formatResumeCommand(point: ResumePoint, definitionPath: string, selector: ResumeSelector): string {
-  // Always include --interactive: a resume is a hands-on debugging step, and the
-  // resumed run needs to be able to prompt (e.g. teardown choices) just like the
-  // original interactive run did.
-  return `${runDefinitionPrefix()} --interactive --resume-at=${point} ${resumeSelectorFlags(selector).join(" ")} ${definitionPath}`.replace(/\s+/g, " ").trim();
-}
-
-function resumeSelectorMatchesPath(selector: ResumeSelector, path: DefinitionRunPath): boolean {
-  const clusterlessSession = path.clusterlessSession === true;
-  return (
-    (selector.instance === undefined || selector.instance === path.instanceIndex + 1) &&
-    (selector.cluster === undefined || (!clusterlessSession && selector.cluster === (path.clusterIndex ?? 0) + 1)) &&
-    (selector.clusterlessSession === undefined || (clusterlessSession && selector.clusterlessSession === (path.sessionIndex ?? 0) + 1)) &&
-    (selector.session === undefined || (!clusterlessSession && selector.session === (path.sessionIndex ?? 0) + 1)) &&
-    (selector.run === undefined || selector.run === (path.runIndex ?? 0) + 1)
-  );
-}
-
-
 
 /**
  * Translate a run path into a {@link FailureContext} so the end-of-run summary
@@ -1626,6 +1695,58 @@ function failureLabel(group: ResolvedExecutionGroup, run?: ResolvedExecutionRun)
     .join(" / ");
 }
 
+/** The shared cluster an execution group stood up (or resolved), and what teardown needs to remove it. */
+export interface GroupClusterState {
+  /** The resolved cluster the runs test against. */
+  cluster: SelectedCluster;
+  /** Whether this run allocated it (and so teardown should remove it). */
+  allocated: boolean;
+  /** cbdinocluster id, present when {@link allocated}; used to remove it. */
+  clusterId?: string;
+  /** The cbdinocluster command (path) on the target, for teardown removal. */
+  cbdinoclusterCommand?: string;
+  /**
+   * True when the box's cbdinocluster has Capella credentials. Teardown then
+   * sweeps the run's leftover Capella clusters through it.
+   */
+  capellaCredentials?: boolean;
+  /** The cluster's artifacts dir, where cbcollect diagnostics are gathered before removal. */
+  logsDir?: string;
+  /**
+   * The Couchbase cluster's own UUID (distinct from cbdinocluster's own tracking
+   * id, `clusterId`) — a generic concept that applies beyond Capella/PE. Populated
+   * for any cloud (Capella) cluster, PE or not.
+   */
+  couchbaseClusterUuid?: string;
+  /**
+   * True only when this cluster has an AWS PrivateLink endpoint that must also be
+   * deleted on teardown. Not implied by `couchbaseClusterUuid` alone, since that's
+   * populated for every cloud cluster.
+   */
+  privateEndpointEnabled?: boolean;
+  /**
+   * The Capella environment ("dev"/"prod"/…) this cluster was created against, when
+   * `couchbaseClusterUuid` is set. Used at teardown to check whether cbcollect is
+   * supported for this environment (see `capellaLogCollectionAvailable`) before
+   * attempting it.
+   */
+  capellaEnvironment?: string;
+  /**
+   * True when the run's `cbdinocluster init` created an ephemeral Capella API key
+   * pool on the box. Teardown must remove it even when no cluster was allocated.
+   */
+  capellaKeyPool?: boolean;
+}
+
+/** A performer still running at teardown, listed if everything is left up. */
+export interface LeftUpPerformer {
+  /** Docker container id. */
+  containerId: string;
+  port: number;
+  /** SDK value (e.g. "java") and version. */
+  sdk: string;
+  version?: string;
+}
 
 /**
  * What teardown cleans up through the box's cbdinocluster when no cluster state
@@ -1643,25 +1764,14 @@ interface CbdinoclusterCleanup {
 }
 
 interface TeardownInputs {
-  definitionPath: string;
-  /** Artifact directory for this run; undefined if the run failed before it was created. */
-  runDir?: string;
-  executionGroupIndex: number;
-  /** Within the active execution group, the run that was active at teardown. */
-  runIndex: number;
-  resumePath?: DefinitionRunPath;
   /** The remote/local context — absent if the run failed before it came up. */
   execution?: FitExecutionContext;
   teardown: ExecutionTargetTeardown;
-  /** Whether the run forced every execution group onto localhost; persisted so resume matches. */
-  forceLocalhost: boolean;
-  /** Whether the run forced every execution group onto a fresh EC2 instance; persisted so resume matches. */
-  forceAws: boolean;
-  clusterState?: ResumeClusterState;
+  clusterState?: GroupClusterState;
   cleanup?: CbdinoclusterCleanup;
   purpose: string;
   performers: readonly RunningPerformer[];
-  performerStates: readonly ResumePerformerState[];
+  performerStates: readonly LeftUpPerformer[];
   /** The box's active external services (e.g. otel), if any were started for this box. */
   externalServices: readonly ExternalServiceHandle[];
   /** Per-run pass/fail outcomes so far, shown as a summary before the leave-up prompt. */
@@ -1669,7 +1779,6 @@ interface TeardownInputs {
   cbcollect?: boolean;
   /** See {@link RunFromDefinitionOptions.promptScope}. */
   promptScope?: string;
-  situationalRunId?: string;
 }
 
 /**
@@ -1688,7 +1797,7 @@ export function scopedPromptId(base: string, scope: string | undefined): string 
  * `remove` only tears down the cluster itself, never a successfully-linked
  * ("available") VPC endpoint, so this must run separately or the endpoint leaks.
  * `couchbaseClusterUuid` is the Couchbase cluster's own UUID (see
- * {@link ResumeClusterState.couchbaseClusterUuid}), not cbdinocluster's own
+ * {@link GroupClusterState.couchbaseClusterUuid}), not cbdinocluster's own
  * cluster id — the VPC endpoint is tagged with the former.
  * Best-effort: failure here doesn't fail the run's teardown.
  */
@@ -1710,7 +1819,7 @@ async function deleteClusterPrivateEndpoint(couchbaseClusterUuid: string): Promi
  * cluster state, so the fact comes in `cleanup`.
  */
 async function removeCapellaKeyPool(
-  clusterState: ResumeClusterState | undefined,
+  clusterState: GroupClusterState | undefined,
   cleanup: CbdinoclusterCleanup | undefined,
   execution: ClusterCommandExecutor,
 ): Promise<void> {
@@ -1736,7 +1845,7 @@ async function removeCapellaKeyPool(
  * never blocks pool removal or instance termination.
  */
 async function removeRunCapellaLeftovers(
-  clusterState: ResumeClusterState | undefined,
+  clusterState: GroupClusterState | undefined,
   cleanup: CbdinoclusterCleanup | undefined,
   purpose: string,
   execution: ClusterCommandExecutor,
@@ -1753,15 +1862,6 @@ async function removeRunCapellaLeftovers(
 }
 
 /**
- * The stamp that names this run's clusters and key pool, for teardown and for FIT.
- * A resumed run reuses the stamp saved in its run state, so it still finds what
- * the original run made. Otherwise each call gets a fresh one.
- */
-export function runStamp(savedState: RunState | undefined): string {
-  return savedState?.purpose ?? allocatePurpose();
-}
-
-/**
  * Tear down just an execution group's own cluster and performers (not the box):
  * stop its performers and remove a cluster it allocated. Used when the box is shared
  * with later execution groups from the same definition instance, so the instance is
@@ -1769,7 +1869,7 @@ export function runStamp(savedState: RunState | undefined): string {
  */
 async function disposeGroupClusterAndPerformers(
   execution: FitExecutionContext | undefined,
-  clusterState: ResumeClusterState | undefined,
+  clusterState: GroupClusterState | undefined,
   performers: readonly RunningPerformer[],
   cbcollect = false,
   cleanup?: CbdinoclusterCleanup,
@@ -1805,7 +1905,7 @@ async function disposeGroupClusterAndPerformers(
 async function disposeCycleResources(
   execution: FitExecutionContext | undefined,
   teardown: ExecutionTargetTeardown,
-  clusterState: ResumeClusterState | undefined,
+  clusterState: GroupClusterState | undefined,
   performers: readonly RunningPerformer[],
   externalServices: readonly ExternalServiceHandle[],
   purpose: string,
@@ -1851,57 +1951,46 @@ async function terminateInstanceWithGuidance(teardown: ExecutionTargetTeardown):
 }
 
 /**
- * Which resume points the saved state actually supports, in run order — so the
- * leave-up message only suggests points that will work given how far the run got
- * (e.g. no `after-cluster-creation` when no cluster was stood up).
+ * Whatever this run type has by way of a report. Every run type keeps its results
+ * somewhere different — surefire XML for functional, plus the results CSV for
+ * situational, a bundle of CSVs for performance — so this is the one place that knows
+ * which to reach for. Printed both as each run finishes and again before the leave-up
+ * prompt, which is why it isn't inlined at either.
  */
-function resumeSuggestions(inputs: TeardownInputs): ResumePoint[] {
-  const { teardown, execution, clusterState, performerStates } = inputs;
-  const points: ResumePoint[] = [];
-  // A remote box we can reconnect to: reuse the instance, re-prepare the rest.
-  if (teardown.kind === "remote" && teardown.instanceId) {
-    points.push("after-instance-creation");
-    // The workspace is only prepared once the execution context came up.
-    if (execution) {
-      points.push("after-remote-preparation");
+function printRunResultBody(result: RunResultSummary): void {
+  if (result.surefireDir) {
+    process.stdout.write(junitToPlainTextFromDir(result.surefireDir));
+  } else if (result.perfReports && result.perfReports.length > 0) {
+    console.log(result.ok ? "PASS" : "FAIL");
+    process.stdout.write(renderPerfReportTable(result.perfReports));
+  } else {
+    console.log(`${result.ok ? "PASS" : "FAIL"} — no test report available`);
+  }
+  if (result.situationalResultsCsv) {
+    const rows = readSituationalResultsCsv(result.situationalResultsCsv);
+    if (rows) {
+      console.log("");
+      process.stdout.write(renderSituationalResultsPlainText(rows));
     }
   }
-  if (clusterState) {
-    points.push("after-cluster-creation");
-  }
-  if (performerStates.length > 0) {
-    points.push("after-performer");
-  }
-  return points;
 }
 
 /**
- * Print one JUnit results table per run (with a heading) before the leave-up
- * prompt, so the user can see exactly how each run did before deciding whether
- * to keep resources up for debugging.
+ * Print one results table per run (with a heading) before the leave-up prompt, so the
+ * user can see exactly how each run did before deciding whether to keep resources up
+ * for debugging.
  */
 function printRunResultsTables(results: readonly RunResultSummary[]): void {
   for (const result of results) {
     const heading = `${result.pathLabel}`;
     console.log(`\n── ${heading} ──`);
-    if (result.surefireDir) {
-      process.stdout.write(junitToPlainTextFromDir(result.surefireDir));
-    } else {
-      console.log(`${result.ok ? "PASS" : "FAIL"} — no test report available`);
-    }
-    if (result.situationalResultsCsv) {
-      const rows = readSituationalResultsCsv(result.situationalResultsCsv);
-      if (rows) {
-        console.log("");
-        process.stdout.write(renderSituationalResultsPlainText(rows));
-      }
-    }
+    printRunResultBody(result);
   }
 }
 
 /**
- * Ask once whether to leave everything up for debugging and resuming. If so,
- * record the run state and leave the instance, cluster and performers running;
+ * Ask once whether to leave everything up for debugging. If so, leave the
+ * instance, cluster and performers running and list them;
  * otherwise stop the performers, remove an allocated cluster, and terminate an
  * instance fit-cli provisioned. The execution context may be absent (the run
  * failed before it came up); only the instance is then up to leave or terminate.
@@ -1914,7 +2003,7 @@ export async function teardownRun(
   inputs: TeardownInputs,
   overrides: { stopExternalServiceFn?: ExternalService["stop"]; confirmLeaveUpFn?: () => Promise<boolean> } = {},
 ): Promise<{ leftUp: boolean; output: RunOutput }> {
-  const { definitionPath, runDir, executionGroupIndex, runIndex, resumePath, execution, teardown, forceLocalhost, forceAws, clusterState, cleanup, purpose, performers, performerStates, externalServices, results, cbcollect = false, promptScope, situationalRunId } = inputs;
+  const { execution, teardown, clusterState, cleanup, purpose, performers, performerStates, externalServices, results, cbcollect = false, promptScope } = inputs;
   const stopExternalServicesForThisRun = (): Promise<RunOutput> =>
     stopExternalServices(execution, EXTERNAL_SERVICES, externalServices, overrides.stopExternalServiceFn);
 
@@ -1958,7 +2047,7 @@ export async function teardownRun(
       ? await overrides.confirmLeaveUpFn()
       : await confirm({
           promptId: scopedPromptId("run-from-definition.teardown.leave-up", promptScope),
-          message: "Leave everything up (instance, cluster, performer) for debugging and resuming?",
+          message: "Leave everything up (instance, cluster, performer) for debugging?",
           default: false,
         });
   } catch (err) {
@@ -1970,20 +2059,7 @@ export async function teardownRun(
   }
 
   if (leaveUp) {
-    const state: RunState = {
-      version: 1,
-      executionGroupIndex,
-      startRunIndex: runIndex,
-      ...(forceLocalhost ? { forceLocalhost } : {}),
-      ...(forceAws ? { forceAws } : {}),
-      target: targetStateFrom(teardown),
-      ...(clusterState ? { cluster: clusterState } : {}),
-      performers: [...performerStates],
-      ...(situationalRunId ? { situationalRunId } : {}),
-      purpose,
-    };
-    const path = runDir ? writeRunState(runDir, state) : undefined;
-    console.log(`\n✓ Leaving everything up.${path ? ` Saved run state to:\n  ${path}` : ""}`);
+    console.log(`\n✓ Leaving everything up.`);
 
     // List exactly what's been left running so it's clear what is still costing
     // money / holding resources and needs cleaning up later.
@@ -2003,14 +2079,6 @@ export async function teardownRun(
       console.log(`\nLeft running:\n${leftRunning.map((line) => `  - ${line}`).join("\n")}`);
     }
 
-    const suggestions = resumeSuggestions(inputs);
-    const lastSuggestion = suggestions[suggestions.length - 1];
-    const resumeDefinitionPath = runDir ? join(runDir, basename(resolve(definitionPath))) : definitionPath;
-    if (lastSuggestion && resumePath) {
-      console.log(
-        `\nResume after a manual fix with:\n  ${formatResumeCommand(lastSuggestion, resumeDefinitionPath, resumeSelectorFromPath(resumePath, true))}`,
-      );
-    }
     if (externalServices.length > 0) {
       // A service left running with no visible access is worthless for debugging.
       for (const handle of externalServices) {
@@ -2079,21 +2147,15 @@ function isInteractiveRun(): boolean {
 
 /**
  * Decide the run-wide override for where every execution group runs, ignoring each
- * group's `instance:` setting. Resuming reuses the earlier run's choice. Otherwise:
- * interactively we ask whether to honour the file (default), force everything onto
- * localhost, or run every group on one existing AWS EC2 instance; non-interactively we
+ * group's `instance:` setting. Interactively we ask whether to honour the file
+ * (default), force everything onto localhost, or run every group on one existing
+ * AWS EC2 instance; non-interactively we
  * honour the definition file so a CI run provisions whatever the file asks for.
  */
 async function resolveExecutionOverride(
   groups: readonly ResolvedExecutionGroup[],
-  savedState: RunState | undefined,
   promptScope: string | undefined,
 ): Promise<ExecutionOverride> {
-  if (savedState) {
-    if (savedState.forceLocalhost) return { kind: "localhost" };
-    if (savedState.forceAws) return { kind: "aws" };
-    return { kind: "definition" };
-  }
   if (!isInteractiveRun()) {
     return { kind: "definition" };
   }
@@ -2155,8 +2217,12 @@ function describeExecutionOverride(override: ExecutionOverride, declaredKind: st
 export interface RunFromDefinitionOptions {
   /** Same value across several calls groups them as one situational run. */
   situationalRunId?: string;
-  resumeAt?: ResumePoint;
-  resumeSelector?: ResumeSelector;
+  /**
+   * `--results-upload`: publish situational and performance result files to the results
+   * bucket. Without it they are kept on disk, wherever the run executes; CI passes it. The
+   * run-artifacts zip is unaffected.
+   */
+  resultsUpload?: boolean;
   cbcollect?: boolean;
   /**
    * A Slack thread reference (permalink / channel:ts / p-number / ts). When set, a
@@ -2197,14 +2263,40 @@ export interface RunFromDefinitionOptions {
   slackResultFile?: string;
 }
 
+/**
+ * `--repo-dir` only affects localhost execution (it's read via
+ * `resolveFitPerformerDir`) — a remote (AWS or GCP) instance always clones
+ * transactions-fit-performer fresh from GitHub (`ensureRemoteRepos`) and
+ * silently ignores it. True when that mismatch is present, so the caller can
+ * fast-fail instead of letting the override look like it worked.
+ *
+ * Takes the *resolved* `executionOverride` rather than each group's raw
+ * `instance:` setting, since an interactive run can override the definition's
+ * declared destination (e.g. force everything onto localhost) — this must
+ * reflect where execution actually ends up, not just what the definition
+ * file says, or `--interactive` runs would fast-fail before the user even
+ * gets a chance to pick localhost. Mirrors the same override precedence as
+ * `resolveExecutionGroupTarget` (existing/aws override -> always remote;
+ * localhost override -> never remote; definition -> per-group instance kind).
+ */
+export function repoDirOverrideConflictsWithRemote(
+  repoDirOverrides: readonly string[],
+  executionOverride: ExecutionOverride,
+  groups: readonly ResolvedExecutionGroup[],
+): boolean {
+  if (repoDirOverrides.length === 0) return false;
+  if (executionOverride.kind === "localhost") return false;
+  if (executionOverride.kind === "aws" || executionOverride.kind === "existing") return true;
+  return groups.some((g) => g.instance.kind === "aws" || g.instance.kind === "gcp");
+}
+
 /** Run FIT functional tests as described by the definition file at `definitionPath`. */
 export async function runFromDefinition(
   definitionPath: string,
   options: RunFromDefinitionOptions = {},
 ): Promise<RunOutput> {
   const tracker = new RunFailureTracker();
-  const { resumeAt, resumeSelector = {}, cbcollect = false, slackThread, promptScope, stopOnFailure = false, deferSlackTo, slackResultFile } = options;
-  const phases = phasesForResumePoint(resumeAt);
+  const { cbcollect = false, slackThread, promptScope, stopOnFailure = false, deferSlackTo, slackResultFile, resultsUpload = false } = options;
   const definition = loadDefinition(definitionPath);
   const resolved = resolveDefinition(definition);
   const executionGroups = buildExecutionGroups(resolved.instances);
@@ -2214,89 +2306,59 @@ export async function runFromDefinition(
   }
 
   const preconditionCtx: FailureContext = { instanceIndex: 0 };
-  const savedState = resumeAt ? readRunState(dirname(resolve(definitionPath))) : undefined;
+  const repoDirOverrides = activeRepoDirOverrideNames();
   // Comma-separated presets are separate calls, so they get separate ids by design.
-  if (
-    savedState?.situationalRunId !== undefined &&
-    options.situationalRunId !== undefined &&
-    savedState.situationalRunId !== options.situationalRunId
-  ) {
-    fitCliError(
-      { classification: "FatalToAll" },
-      `\nresume: --situational-run-id is ${options.situationalRunId}, but this run was started as ` +
-        `${savedState.situationalRunId}. Resume it under the id it started with, or leave the flag off.`,
-    );
-    tracker.record("FatalToAll", "Supplied situational run id disagrees with the saved run state", preconditionCtx);
-    return finalizeRunFromDefinition([], [], undefined, tracker.worst, tracker.failureCount);
-  }
-  const situationalRunId = savedState?.situationalRunId ?? options.situationalRunId ?? randomUUID();
-  const purpose = runStamp(savedState);
+  const situationalRunId = options.situationalRunId ?? randomUUID();
+  const purpose = allocatePurpose();
   console.log(`  Run stamp ${purpose} (the cbdinocluster purpose of this run's clusters)`);
-  if (resumeAt) {
-    if (!savedState) {
-      fitCliError(
-        { classification: "FatalToAll" },
-        `\nresume: no saved run state found for ${definitionPath}. ` +
-          "Run without --resume-at first, then choose to leave everything up.",
-      );
-      tracker.record("FatalToAll", "No saved run state found for resume", preconditionCtx);
-      return finalizeRunFromDefinition([], [], undefined, tracker.worst, tracker.failureCount);
-    }
-    console.log(`  Resuming at: ${resumeAt}`);
-    // Show our working: a resume hinges on this interim bookkeeping file, so dump
-    // its path and contents — what target we'll reconnect to, which cluster and
-    // performers we'll reuse — rather than silently acting on it.
-    const statePath = runStatePath(dirname(resolve(definitionPath)));
-    console.log(`  Read saved run state from:\n    ${statePath}\n  Contents:`);
-    printWithoutTimestamps(`${JSON.stringify(savedState, null, 2)}\n`);
-  }
-  const startCycleIndex = savedState?.executionGroupIndex ?? 0;
-  const startIterationIndex = savedState?.startRunIndex ?? 0;
-  const startGroup = executionGroups[startCycleIndex];
-  const allRunsInStartCycle = startGroup?.type === "functional"
-    ? startGroup.sessions.flatMap((s) => s.runs)
-    : (startGroup?.runs ?? []);
-  const expectedResumePath = allRunsInStartCycle[startIterationIndex]?.path;
-  if (resumeAt && hasResumeSelector(resumeSelector)) {
-    if (!expectedResumePath) {
-      fitCliError(
-        { classification: "FatalToAll" },
-        "\nresume: the saved run state points at a run that no longer exists in this definition.",
-      );
-      tracker.record("FatalToAll", "Saved run state points at a run that no longer exists", preconditionCtx);
-      return finalizeRunFromDefinition([], [], undefined, tracker.worst, tracker.failureCount);
-    }
-    if (!resumeSelectorMatchesPath(resumeSelector, expectedResumePath)) {
-      fitCliError(
-        { classification: "FatalToAll" },
-        `\nresume: the requested path does not match the saved run state.\n` +
-          `  Requested: ${resumeSelectorFlags(resumeSelector).join(" ")}\n` +
-          `  Saved:     ${formatRunLabel(expectedResumePath)}`,
-      );
-      tracker.record("FatalToAll", "Requested resume path does not match saved run state", preconditionCtx);
-      return finalizeRunFromDefinition([], [], undefined, tracker.worst, tracker.failureCount);
-    }
-  }
 
   // One run-wide choice over where every execution group runs: honour the file, force
   // localhost, or run all groups on one existing EC2 instance. Resolved this early
   // (ahead of the GitHub/AWS credential checks below) so we know whether AWS will be
-  // needed at all before checking for it. Each group then provisions (or reconnects)
-  // its own target accordingly. `forceLocalhost`/`forceAws` are the parts we persist
-  // for resume; the existing-instance override is a within-run convenience and isn't saved.
-  const executionOverride = await resolveExecutionOverride(executionGroups.slice(startCycleIndex), savedState, promptScope);
+  // needed at all before checking for it. Each group then provisions its own target
+  // accordingly.
+  const executionOverride = await resolveExecutionOverride(executionGroups, promptScope);
   const forceLocalhost = executionOverride.kind === "localhost";
   const forceAws = executionOverride.kind === "aws";
   const willRunOnAws =
     !forceLocalhost &&
     (forceAws ||
-      executionGroups.slice(startCycleIndex).some((group) => group.type === "situational") ||
+      executionGroups.some((group) => group.type === "situational") ||
       (executionOverride.kind === "definition" &&
-        executionGroups.slice(startCycleIndex).some((g) => g.instance.kind === "aws")));
+        executionGroups.some((g) => g.instance.kind === "aws")));
   const willRunOnGcp =
     !forceLocalhost &&
     executionOverride.kind === "definition" &&
-    executionGroups.slice(startCycleIndex).some((g) => g.instance.kind === "gcp");
+    executionGroups.some((g) => g.instance.kind === "gcp");
+
+  // Checked here, now that the interactive execution-override choice (if any) is known,
+  // rather than against the definition's raw declared destination — otherwise an
+  // --interactive run combined with --repo-dir would fast-fail before the user even got
+  // a chance to pick "everything on localhost" and sidestep the conflict entirely.
+  if (repoDirOverrideConflictsWithRemote(repoDirOverrides, executionOverride, executionGroups)) {
+    fitCliError(
+      { classification: "FatalToAll" },
+      `\n--repo-dir ${repoDirOverrides.join(", ")}: this run executes on a remote (AWS or GCP) instance. ` +
+        "A remote instance always clones transactions-fit-performer fresh from GitHub " +
+        "(see ensureRemoteRepos) and silently ignores --repo-dir, which only affects localhost " +
+        "execution. Run against a localhost instance instead, or drop --repo-dir.",
+    );
+    tracker.record("FatalToAll", "--repo-dir was combined with a remote instance", preconditionCtx);
+    return finalizeRunFromDefinition([], [], undefined, tracker.worst, tracker.failureCount);
+  }
+
+  // A remote perf run ships a fit-cli built from this working tree. That compile is the
+  // likeliest thing in the run to fail, so do it before any instance or cluster exists.
+  if (runsPerfRemotely(executionGroups, executionOverride)) {
+    try {
+      await prebuildRemoteFitCliBinary();
+    } catch (err) {
+      const message = `Couldn't build the fit-cli binary that remote perf runs need: ${(err as Error).message}`;
+      fitCliError({ classification: "FatalToAll" }, `\n✗ ${message}`);
+      tracker.record("FatalToAll", message, preconditionCtx);
+      return finalizeRunFromDefinition([], [], undefined, tracker.worst, tracker.failureCount);
+    }
+  }
 
   // AWS is needed for EC2 execution groups AND for situational cbdinocluster cloud-deployer
   // runs (even on localhost's own machine, credentials get forwarded to the remote box).
@@ -2305,7 +2367,7 @@ export async function runFromDefinition(
   // "localhost.github.user not found" error when the real problem is AWS credentials.
   // Better to fail here than after a multi-hour run.
   let awsCredentials: AwsCredentials | undefined;
-  if (willRunOnAws || needsResultsUpload(executionGroups, startCycleIndex)) {
+  if (willRunOnAws || needsResultsUpload(executionGroups, resultsUpload)) {
     const result = await checkAwsCredentials();
     if (!result.ok) {
       fitCliError({ classification: "FatalToAll" }, `\n✗ ${result.message}`);
@@ -2337,7 +2399,7 @@ export async function runFromDefinition(
   // ghcr.io/cb-rhcc images — without it, cbdinocluster init runs with
   // --disable-github and CAO can't authenticate the image pull).
   let githubCredentials: { user: string; token: string } | undefined;
-  if (needsGithubCredentials(phases, executionGroups, startCycleIndex)) {
+  if (needsGithubCredentials(executionGroups)) {
     if (!willRunOnAws) {
       console.log(
         "This instance doesn't run on AWS, but AWS is still needed here to fetch AWS Secrets.",
@@ -2367,18 +2429,7 @@ export async function runFromDefinition(
     // rather than waiting for all runs to finish.
     const heading = `${result.pathLabel} (${result.sdk})`;
     console.log(`\n── ${heading} ──`);
-    if (result.surefireDir) {
-      process.stdout.write(junitToPlainTextFromDir(result.surefireDir));
-    } else {
-      console.log(`${result.ok ? "PASS" : "FAIL"} — no test report available`);
-    }
-    if (result.situationalResultsCsv) {
-      const rows = readSituationalResultsCsv(result.situationalResultsCsv);
-      if (rows) {
-        console.log("");
-        process.stdout.write(renderSituationalResultsPlainText(rows));
-      }
-    }
+    printRunResultBody(result);
     // appendRunSummaryToGhaSummary is synchronous and catches its own errors internally.
     appendRunSummaryToGhaSummary(result);
     // Flushed after every run, not just once at the end of the whole definition: this
@@ -2406,7 +2457,7 @@ export async function runFromDefinition(
   const willRunLocally =
     forceLocalhost ||
     (executionOverride.kind === "definition" &&
-      executionGroups.slice(startCycleIndex).some((g) => g.instance.kind === "localhost"));
+      executionGroups.some((g) => g.instance.kind === "localhost"));
   if (willRunLocally && !resolveFitPerformerDir()) {
     fitCliError(
       { classification: "FatalToAll" },
@@ -2455,22 +2506,18 @@ export async function runFromDefinition(
   };
   let activeTeardown: ExecutionTargetTeardown = { kind: "local" };
   let currentBoxInstanceIndex: number | undefined;
-  let activeCycleIndex = startCycleIndex;
-  let activeIterationIndex = startIterationIndex;
-  let activeResumePath: DefinitionRunPath | undefined = expectedResumePath;
-  let activeClusterState: ResumeClusterState | undefined;
+  let activeRunPath: DefinitionRunPath | undefined;
+  let activeClusterState: GroupClusterState | undefined;
   let activeCleanup: CbdinoclusterCleanup | undefined;
   let activePerformers: RunningPerformer[] = [];
-  let activePerformerStates: ResumePerformerState[] = [];
+  let activePerformerStates: LeftUpPerformer[] = [];
   try {
     const countGroupIterations = (group: (typeof executionGroups)[number]): number =>
       group.type === "functional"
         ? group.sessions.reduce((s, session) => s + session.runs.length, 0)
         : group.runs.length;
     const totalGlobalIterations = executionGroups.reduce((total, group) => total + countGroupIterations(group), 0);
-    let globalIterationIndex = executionGroups
-      .slice(0, startCycleIndex)
-      .reduce((total, group) => total + countGroupIterations(group), 0);
+    let globalIterationIndex = 0;
 
     const reportCngSkip = (group: ResolvedExecutionGroup, run?: ResolvedExecutionRun): void => {
       const what = run ? `${run.sdk.name} SDK doesn't` : "SDKs in this execution group don't";
@@ -2488,7 +2535,7 @@ export async function runFromDefinition(
       executionGroups.slice(cycleIndex + 1).find((g) => !shouldSkipCngGroup(g));
 
     try {
-    for (let cycleIndex = startCycleIndex; cycleIndex < executionGroups.length; cycleIndex++) {
+    for (let cycleIndex = 0; cycleIndex < executionGroups.length; cycleIndex++) {
       const group = executionGroups[cycleIndex];
       if (!group) {
         break;
@@ -2504,19 +2551,14 @@ export async function runFromDefinition(
         continue;
       }
 
-      // Only after the skip check: a skipped group owns no resources, so the saved
-      // teardown/resume state must keep pointing at the last group that ran.
-      activeCycleIndex = cycleIndex;
-      if (cycleIndex !== startCycleIndex) {
-        activeIterationIndex = 0;
-      }
-      activeResumePath = group.path;
+      // Only after the skip check: a skipped group owns no resources, so failure
+      // context must keep pointing at the last group that ran.
+      activeRunPath = group.path;
 
       // Acquire this cycle's execution target. Execution groups from the same
       // definition instance share one box: reuse the box (and its prepared
       // workspace) when the previous group belonged to the same instanceIndex;
-      // otherwise reconnect the resumed instance for the start cycle, or provision
-      // (or run locally) a fresh one per the definition.
+      // otherwise provision (or run locally) a fresh one per the definition.
       const reuseBox =
         currentBoxInstanceIndex === group.path.instanceIndex && activeExecution !== undefined;
       let cycleTeardown: ExecutionTargetTeardown;
@@ -2529,10 +2571,7 @@ export async function runFromDefinition(
         );
         setLogContext({ env: instanceLabel(group.path, cycleTeardown.kind === "remote" ? (cycleTeardown.provider === "gcp" ? "gcp" : "aws") : "localhost") });
       } else {
-        const isResumeStartCycle = savedState !== undefined && cycleIndex === startCycleIndex;
-        const targetOutcome = isResumeStartCycle
-          ? await reconnectExecutionTarget(savedState.target)
-          : await resolveExecutionGroupTarget(group.instance, executionOverride, cycleIndex, group.type, isInteractiveRun());
+        const targetOutcome = await resolveExecutionGroupTarget(group.instance, executionOverride, cycleIndex, group.type, isInteractiveRun());
         artifacts.push(...targetOutcome.artifacts);
         instanceDetails.push(...targetOutcome.details);
         if (!targetOutcome.ready) {
@@ -2548,33 +2587,26 @@ export async function runFromDefinition(
         cycleTeardown = targetOutcome.teardown;
         activeTeardown = cycleTeardown;
         setLogContext({ env: instanceLabel(group.path, cycleTeardown.kind === "remote" ? (cycleTeardown.provider === "gcp" ? "gcp" : "aws") : "localhost") });
-        if (cycleTeardown.kind === "remote" && cycleTeardown.instanceId) {
-          printResumeHint("after-instance-creation", definitionCopyPath, group.path, false);
-        }
 
         const firstSdk = group.type === "functional" ? group.sessions[0]?.sdk : group.runs[0]?.sdk;
         execution = await createFitExecutionContext(targetOutcome.target, firstSdk, {
-          skipRemotePreparation: isResumeStartCycle && !phases.prepareRemote,
           instancePath: group.path,
         });
         activeExecution = execution;
         currentBoxInstanceIndex = group.path.instanceIndex;
         artifacts.push(...execution.artifacts);
         instanceDetails.push(...execution.details);
-        if (phases.prepareRemote && cycleTeardown.kind === "remote" && cycleTeardown.instanceId) {
-          printResumeHint("after-remote-preparation", definitionCopyPath, group.path, false);
-        }
       }
 
       let activeCycle = group;
-      let clusterState: ResumeClusterState | undefined;
+      let clusterState: GroupClusterState | undefined;
       let cleanup: CbdinoclusterCleanup | undefined;
       const cyclePerformers: RunningPerformer[] = [];
-      const cyclePerformerStates: ResumePerformerState[] = [];
+      const cyclePerformerStates: LeftUpPerformer[] = [];
 
       try {
         // Functional observability tests send traces/metrics to a collector and then
-        // poll it back. fit-cli spins up its own ephemeral external services (otel:
+        // poll it back, and performance runs send theirs there to be dumped as artifacts. fit-cli spins up its own ephemeral external services (otel:
         // collector/Jaeger/Prometheus) for this box (replacing the old shared
         // performance-sdk.couchbase.com box) — start them once per box, before any
         // functional group needs them, so a broken stack fails fast here instead of
@@ -2644,46 +2676,37 @@ export async function runFromDefinition(
             };
           }
 
-          if (cycleIndex === startCycleIndex && !phases.setupCluster) {
-            const resumed = await resumeCluster(functionalCycle, savedState, execution);
-            activeCycle = resumed.group;
-            clusterState = resumed.clusterState;
-          } else {
-            // Capella Analytics clusters use cbdinocluster's cloud deployer, which
-            // requires CAPELLA_* env vars on the box so `cbdinocluster init --auto`
-            // writes the capella block.  Mirror the situational path's credential
-            // forwarding, but skip AWS (the cloud deployer talks to the Capella
-            // control plane, not EC2 directly).
-            if (isCapellaAnalyticsGroup(functionalCycle) && execution.kind === "remote") {
-              await uploadCapellaCredsForCloudDeployer(
-                execution,
-                functionalCycle.capellaEnvironment,
-                `Capella Analytics clusters use cbdinocluster's cloud deployer`,
-              );
-              // If the definition didn't supply custom init args, override the
-              // default (which disables Capella) with args that leave it enabled.
-              if (functionalCycle.cbdinocluster && !functionalCycle.cbdinocluster.init?.args) {
-                functionalCycle = {
-                  ...functionalCycle,
-                  cbdinocluster: {
-                    ...functionalCycle.cbdinocluster,
-                    init: { ...functionalCycle.cbdinocluster.init, args: capellaAnalyticsCbdinoclusterInitArgs() },
-                  },
-                };
-              }
+          // Capella Analytics clusters use cbdinocluster's cloud deployer, which
+          // requires CAPELLA_* env vars on the box so `cbdinocluster init --auto`
+          // writes the capella block.  Mirror the situational path's credential
+          // forwarding, but skip AWS (the cloud deployer talks to the Capella
+          // control plane, not EC2 directly).
+          if (isCapellaAnalyticsGroup(functionalCycle) && execution.kind === "remote") {
+            await uploadCapellaCredsForCloudDeployer(
+              execution,
+              functionalCycle.capellaEnvironment,
+              `Capella Analytics clusters use cbdinocluster's cloud deployer`,
+            );
+            // If the definition didn't supply custom init args, override the
+            // default (which disables Capella) with args that leave it enabled.
+            if (functionalCycle.cbdinocluster && !functionalCycle.cbdinocluster.init?.args) {
+              functionalCycle = {
+                ...functionalCycle,
+                cbdinocluster: {
+                  ...functionalCycle.cbdinocluster,
+                  init: { ...functionalCycle.cbdinocluster.init, args: capellaAnalyticsCbdinoclusterInitArgs() },
+                },
+              };
             }
-            const setup = await setupCluster(functionalCycle, purpose, execution, setupDeclarativeCluster, githubCredentials);
-            activeCycle = setup.group;
-            clusterState = setup.clusterState;
-            cleanup = setup.cleanup;
-            artifacts.push(...setup.artifacts);
-            details.push(...setup.details);
-            if (cbdinoclusterSetupFailed(activeCycle, true)) {
-              throwFatalToCluster("setup-cluster didn't produce a cluster, so this execution group can't continue.");
-            }
-            if (clusterState) {
-              printResumeHint("after-cluster-creation", definitionCopyPath, activeCycle.path, false);
-            }
+          }
+          const setup = await setupCluster(functionalCycle, purpose, execution, setupDeclarativeCluster, githubCredentials);
+          activeCycle = setup.group;
+          clusterState = setup.clusterState;
+          cleanup = setup.cleanup;
+          artifacts.push(...setup.artifacts);
+          details.push(...setup.details);
+          if (cbdinoclusterSetupFailed(activeCycle, true)) {
+            throwFatalToCluster("setup-cluster didn't produce a cluster, so this execution group can't continue.");
           }
           if (clusterState) {
             // No SSH tunnel hint any more — fit-cli no longer generates a key for the
@@ -2780,6 +2803,16 @@ export async function runFromDefinition(
                 `Check that the "${capellaEnvironment}" Capella settings were picked up by the init step above.`,
             );
           }
+          // Local counterpart: this machine's own ~/.cbdinocluster is used as-is, so check
+          // its Capella endpoint is actually reachable before `allocate --deployer cloud`
+          // runs — otherwise the failure only surfaces after several retries, deep inside
+          // the JVM test.
+          if (execution.kind !== "remote") {
+            const localCheck = await checkLocalCapellaEndpointReachable();
+            if (localCheck.checked && !localCheck.ok) {
+              throwFatalToCluster(localCheck.message);
+            }
+          }
         }
 
         const allSessionsAndRuns = activeCycle.type === "functional"
@@ -2793,12 +2826,7 @@ export async function runFromDefinition(
         let sessionPerformer: RunningPerformer | undefined;
         let activeSessionIndex: number | undefined;
         for (const [cycleIterationIndex, { session, run: iteration }] of allSessionsAndRuns.entries()) {
-          if (cycleIndex === startCycleIndex && cycleIterationIndex < startIterationIndex) {
-            globalIterationIndex++;
-            continue;
-          }
-          activeIterationIndex = cycleIterationIndex;
-          activeResumePath = iteration.path;
+          activeRunPath = iteration.path;
           const isLastIteration = cycleIterationIndex === totalIterations - 1;
 
           // Detect session boundary: when the session changes, stop the old performer.
@@ -2824,22 +2852,19 @@ export async function runFromDefinition(
           }
 
           announce(activeCycle, iteration, resolved.fitPerformerGerritRef, globalIterationIndex, totalGlobalIterations);
-          const isStartIteration = cycleIndex === startCycleIndex && cycleIterationIndex === startIterationIndex;
-          const setupPerformerPhase = isStartIteration ? phases.setupPerformer : true;
           try {
             const { output, performer } = await runIteration({
               execution,
               functionalClusterMode: activeCycle.type === "functional" ? activeCycle.clusterMode : undefined,
               fitPerformerGerritRef: resolved.fitPerformerGerritRef,
               run: iteration,
-              setupPerformerPhase,
-              savedState,
-              globalIterationIndex,
-              definitionPath,
               recordResult,
               situationalRunId,
               purpose,
               functionalClusterVersion: clusterVersionLabel(activeCycle),
+              resultsUpload,
+              capellaEnvironment: activeCycle.capellaEnvironment,
+              ...(isCapellaGroup(activeCycle) && clusterState?.couchbaseClusterUuid ? { capellaClusterUuid: clusterState.couchbaseClusterUuid } : {}),
               existingPerformer: sessionPerformer,
               instanceKind: activeCycle.instance.kind,
               externalServices: activeExternalServices,
@@ -2852,7 +2877,6 @@ export async function runFromDefinition(
                 cyclePerformers.push(performer);
                 if (performer.containerId) {
                   cyclePerformerStates.push({
-                    globalRunIndex: globalIterationIndex,
                     containerId: performer.containerId,
                     port: iteration.performerPort,
                     sdk: iteration.sdk.value,
@@ -2992,7 +3016,7 @@ export async function runFromDefinition(
         tracker.record(
           "FatalToAll",
           err.message,
-          activeResumePath ? failureContextFromPath(activeResumePath) : { instanceIndex: 0 },
+          activeRunPath ? failureContextFromPath(activeRunPath) : { instanceIndex: 0 },
           { explainedByTestResults: err.explainedByTestResults },
         );
       } else {
@@ -3016,24 +3040,16 @@ export async function runFromDefinition(
         `this, not by the SDK under test. ` +
         `Most recent failure: ${credsRefreshLastError ?? "unknown"}`;
       details.push({ label: "AWS credential refresh", value: message, callToAction: true });
-      tracker.record("NonFatal", message, activeResumePath ? failureContextFromPath(activeResumePath) : { instanceIndex: 0 });
+      tracker.record("NonFatal", message, activeRunPath ? failureContextFromPath(activeRunPath) : { instanceIndex: 0 });
     }
     const { leftUp, output: teardownOutput } = await teardownRun({
-      definitionPath,
-      runDir,
-      executionGroupIndex: activeCycleIndex,
-      runIndex: activeIterationIndex,
-      ...(activeResumePath ? { resumePath: activeResumePath } : {}),
       ...(activeExecution ? { execution: activeExecution } : {}),
       teardown: activeTeardown,
-      forceLocalhost,
-      forceAws,
       ...(activeClusterState ? { clusterState: activeClusterState } : {}),
       ...(activeCleanup ? { cleanup: activeCleanup } : {}),
       purpose,
       performers: activePerformers,
       performerStates: activePerformerStates,
-      situationalRunId,
       externalServices: activeExternalServices,
       results: runResults,
       cbcollect,
@@ -3069,28 +3085,16 @@ export async function runFromDefinition(
 
 if (isMain(import.meta.url)) {
   runCli(async () => {
-    const { resumeAt, positionals: resumeRest } = extractResumeAt(process.argv.slice(2));
-    const { selector: resumeSelector, positionals: resumeRest2 } = extractResumeSelector(resumeRest);
-    const { cbcollect, positionals: rest } = extractCbcollectFlag(resumeRest2);
+    const { cbcollect, positionals: rest } = extractCbcollectFlag(process.argv.slice(2));
     const [definitionPath, ...extra] = rest;
     if (!definitionPath || extra.length > 0) {
       console.error(
-        `Primary usage: ${runScriptPrefix("run")} definition <file.yaml> [--resume-at=<point>] [--resume-instance=<n>] [--resume-cluster=<n>] [--resume-session=<n>] [--resume-clusterless-session=<n>] [--resume-run=<n>] [--cbcollect]\n` +
-          "Direct:        tsx src/fit/functional/run-from-definition/run-from-definition.ts <file.yaml> [--resume-at=<point>] [resume selectors]\n" +
-          "  --resume-at: after-instance-creation | after-remote-preparation | after-cluster-creation | after-performer",
+        `Primary usage: ${runScriptPrefix("run")} definition <file.yaml> [--cbcollect]\n` +
+          "Direct:        tsx src/fit/functional/run-from-definition/run-from-definition.ts <file.yaml>",
       );
       process.exit(2);
     }
-    let resumePoint: ResumePoint | undefined;
-    try {
-      resumePoint = parseResumePoint(resumeAt);
-    } catch (err) {
-      console.error((err as Error).message);
-      process.exit(2);
-    }
     return runFromDefinition(definitionPath, {
-      ...(resumePoint ? { resumeAt: resumePoint } : {}),
-      ...(hasResumeSelector(resumeSelector) ? { resumeSelector } : {}),
       ...(cbcollect ? { cbcollect } : {}),
     });
   });

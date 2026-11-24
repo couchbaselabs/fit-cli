@@ -4,7 +4,7 @@
   // no secret values are committed.
   //
   // Which environment gets used:
-  //   capella  → instances[*].setup.capellaEnvironment in the definition file   (default 'prod')
+  //   capella  → instances[*].setup.capellaEnvironment in the definition file   (default 'dev')
   //   results  → fit query-runs --env <name>   (default 'prod'; used to be 'dev')
   //
   // Only the passwords and API keys live in AWS Secrets Manager now (us-west-2); everything else
@@ -25,6 +25,7 @@
   //
   // A null non-secret value means "not yet provided" — selecting that block fails fast.
   // bun run secrets set capella/dev password='<password>' apiKey='<key>' apiSecret='<secret>'
+  // bun run secrets capella-key rotate dev [--auto]   (replaces a deleted v4 API key, see --help)
   // bun run secrets set results/dev password='<password>'
 
   // Global defaults — not per-environment. Version strings passed to cbdinocluster
@@ -52,11 +53,11 @@
     // https://github.com/orgs/cb-rhcc/packages/container/package/server
     cngClusterVersion: "8.5.0-1060",
 
-    // The previous CNG server line — the GA one in the field, and what every CNG
-    // functional preset runs. Only op-cng-func-release additionally spans
-    // cngClusterVersion above; the cheaper tiers stay on one cluster to keep the load
-    // on the shared ROSA OpenShift cluster down. (The CNG situational presets cannot
-    // choose per-preset and always use cngClusterVersion — see run-from-definition.ts.)
+    // The previous CNG server line — the GA one in the field. Every CNG functional preset
+    // runs it, while CNG situational presets run cngClusterVersion above. Only the release
+    // tiers span both lines (op-cng-func-release and op-cng-sit-release); the
+    // cheaper tiers stay on one cluster to keep the load on the shared ROSA OpenShift
+    // cluster down.
     cngPreviousClusterVersion: "8.0.2-5503",
 
     // Default self-managed Enterprise Analytics build passed to cbdinocluster.
@@ -94,9 +95,8 @@
     capellaPreviousClusterVersion: "7.6",
 
     // Default Capella environment (a key under `capella` below) when the definition file doesn't specify one.
-    // This is the default because we've seen issues on dev (https://couchbase.slack.com/archives/C05LNBVQRE3/p1782487819678329)
-    // That will hopefully be better on prod.
-    defaultCapellaEnvironment: "prod",
+    // Dev, as its internal support token allows things prod doesn't (cbcollect, image upgrades, redeploys).
+    defaultCapellaEnvironment: "dev",
 
     // Default results environment (a key under `results` below) when `fit query-runs --env` isn't given one.
     // This is the database and UI for FIT/SIT and FIT/PERF results.
@@ -106,7 +106,7 @@
     // (pinned rather than tracking "latest" so that cbdino breakages, which have occurred with
     // v0.0.121, do not break the "ci" channel), or a { pr: <n> } / { branch: "<name>" } object
     // (optionally with a `repo: "owner/repo"` override) to build from a PR or branch instead.
-    cbdinoclusterVersion: "v0.0.127",
+    cbdinoclusterVersion: "v0.0.130",
     // cbdinoclusterVersion: { pr: 123 },
     // cbdinoclusterVersion: { branch: "my-fix" },
 
@@ -162,6 +162,15 @@
       // the AWS ssmInstanceProfileName above).
       serviceAccountEmail: "fit-cli-gcp@couchbase-qe.iam.gserviceaccount.com",
     },
+
+    // The Couchbase Server version FIT/PERF measures against. Deliberately separate from
+    // clusterVersion and almost never changed: the server version is part of every perf
+    // datapoint's identity, so changing it starts a new baseline — every SDK's history has
+    // to be re-measured before the charts show anything again. Coordinate any change with
+    // the perf UI's DEFAULT_CLUSTER (perf-sdk-frontend src/lib/config/defaults.ts).
+    // "8.0.0" is the 8.0.0 GA image, build 3777, which records as "8.0.0-3777-enterprise".
+    // Not pinned as "8.0.0-3777": cbdinocluster would fetch that build from ghcr instead.
+    perfClusterVersion: "8.0.0",
   },
 
   // The services fit-cli itself starts alongside a run — see src/fit/external-services/.
@@ -201,6 +210,90 @@
     FUNCTIONAL_SET_SANITY: "com.couchbase.client.kv.SanityTest",
     FUNCTIONAL_SET_LITE: "all",
     FUNCTIONAL_SET_RELEASE: "all",
+  },
+
+  // FIT/PERF settings shared by the perf presets that are meant to land on the perf UI's
+  // standard charts. Every value here is part of a datapoint's identity, so these match what
+  // the existing history records (and the UI's DEFAULT_QUERY_VARS) exactly.
+  perf: {
+    driverVer: 6,
+    performerVer: 1,
+
+    // The machine and cluster resources are deliberately the ones FIT/PERF has always been
+    // measured on (jenkins-sdk's fit-perf-scheduled), so new numbers compare with the history.
+    // The run records the cluster's cpuCount and memory, so changing either of these starts
+    // a new baseline just as perfClusterVersion does.
+
+    // A c5.4xlarge: 16 vCPUs, 32GB. Pinned rather than left to fit-cli's default instance
+    // type, which FIT_EC2_INSTANCE_TYPE can change.
+    aws: { instanceType: "c5.4xlarge" },
+
+    // The cbdinocluster `docker` block: 28GB for the data service, leaving 4GB of the 32GB
+    // box for the driver and performer. The engine gives the whole quota to the bucket.
+    docker: { "kv-memory": 28000 },
+
+    // How the performer streams results back, as jenkins-sdk's fit-perf-scheduled did (CBD-4975).
+    // Without a batch size the .NET performer sends one gRPC message per operation and queues
+    // results faster than it sends them, so its memory grows through the run.
+    // Not part of a datapoint's identity.
+    grpc: { flowControl: true, batch: 1000 },
+
+    // KV get/replace and transactions, which work over a pool of documents.
+    pooledVariables: {
+      forSeconds: 300,
+      horizontalScaling: 20,
+      api: "DEFAULT",
+      // Only acted on by the Python performer, but every recorded run carries it.
+      concurrencyMechanism: "multiprocessing",
+      poolSize: 10000,
+    },
+
+    // KV insert, which writes fresh documents. The UI's insert charts filter on docNum.
+    insertVariables: {
+      forSeconds: 300,
+      horizontalScaling: 20,
+      api: "DEFAULT",
+      concurrencyMechanism: "multiprocessing",
+      docNum: 10000000,
+    },
+
+    // Variables also sent to the performer as SDK tunables. The Python performer only picks
+    // its executor from the tunable, so without this it ignores concurrencyMechanism.
+    tunables: ["concurrencyMechanism"],
+
+    // The standard workloads, each stored verbatim as part of its datapoint's identity: any
+    // change here starts a new baseline. kvGet, kvReplace and txnWrite use pooledVariables;
+    // kvInsert uses insertVariables.
+    workloads: {
+      kvGet: {
+        operations: [
+          { op: "get", bounds: { forSeconds: "$forSeconds" }, docLocation: { method: "pool", poolSize: "$poolSize", poolSelectionStrategy: "randomUniform" } },
+        ],
+      },
+      kvReplace: {
+        operations: [
+          { op: "replace", bounds: { forSeconds: "$forSeconds" }, docLocation: { method: "pool", poolSize: "$poolSize", poolSelectionStrategy: "counter" } },
+        ],
+      },
+      kvInsert: {
+        operations: [
+          { op: "insert", bounds: { forSeconds: "$forSeconds" }, docLocation: { method: "uuid" } },
+        ],
+      },
+      txnWrite: {
+        operations: [
+          {
+            transaction: {
+              ops: [
+                { op: "replace", docLocation: { method: "pool", poolSize: "$poolSize", poolSelectionStrategy: "randomUniform" } },
+                { op: "insert", docLocation: { method: "uuid" } },
+              ],
+              bounds: { forSeconds: "$forSeconds" },
+            },
+          },
+        ],
+      },
+    },
   },
 
   // projectId names the project cbdinocluster puts every cluster in. It belongs to the env's org.

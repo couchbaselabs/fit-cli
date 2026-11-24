@@ -1,7 +1,8 @@
 /**
  * All Postgres access. One run is one transaction and every statement is an
  * upsert. Runs are immutable and self-contained, so re-ingesting after a crash
- * converges on the same rows.
+ * converges on the same rows. The one deletion is a perf run on a moving version
+ * retiring that datapoint's stale runs (see perf-identity.ts).
  *
  * Every JSON column is sent as text and cast with ::text::jsonb, so Postgres
  * parses it. Passing an object instead lets the driver encode it, which turns
@@ -9,6 +10,7 @@
  */
 import type postgres from "postgres";
 import { isUuid, type BucketRow, type EventRow, type MetricRow, type ParsedRun } from "./parse.js";
+import { isMovingVersion, movingRunsToDelete, PERF_IDENTITY_SQL, perfIdentity } from "./perf-identity.js";
 
 export interface RunData {
   sitUuid: string;
@@ -61,8 +63,10 @@ export class Db {
       WHERE id = ${id}`;
   }
 
-  async ingestRun(data: RunData): Promise<void> {
+  /** Returns the ids of any older runs this one replaced (see replaceOlderMovingRuns). */
+  async ingestRun(data: RunData): Promise<{ replaced: string[] }> {
     const runId = data.run.runUuid;
+    let replaced: string[] = [];
     await this.sql.begin(async (tx) => {
       await tx`
         INSERT INTO runs (id, datetime, params)
@@ -124,8 +128,56 @@ export class Db {
       if (data.run.kind === "situational") {
         await upsertSituational(tx, data, runId);
       }
+
+      if (data.run.kind === "performance") {
+        replaced = await replaceOlderMovingRuns(tx, data.run.params);
+      }
     });
+    return { replaced };
   }
+}
+
+/**
+ * For a moving version (`main`, `3.11.x`), keep a few runs of each of this datapoint's last
+ * few commits and delete the rest — see perf-identity.ts for why, which runs, and what
+ * "the same datapoint" means. Returns the deleted run ids.
+ */
+async function replaceOlderMovingRuns(tx: postgres.TransactionSql, params: Record<string, unknown>): Promise<string[]> {
+  const identity = perfIdentity(params);
+  if (!identity || !isMovingVersion(identity.version)) return [];
+
+  // Language and version are matched on their own as well, so the projection only has to be
+  // computed for that one implementation's runs.
+  const rows = await tx.unsafe<{ id: string; datetime: Date; revision: string | null; created: string | null }[]>(
+    `SELECT id, datetime,
+            params->'impl'->'image'->>'revision' AS revision,
+            params->'impl'->'image'->>'created' AS created
+     FROM runs
+     WHERE params->'impl'->>'language' = $1 AND params->'impl'->>'version' = $2
+       AND ${PERF_IDENTITY_SQL} = $3::text::jsonb`,
+    [identity.language, identity.version, JSON.stringify(identity.key)],
+  );
+  const stale = movingRunsToDelete(
+    rows.map((row) => {
+      const created = row.created ? new Date(row.created) : undefined;
+      return {
+        id: String(row.id),
+        datetime: new Date(row.datetime),
+        ...(row.revision ? { revision: row.revision } : {}),
+        // An unparseable build time is no build time: fall back to the ingest time.
+        ...(created && !Number.isNaN(created.getTime()) ? { created } : {}),
+      };
+    }),
+  );
+  if (stale.length === 0) return [];
+
+  // grahamp: Yes, a full delete.  The perf database should be seen as more of a cache anyway, as we should be able to
+  // rebuild perf data at will.  Plus we want to keep operating costs down.
+  await tx`DELETE FROM buckets WHERE run_id IN ${tx(stale)}`;
+  await tx`DELETE FROM metrics WHERE run_id IN ${tx(stale)}`;
+  await tx`DELETE FROM run_events WHERE run_id IN ${tx(stale)}`;
+  await tx`DELETE FROM runs WHERE id IN ${tx(stale)}`;
+  return stale;
 }
 
 async function upsertSituational(tx: postgres.TransactionSql, data: RunData, runId: string): Promise<void> {

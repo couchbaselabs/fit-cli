@@ -183,11 +183,12 @@ async function main(): Promise<void> {
     await target.runHiddenUntilFailure("sh", ["-lc", remoteAptWaitCommand()], undefined, { display: "wait for cloud-init/apt" });
     await target.runHiddenUntilFailure("sh", ["-lc", remoteAptCleanupCommand()], undefined, { display: "clear /var/lib/apt/lists contents" });
     await target.runHiddenUntilFailure("sh", ["-lc", remoteAptGetCommand("update")], undefined, { display: "apt-get update" });
+    // JDK 17 from apt for jenkins-sdk's Gradle toolchain, as foojay's downloads lag security fixes (SDKQE-4047).
     await target.runHiddenUntilFailure(
       "sh",
-      ["-lc", remoteAptGetCommand("install -y git docker.io lsof openjdk-21-jdk maven awscli jq")],
+      ["-lc", remoteAptGetCommand("install -y git docker.io lsof openjdk-21-jdk openjdk-17-jdk-headless maven awscli jq")],
       undefined,
-      { display: "apt-get install git docker.io lsof openjdk-21-jdk maven awscli jq" },
+      { display: "apt-get install git docker.io lsof openjdk-21-jdk openjdk-17-jdk-headless maven awscli jq" },
     );
     await target.runHiddenUntilFailure("sudo", ["usermod", "-aG", "docker", FIT_INSTANCE_USER]);
     await target.runHiddenUntilFailure("sudo", ["-n", "systemctl", "enable", "--now", "docker"]);
@@ -309,8 +310,10 @@ async function main(): Promise<void> {
     console.log("\nBuilding transactions-fit-performer (mvn clean install -Dmaven.test.skip)...");
     await target.run("mvn", ["clean", "install", "-Dmaven.test.skip"], repoPath(FIT_PERFORMER, REMOTE_ROOT_DIR));
 
-    console.log("\nBuilding jenkins-sdk (./gradlew shadowJar)...");
-    await target.run("./gradlew", ["shadowJar"], jenkinsSdkDir);
+    // Auto-download off so Gradle uses the apt JDK 17 above, or fails rather than fetching one.
+    const gradleArgs = ["-Porg.gradle.java.installations.auto-download=false", "shadowJar"];
+    console.log(`\nBuilding jenkins-sdk (./gradlew ${gradleArgs.join(" ")})...`);
+    await target.run("./gradlew", gradleArgs, jenkinsSdkDir);
 
     console.log("\nRunning jenkins-sdk against the config (this can take a long time)...");
     // Resolve the shadowJar output by glob rather than a hardcoded name — the exact jar

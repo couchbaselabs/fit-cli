@@ -24,6 +24,13 @@ import {
 import { chooseCluster } from "./choose-cluster.js";
 import { detectCbdinocluster } from "./detect-cbdinocluster.js";
 
+/**
+ * TLS for a CNG performer's couchbase2 connection, written verbatim as the
+ * FITConfiguration's `clusterAccess.tls`: `{}` is TLS verified against the default
+ * trust store, `{ insecure: true }` skips verification.
+ */
+export type CngTls = Record<string, never> | { insecure: true };
+
 /** Everything needed to connect to an existing cluster. */
 export interface SelectedCluster {
   scheme: "couchbase" | "couchbases";
@@ -40,8 +47,8 @@ export interface SelectedCluster {
   cng?: {
     /** The full couchbase2:// connection string the performer uses. */
     performerConnectionString: string;
-    /** TLS for the performer's couchbase2 connection (cbdino gateways are insecure). */
-    tls: TlsConfig;
+    /** TLS for the performer's couchbase2 connection. */
+    tls: CngTls;
   };
   /**
    * Present for a load-balanced Enterprise Analytics cluster: the nginx

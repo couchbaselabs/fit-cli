@@ -7,7 +7,10 @@
  * situational: drains s3://<bucket>/incoming/ into the results database, moves each run
  *              directory to processed/ or failed/, and records one ingester_runs report row.
  *              A directory is only taken once the uploader's marker object is there, so a
- *              run in the middle of uploading is left for the next tick.
+ *              run in the middle of uploading is left for the next tick. FIT/PERF runs share
+ *              the same queue and are drained here too: a run's kind comes from its
+ *              run.json5, not from the subcommand, so a second cron would only race this one.
+ *              A perf run on a moving version retires that datapoint's stale runs (see perf-identity.ts).
  *
  * Made to be run from a cron on the instance that hosts the results database. The
  * password comes from AWS Secrets Manager, never from a file (see ./credentials.ts).
@@ -28,6 +31,7 @@ import {
   resolveIngestPassword,
 } from "./credentials.js";
 import { Db, type ReportStatus, type RunData } from "./db.js";
+import { MOVING_COMMITS_KEPT, MOVING_RUNS_KEPT_PER_COMMIT } from "./perf-identity.js";
 import {
   isUuid,
   parseBucketsCsv,
@@ -59,6 +63,8 @@ interface RunOutcome {
   movedTo?: string;
   error?: string;
   rows?: { buckets: number; metrics: number; events: number };
+  /** Stale runs of the same moving-version datapoint, deleted when this one was ingested (see perf-identity.ts). */
+  replaced?: string[];
 }
 
 /** Only a real failure makes a run partial. Deferrals are normal, an unmarked directory is still uploading. */
@@ -128,7 +134,8 @@ async function processRun(queue: S3Queue, db: Db, incoming: IncomingRun): Promis
 
   outcome.kind = data.run.kind;
   outcome.rows = { buckets: data.buckets.length, metrics: data.metrics.length, events: data.events.length };
-  await db.ingestRun(data);
+  const { replaced } = await db.ingestRun(data);
+  if (replaced.length > 0) outcome.replaced = replaced;
 
   outcome.movedTo = await queue.moveRun(incoming, PROCESSED_PREFIX, new Date());
   outcome.outcome = "ingested";
@@ -176,6 +183,7 @@ async function drainIncoming(
         };
       }
       console.log(`${outcome.outcome}: ${outcome.sit}/${outcome.run}${outcome.error ? ` (${outcome.error})` : ""}`);
+      if (outcome.replaced) console.log(`  deleted stale run(s) of the same datapoint: ${outcome.replaced.join(", ")}`);
       outcomes.push(outcome);
     }
 
@@ -283,8 +291,12 @@ Subcommands:
                directory then moves to processed/ or failed/, and one ingester_runs row
                records what happened. Only a directory holding the uploader's ${DONE_MARKER}
                marker is read, so a run still uploading waits for the next tick.
+               FIT/PERF runs share the queue and are ingested by this same command; each
+               run's kind comes from its run.json5. For a perf run on a moving version
+               (main, master, X.Y.x), the branch's last ${MOVING_COMMITS_KEPT} commits (by image build time)
+               are kept, with up to ${MOVING_RUNS_KEPT_PER_COMMIT} runs each to be averaged; the rest are
+               deleted.
                --host, --port override the database host/port, default ${RESULTS_DB_HOST}:${RESULTS_DB_PORT}.
-  performance  Not implemented yet.
 
 The database is always ${RESULTS_DB_NAME} and the user is always
 ${INGEST_DB_USERNAME}. The password is read from the AWS Secrets Manager secret

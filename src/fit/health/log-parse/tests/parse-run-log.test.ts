@@ -8,6 +8,8 @@
  *   dotnet-2026-09-27  a job per preset; ❌/💥 markers and an Err column
  *   dotnet-2026-07-31  a night that died in the harness before any test ran
  *   node-2026-09-27    class-level failures (`💥 DisconnectTest.`)
+ *   node-2026-11-03    node-2026-09-27 with its CNG job swapped for 2026-11-03's, which fit-cli skipped
+ *                      (Node doesn't support CNG): the job went green with no results
  *
  * Run on their own:
  *   node --import tsx --test src/fit/health/log-parse/tests/parse-run-log.test.ts
@@ -16,7 +18,7 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
 import { failingTests, recordKey, type RunRecord } from "../../record/run-record.js";
-import { assignVariants, buildRecords, parseRunLog, presetKind, readLogFile } from "../parse-run-log.js";
+import { NO_RESULTS, assignVariants, buildRecords, parseRunLog, presetKind, readLogFile } from "../parse-run-log.js";
 import { stripAnsi } from "../../../../util/non-fit/proc.js";
 
 const FIXTURES = join(import.meta.dirname, "fixtures");
@@ -107,6 +109,25 @@ test("a night that died before any test ran becomes aborted records carrying fit
   assert.match(onprem.abortReason!, /observability collector/);
   // A bare "FitCliError: ..." is an abort too, just an unclassified one.
   assert.equal(find(rs, "op-cng-sit-lite", "situational")!.abortedAt, "Unclassified");
+});
+
+test("a preset fit-cli skipped on purpose isn't stored; one that ran and said nothing is aborted", () => {
+  const { records: rs, warnings, parseError } = records("node-2026-11-03.txt", "2026-11-03", "node");
+  assert.equal(parseError, undefined);
+  // Skipped: not tried, so no record - a preset that is only ever skipped stops counting.
+  assert.equal(find(rs, "op-cng-func-lite", "functional"), undefined);
+  assert.ok(warnings.includes("op-cng-func-lite: fit-cli skipped, as the SDKs in this execution group don't support CNG - not run"), warnings.join("\n"));
+  assert.ok(find(rs, "op-onprem-func-lite", "functional")?.counts);
+
+  // The same job printing nothing at all, and no fatal error: it ran and told us nothing.
+  const text = readLogFile(join(FIXTURES, "node-2026-11-03.txt"))
+    .split("\n")
+    .filter((l) => !l.startsWith("run-node-fit / op-cng-func-lite") || l.includes("Ran with: fit run preset"))
+    .join("\n");
+  const silent = buildRecords(parseRunLog(text), { sdk: "node", date: "2026-11-03", ci: { repo: "couchbase/couchnode", runId: 1, runAttempt: 1 } });
+  const cng = find(silent.records, "op-cng-func-lite", "functional")!;
+  assert.equal(cng.outcome, "aborted");
+  assert.equal(cng.abortedAt, NO_RESULTS);
 });
 
 test("class-level failures are kept as class errors, never guessed into a method", () => {

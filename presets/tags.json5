@@ -16,6 +16,9 @@
   // tag (onprem/cng/pe/capella/enterprise-analytics/columnar) carries the heading.
   functional: { order: 10, description: 'Runs FIT functional tests — CRUD, queries, transactions, and other core SDK operations — against a live cluster.', hiddenFromList: true },
   situational: { order: 20, description: 'Runs FIT situational tests, which exercise SDK behaviour under specific operational conditions (e.g. node failures, topology changes). Always targets a real, hosted Capella cluster for the test-results/coordination database, regardless of which cluster is under test.', hiddenFromList: true },
+  // Like functional/situational, this describes the test type rather than a cluster, so the
+  // preset's `onprem` tag carries the heading and this one stays hidden.
+  performance: { order: 22, description: 'Runs FIT/PERF workloads — throughput and per-second latency percentiles.', hiddenFromList: true },
   onprem: { order: 25, description: 'On-prem, self-managed testing using the operational SDK — the default cluster when no cloud/CNG feature is under test.' },
   cng: { order: 30, description: 'Runs against Cloud Native Gateway (CNG) / Protostellar instead of the operational SDK path.' },
   capella: { order: 40, description: 'Runs against a real Capella cluster, rather than an on-prem/self-managed one.' },

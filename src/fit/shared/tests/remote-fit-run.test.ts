@@ -12,6 +12,7 @@ import {
   remoteFitRootDir,
   remotePerformerArgs,
 } from "../util/remote-fit-run.js";
+import { SMALL_LOG_INTRO, SMALL_LOG_MAX_BYTES } from "../../../util/non-fit/proc.js";
 
 test("remoteFitRootDir defaults to the ubuntu home directory", () => {
   assert.equal(remoteFitRootDir(), "/home/ubuntu/fit-workspace");
@@ -68,6 +69,16 @@ test("remotePerformerArgs add the host-gateway alias and publish the performer p
   ]);
 });
 
+test("performer run args pass the requested LOG_LEVEL to the container", () => {
+  for (const args of [
+    remotePerformerArgs("performer-node-main", 8060, "info"),
+    createLocalFitExecutionContext().performerRunArgs("performer-node-main", 8060, "info"),
+  ]) {
+    assert.ok(args.includes("LOG_LEVEL=info"), `expected LOG_LEVEL=info in ${args.join(" ")}`);
+    assert.ok(!args.includes("LOG_LEVEL=debug"), `expected no LOG_LEVEL=debug in ${args.join(" ")}`);
+  }
+});
+
 test("performer run args never join another Docker network, so the published port keeps working", () => {
   // The test-driver is a host process dialling localhost:<port>, so it depends on the
   // publish. Joining a cluster's network silently breaks it: --publish does nothing on
@@ -113,6 +124,18 @@ test("heartbeatShellCommand redirects full output to file and emits a periodic l
   // Heartbeat tails the same quoted file on the configured interval.
   assert.match(script, /tail -n 1 '\/tmp\/fit logs\/driver\.log'/);
   assert.match(script, /-ge 30 \]/);
-  // The command's exit code is the script's, preserving failure semantics.
-  assert.match(script, /wait "\$cmd_pid"$/m);
+  // The command's exit code is the script's, preserving failure semantics. The
+  // small-log dump sits between the wait and the exit, so the status has to be
+  // captured and re-raised rather than left as the script's last statement.
+  assert.match(script, /wait "\$cmd_pid"\nstatus=\$\?\n/);
+  assert.match(script, /\nexit \$status$/);
+});
+
+test("heartbeatShellCommand prints the log inline when it ends up under the small-log threshold", () => {
+  const script = heartbeatShellCommand("./mvnw test", "/tmp/fit logs/driver.log", 30);
+  assert.match(script, new RegExp(`-le ${SMALL_LOG_MAX_BYTES} \\]`));
+  assert.match(script, /wc -c < '\/tmp\/fit logs\/driver\.log'/);
+  assert.match(script, /cat '\/tmp\/fit logs\/driver\.log'/);
+  // Same wording as the local path, so the two L3 targets read identically.
+  assert.ok(script.includes(SMALL_LOG_INTRO));
 });

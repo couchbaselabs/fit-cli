@@ -26,6 +26,7 @@ import { performerImageName } from "../util/performer-image.js";
 import { checkRunningPerformer, stopRunningPerformer } from "../check-running-performer/check-running-performer.js";
 export { DEFAULT_PERFORMER_PORT } from "../util/performer-port.js";
 import { DEFAULT_PERFORMER_PORT, type PortInUsePolicy } from "../util/performer-port.js";
+import type { PerformerLogLevel } from "../util/performer-log-level.js";
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -138,6 +139,7 @@ export function checkBuildAndRunPerformerArgs(
  * @param dockerNetwork The cluster's Docker network, which the performer is
  *   attached to, in addition to the default bridge network. See
  *   {@link connectPerformerToClusterNetwork} for why the order matters.
+ * @param logLevel The performer's `LOG_LEVEL`. Defaults to `debug`.
  */
 export async function checkBuildAndRunPerformer(
   execution: FitExecutionContext,
@@ -148,6 +150,7 @@ export async function checkBuildAndRunPerformer(
   onPortInUse?: PortInUsePolicy,
   hostPort: number = DEFAULT_PERFORMER_PORT,
   gerritRef?: string,
+  logLevel?: PerformerLogLevel,
 ): Promise<RunningPerformer | undefined> {
   // A Gerrit ref checks out transactions-fit-performer (the FIT test driver) at a
   // specific patchset; the performer image itself is always a prebuilt GHCR image
@@ -204,7 +207,7 @@ export async function checkBuildAndRunPerformer(
   }
 
   const imageName = performerImageName(sdk, version);
-  const args = execution.performerRunArgs(imageName, hostPort);
+  const args = execution.performerRunArgs(imageName, hostPort, logLevel);
   console.log(`\nStarting performer with:\n  docker ${args.join(" ")}\n`);
 
   try {
@@ -229,8 +232,11 @@ export async function checkBuildAndRunPerformer(
     // out from under us, so the logs above and the inspect below both still see
     // it even if it already exited.
     console.log(`Checking the performer doesn't crash on startup (polling for ${STARTUP_CRASH_CHECK_TOTAL_MS}ms)...`);
+    // Bounded by the clock rather than by counting iterations: on a remote box each inspect
+    // is a multi-second round trip, and counting turned a 2s watch into ~30s.
     let exitedEarly = false;
-    for (let waited = 0; waited < STARTUP_CRASH_CHECK_TOTAL_MS; waited += STARTUP_CRASH_CHECK_INTERVAL_MS) {
+    const crashCheckDeadline = Date.now() + STARTUP_CRASH_CHECK_TOTAL_MS;
+    while (Date.now() < crashCheckDeadline) {
       await sleep(STARTUP_CRASH_CHECK_INTERVAL_MS);
       const running = await execution
         .capture(execution.dockerCommand, ["inspect", "--format", "{{.State.Running}}", containerId])

@@ -5,10 +5,11 @@
 # someone notices. This reaps them, in both the dev and prod Capella
 # organizations.
 #
-# It runs `cbdinocluster cleanup cloud`, which removes the expired clusters in the
-# fit-cli project, and the expired legacy cbdc2_ projects anywhere in the
-# organization with their clusters. An expiry means the owner is done with it.
-# Live clusters are never touched, so this can run hourly.
+# It runs `cbdinocluster cleanup cloud --purpose fitcli`. It removes the expired
+# clusters that fit-cli runs created in the environment's fit-cli project, and the
+# expired legacy cbdc2_ projects that fit-cli runs created, with their clusters.
+# Nothing that other teams made is touched. Live clusters are never touched, so
+# this can run hourly.
 #
 # Clusters Capella itself failed to destroy are left. They are flagged loudly in
 # the log and raised as a warning annotation on the run page. Only Capella support
@@ -50,9 +51,9 @@ jobs:
     name: cleanup-capella-clusters (${{ matrix.capellaEnv }})
     runs-on: [ubuntu-latest]
     # Each delete waits on Capella, so a big backlog is slow. Cap it rather than
-    # let one run sit for the 6h default. The cleanup is bounded at 90m inside the
+    # let one run sit for the 6h default. The cleanup is bounded at 30m inside the
     # command, so it gives up before this cap and the summary is still written.
-    timeout-minutes: 120
+    timeout-minutes: 45
     steps:
       - name: Checkout fit-cli
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -75,6 +76,25 @@ jobs:
 
       - name: Install fit-cli dependencies
         run: bun install --frozen-lockfile
+
+      # The runner has no fit-cli config, so capella-clusters finds this binary
+      # through CBDINOCLUSTER_PATH.
+      - name: Install cbdinocluster
+        run: |
+          set -euo pipefail
+          # `config environments` prints environments.json5 as JSON and nothing else.
+          # `strings` gives nothing when the version is a PR or branch source.
+          version=$(bun run config environments | jq -r '.defaults.cbdinoclusterVersion | strings')
+          if [ -z "$version" ]; then
+            echo "defaults.cbdinoclusterVersion in environments.json5 is a PR or branch source. The sweep needs a release tag." >&2
+            exit 1
+          fi
+          target="$RUNNER_TEMP/cbdinocluster"
+          echo "Installing cbdinocluster $version to $target"
+          curl -fsSL "https://github.com/couchbaselabs/cbdinocluster/releases/download/$version/cbdinocluster-linux-amd64" -o "$target"
+          chmod 755 "$target"
+          "$target" version
+          echo "CBDINOCLUSTER_PATH=$target" >> "$GITHUB_ENV"
 
       - name: Reap expired Capella clusters
         env:

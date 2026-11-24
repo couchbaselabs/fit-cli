@@ -33,6 +33,12 @@ function s3ConsoleUrl(bucket: string, prefix: string): string {
   return `https://${AWS_REGION}.console.aws.amazon.com/s3/buckets/${bucket}?prefix=${encodedPrefix}&region=${AWS_REGION}`;
 }
 
+/** Console URL for one object, given its `s3://bucket/key` URI. */
+export function s3ObjectConsoleUrl(s3Uri: string): string {
+  const [bucket, ...keyParts] = s3Uri.replace(/^s3:\/\//, "").split("/");
+  return `https://${AWS_REGION}.console.aws.amazon.com/s3/object/${bucket}?prefix=${encodeURIComponent(keyParts.join("/"))}&region=${AWS_REGION}`;
+}
+
 /**
  * Recursively upload `localDir` to `s3Uri` (e.g. s3://bucket/prefix). Logs
  * each uploaded file. Rejects if any upload fails.

@@ -436,10 +436,12 @@ export async function dumpOtelData(execution: FitExecutionContext, otelDir: stri
   const artifacts: Artifact[] = [];
 
   try {
-    const traces = await dumpJaegerTraces(execution, otelDir, scratchDir, window);
-    artifacts.push(...traces.artifacts);
-    artifacts.push(...(await dumpPrometheusSnapshot(execution, otelDir)));
-    artifacts.push(...(await dumpPrometheusRange(execution, otelDir, scratchDir, window)));
+    const [traces, snapshot, range] = await Promise.all([
+      dumpJaegerTraces(execution, otelDir, scratchDir, window),
+      dumpPrometheusSnapshot(execution, otelDir),
+      dumpPrometheusRange(execution, otelDir, scratchDir, window),
+    ]);
+    artifacts.push(...traces.artifacts, ...snapshot, ...range);
     artifacts.push(writeWindowFile(otelDir, window, traces.services));
   } finally {
     await removeScratchDir(execution, scratchDir);

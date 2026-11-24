@@ -105,6 +105,8 @@ matrix:
     - language: .NET
     - language: Scala
     - language: Java
+    - language: Quarkus
+    - language: Quarkus Native
     - language: Kotlin
     - language: Go
     - language: Rust

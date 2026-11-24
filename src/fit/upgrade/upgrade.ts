@@ -30,6 +30,17 @@ export const CHANNELS = ["latest", "ci"] as const;
 export type Channel = (typeof CHANNELS)[number];
 const DEFAULT_CHANNEL: Channel = "latest";
 
+/**
+ * URL of one released binary, e.g. `releaseAssetUrl("ci", "fit-linux-x64")`.
+ *
+ * A channel tag and its assets are recreated on every publish, so this always names that
+ * channel's current build. Same scheme install.sh downloads from — the two have to agree,
+ * and the asset names come from build-binaries.yaml.
+ */
+export function releaseAssetUrl(channel: Channel, asset: string): string {
+  return `https://github.com/${REPO}/releases/download/${channel}/${asset}`;
+}
+
 export interface UpgradeArgs {
   channel: Channel;
   check: boolean;
@@ -114,15 +125,26 @@ export async function resolveRemoteSha(channel: Channel): Promise<string> {
   };
 
   const fetchJson = async (url: string): Promise<{ object: { sha: string; type: string; url: string } }> => {
-    const res = await fetch(url, { headers });
-    if (res.status === 404) {
-      throw new Error(`No release found for channel "${channel}" — the "${channel}" tag does not exist.`);
-    }
-    if (!res.ok) {
+    // github.com/api serves the occasional 504 ("Unicorn"). Retry those: callers treat a
+    // failure here as "this channel isn't it", so a blip would otherwise read as an answer.
+    // 404 is an answer — the tag genuinely doesn't exist — so it is never retried.
+    let lastError = "";
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      // Bounded: a hung connection here must not outlast whatever it's being asked about.
+      const res = await fetch(url, { headers, signal: AbortSignal.timeout(10_000) });
+      if (res.status === 404) {
+        throw new Error(`No release found for channel "${channel}" — the "${channel}" tag does not exist.`);
+      }
+      if (res.ok) {
+        return (await res.json()) as { object: { sha: string; type: string; url: string } };
+      }
       const text = await res.text().catch(() => "");
-      throw new Error(`GitHub API returned ${res.status} for ${url}${text ? `: ${text}` : ""}`);
+      // Truncated: GitHub's 5xx body is a full HTML error page.
+      lastError = `GitHub API returned ${res.status} for ${url}${text ? `: ${text.slice(0, 200)}` : ""}`;
+      if (res.status < 500 || attempt === 3) break;
+      await new Promise((r) => setTimeout(r, attempt * 1000));
     }
-    return res.json() as Promise<{ object: { sha: string; type: string; url: string } }>;
+    throw new Error(lastError);
   };
 
   const ref = await fetchJson(`https://api.github.com/repos/${REPO}/git/refs/tags/${channel}`);

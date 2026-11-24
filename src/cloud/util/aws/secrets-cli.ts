@@ -9,21 +9,19 @@
  *
  *   bun run secrets list                       # every env's secretId + whether it exists + which keys it has
  *   bun run secrets set  <secretId> k=v [k=v…] # create or update (merges with existing keys)
+ *   bun run secrets capella-key rotate [env] [--auto]  # put a new Capella v4 API key in the env's secret
  *
  * <secretId> may be a registry name (e.g. capella/dev → resolved via environments.json5)
  * or a raw Secrets Manager id/ARN.
  */
-import { SecretsManagerClient, CreateSecretCommand, PutSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { runScriptPrefix } from "../../../util/non-fit/fit-cli-log.js";
 import { loadEnvironments } from "../../../fit/util/environments.js";
-import { getJsonSecret, AwsSecretError } from "./secrets.js";
+import { getJsonSecret, mergeJsonSecret, AwsSecretError } from "./secrets.js";
 import { AWS_REGION } from "./aws-target.js";
+import { capellaKeyRotateUsage, runCapellaKeyRotate } from "./capella-key-rotate.js";
 import { GITHUB_AWS_SECRET_ID, ROSA_AWS_SECRET_ID } from "../../../fit/util/config.js";
 import { GERRIT_AWS_SECRET_ID } from "../../../fit/shared/util/remote-fit-execution-context.js";
-
-let client: SecretsManagerClient | undefined;
-const secrets = (): SecretsManagerClient => (client ??= new SecretsManagerClient({ region: AWS_REGION }));
 
 /** All known fit-cli secretIds — environments.json5 entries plus the fixed shared ones — with a human label. */
 function registrySecrets(): { label: string; secretId: string }[] {
@@ -75,23 +73,11 @@ async function cmdSet(idOrName: string, pairs: string[]): Promise<void> {
   }
   const secretId = resolveSecretId(idOrName);
 
-  // Merge onto whatever's already there so you can set one field without clobbering the rest.
-  let existing: Record<string, string> = {};
-  let exists = true;
-  try {
-    existing = await getJsonSecret(secretId);
-  } catch {
-    exists = false;
-  }
-  const merged = { ...existing, ...updates };
-  const SecretString = JSON.stringify(merged);
-
-  if (exists) {
-    await secrets().send(new PutSecretValueCommand({ SecretId: secretId, SecretString }));
-    console.log(`Updated ${secretId} — keys now: ${Object.keys(merged).sort().join(", ")}`);
+  const { created, keys } = await mergeJsonSecret(secretId, updates);
+  if (created) {
+    console.log(`Created ${secretId} — keys: ${keys.join(", ")}`);
   } else {
-    await secrets().send(new CreateSecretCommand({ Name: secretId, SecretString }));
-    console.log(`Created ${secretId} — keys: ${Object.keys(merged).sort().join(", ")}`);
+    console.log(`Updated ${secretId} — keys now: ${keys.join(", ")}`);
   }
 }
 
@@ -102,9 +88,16 @@ function helpText(): string {
 Usage:
   ${p} list
   ${p} set <secretId|name> key=value [key=value ...]
+  ${capellaKeyRotateUsage()}
 
 <name> may be a registry name from environments.json5 (e.g. capella/dev, results/prod)
-or a raw Secrets Manager id/ARN. Secrets are JSON objects of fields. Region: ${AWS_REGION}.`;
+or a raw Secrets Manager id/ARN. Secrets are JSON objects of fields. Region: ${AWS_REGION}.
+
+set and capella-key rotate write with your own AWS credentials, not fit-cli-role, which can
+only read. They need secretsmanager:PutSecretValue on the secret.
+
+capella-key rotate puts a working Capella v4 API key into an environment's shared secret.
+Run it by hand when that key stops working. See ${p} capella-key rotate --help.`;
 }
 
 export function runSecretsMain(): void {
@@ -118,10 +111,12 @@ export function runSecretsMain(): void {
         if (!rest[0]) throw new Error("set needs a <secretId|name>.");
         await cmdSet(rest[0], rest.slice(1));
         return;
-      default:
-        console.log(helpText());
-        if (command !== undefined && command !== "--help" && command !== "-h") process.exit(2);
+      case "capella-key":
+        if (rest[0] === "rotate") return runCapellaKeyRotate(rest.slice(1));
+        break;
     }
+    console.log(helpText());
+    if (command !== undefined && command !== "--help" && command !== "-h") process.exit(2);
   });
 }
 
