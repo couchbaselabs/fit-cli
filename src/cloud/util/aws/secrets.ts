@@ -1,5 +1,5 @@
 /**
- * Read JSON secrets from AWS Secrets Manager using the ambient AWS credential
+ * Read and update JSON secrets in AWS Secrets Manager using the ambient AWS credential
  * chain (env vars, SSO, shared profile, or CI OIDC) — the same credentials
  * fit-cli already needs to create instances. This is how per-environment Capella
  * and results-DB credentials are resolved at run time, so CI and laptops resolve
@@ -13,7 +13,12 @@
  *   bun src/cloud/util/aws/secrets.ts <secret-id>
  *   bun src/cloud/util/aws/secrets.ts fit-cli/gerrit/ssh-key
  */
-import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
+import {
+  SecretsManagerClient,
+  CreateSecretCommand,
+  GetSecretValueCommand,
+  PutSecretValueCommand,
+} from "@aws-sdk/client-secrets-manager";
 import { AWS_REGION } from "./aws-target.js";
 import { fitCliCredentialsProvider } from "./aws-cli.js";
 import { isMain } from "../../../util/non-fit/cli.js";
@@ -26,6 +31,16 @@ let client: SecretsManagerClient | undefined;
 function secretsClient(): SecretsManagerClient {
   client ??= new SecretsManagerClient({ region: AWS_REGION, credentials: fitCliCredentialsProvider });
   return client;
+}
+
+// The person's own credentials from the default chain. fit-cli-role can only read
+// secrets, so every write goes through this client. The chain reads the AWS_* env
+// vars first, and assuming fit-cli-role overwrites them. So a process that writes
+// must also read through this client, and never assume the role.
+let callerClient: SecretsManagerClient | undefined;
+function callerSecretsClient(): SecretsManagerClient {
+  callerClient ??= new SecretsManagerClient({ region: AWS_REGION });
+  return callerClient;
 }
 
 const cache = new Map<string, Record<string, string>>();
@@ -61,15 +76,20 @@ function isRetryableSecretError(err: unknown): boolean {
 /**
  * Fetch a JSON secret by id or ARN and parse it as a flat string map. Cached per
  * id for the process. Throws {@link AwsSecretError} with an actionable message on
- * a missing secret, denied access, or non-JSON value.
+ * a missing secret, denied access, or non-JSON value. Reads through fit-cli-role,
+ * or with the person's own credentials when `asCaller` is set.
  */
-export async function getJsonSecret(secretId: string): Promise<Record<string, string>> {
+export async function getJsonSecret(
+  secretId: string,
+  options: { asCaller?: boolean } = {},
+): Promise<Record<string, string>> {
   const hit = cache.get(secretId);
   if (hit) return hit;
 
+  const reader = options.asCaller ? callerSecretsClient() : secretsClient();
   let value: string | undefined;
   try {
-    const out = await retryWhole(() => secretsClient().send(new GetSecretValueCommand({ SecretId: secretId })), {
+    const out = await retryWhole(() => reader.send(new GetSecretValueCommand({ SecretId: secretId })), {
       delaysMs: SECRET_RETRY_DELAYS_MS,
       shouldRetry: isRetryableSecretError,
       // nextAttempt counts the first attempt, so the one that just failed is nextAttempt - 1.
@@ -96,6 +116,40 @@ export async function getJsonSecret(secretId: string): Promise<Record<string, st
   }
   cache.set(secretId, parsed);
   return parsed;
+}
+
+/**
+ * Merge `updates` into a JSON secret and write it back, so one field can change
+ * without touching the rest. Returns whether it was created and the field names
+ * it now holds.
+ *
+ * Reads and writes with the person's own AWS credentials, never fit-cli-role, so
+ * they need secretsmanager:GetSecretValue and secretsmanager:PutSecretValue on the
+ * secret. With `createIfMissing` (the default), a secret that can't be read is
+ * created, which also needs secretsmanager:CreateSecret. Without it, that throws.
+ */
+export async function mergeJsonSecret(
+  secretId: string,
+  updates: Record<string, string>,
+  options: { createIfMissing?: boolean } = {},
+): Promise<{ created: boolean; keys: string[] }> {
+  const { createIfMissing = true } = options;
+  let existing: Record<string, string> | undefined;
+  try {
+    existing = await getJsonSecret(secretId, { asCaller: true });
+  } catch (err) {
+    if (!createIfMissing) throw err;
+    existing = undefined;
+  }
+  const merged = { ...existing, ...updates };
+  const SecretString = JSON.stringify(merged);
+  if (existing) {
+    await callerSecretsClient().send(new PutSecretValueCommand({ SecretId: secretId, SecretString }));
+  } else {
+    await callerSecretsClient().send(new CreateSecretCommand({ Name: secretId, SecretString }));
+  }
+  cache.set(secretId, merged);
+  return { created: !existing, keys: Object.keys(merged).sort() };
 }
 
 if (isMain(import.meta.url)) {

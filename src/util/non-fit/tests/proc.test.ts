@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { capture, captureValueSync, createLogFile, streamToFile } from "../proc.js";
+import { capture, captureValueSync, createLogFile, SMALL_LOG_INTRO, SMALL_LOG_MAX_BYTES, streamToFile } from "../proc.js";
 
 test("createLogFile writes under the shared fit-cli temp directory", () => {
   const path = createLogFile("performer");
@@ -58,26 +58,78 @@ test("streamToFile writes stdout and stderr to a log file", async () => {
   assert.match(output, /fit stderr/);
 });
 
+/**
+ * Run streamToFile in a child process so we can observe its real stdout without
+ * monkeypatching this process's streams (which confuses the test runner's own
+ * reporter). streamToFile echoes the command line it's about to run, so the
+ * grandchild assembles its output marker at runtime — that way the marker never
+ * appears in the echoed command, and anything matching it on stdout can only be
+ * the grandchild's own output.
+ */
+async function streamToFileInChild(childSource: string, logFile: string): Promise<string> {
+  const procModule = new URL("../proc.ts", import.meta.url).href;
+  // Swallow the rejection inside the child: a non-zero grandchild is one of the
+  // cases under test, and letting it propagate would fail `capture` and take the
+  // terminal output we came here to inspect with it.
+  const driver = [
+    `import { streamToFile } from ${JSON.stringify(procModule)};`,
+    `await streamToFile(${JSON.stringify(process.execPath)}, ["-e", ${JSON.stringify(childSource)}], ${JSON.stringify(logFile)}).catch(() => {});`,
+  ].join("\n");
+  return capture(process.execPath, ["--import", "tsx", "--input-type=module", "-e", driver]);
+}
+
 test("streamToFile does not echo the command's output to the terminal", async () => {
   const dir = mkdtempSync(join(tmpdir(), "fit-cli-proc-"));
   const logFile = join(dir, "test-driver.log");
-  const procModule = new URL("../proc.ts", import.meta.url).href;
 
-  // Run streamToFile in a child process so we can observe its real stdout
-  // without monkeypatching this process's streams (which confuses the test
-  // runner's own reporter). streamToFile echoes the command line it's about to
-  // run, so the grandchild assembles its output marker at runtime — that way the
-  // marker never appears in the echoed command, and anything matching it on
-  // stdout can only be the grandchild's output leaking through.
-  const driver = [
-    `import { streamToFile } from ${JSON.stringify(procModule)};`,
-    `await streamToFile(${JSON.stringify(process.execPath)}, ["-e", "console.log(['fit','marker'].join('-'))"], ${JSON.stringify(logFile)});`,
-  ].join("\n");
+  // Deliberately over SMALL_LOG_MAX_BYTES: a log this size is the case L3 exists
+  // for, and must stay in the file. (Small logs are dumped — see the next test.)
+  const terminal = await streamToFileInChild(
+    "for (let i = 0; i < 4000; i++) console.log(['fit','marker'].join('-'))",
+    logFile,
+  );
 
-  const terminal = await capture(process.execPath, ["--import", "tsx", "--input-type=module", "-e", driver]);
-
+  assert.ok(readFileSync(logFile, "utf8").length > SMALL_LOG_MAX_BYTES);
   assert.doesNotMatch(terminal, /fit-marker/);
   assert.match(readFileSync(logFile, "utf8"), /fit-marker/);
+});
+
+test("streamToFile prints the whole log to the terminal when it is under the size threshold", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "fit-cli-proc-"));
+  const logFile = join(dir, "test-driver.log");
+
+  const terminal = await streamToFileInChild("console.log(['fit','marker'].join('-'))", logFile);
+
+  assert.ok(readFileSync(logFile, "utf8").length <= SMALL_LOG_MAX_BYTES);
+  assert.match(terminal, new RegExp(SMALL_LOG_INTRO));
+  assert.match(terminal, /fit-marker/);
+});
+
+test("streamToFile prints a short log even when the command fails", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "fit-cli-proc-"));
+  const logFile = join(dir, "test-driver.log");
+
+  // The failure case is the one that motivated this: a process that dies early
+  // leaves a log that is nothing but the stack trace, and the reader wants it
+  // in front of them rather than in a file.
+  const terminal = await streamToFileInChild(
+    "console.error(['fit','marker'].join('-')); process.exit(1)",
+    logFile,
+  );
+
+  assert.match(terminal, new RegExp(SMALL_LOG_INTRO));
+  assert.match(terminal, /fit-marker/);
+});
+
+test("streamToFile stays quiet when the command produced no output at all", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "fit-cli-proc-"));
+  const logFile = join(dir, "test-driver.log");
+
+  const terminal = await streamToFileInChild("", logFile);
+
+  // The log still holds streamToFile's own `# <timestamp> <command>` header, so
+  // "empty" here means "the command said nothing" — don't print a bare header.
+  assert.doesNotMatch(terminal, new RegExp(SMALL_LOG_INTRO));
 });
 
 test("run tees child output into the session log by default", async () => {

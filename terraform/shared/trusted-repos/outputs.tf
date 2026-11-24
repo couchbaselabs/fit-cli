@@ -33,6 +33,8 @@ locals {
     "couchbase/couchbase-analytics-jvm-clients",
     "couchbase/gocbanalytics",
 
+    # Columnar SDKs
+    "couchbase/gocbcolumnar",
   ]
 
   # GitHub issues "immutable OIDC subjects" for recently created repos: the `sub` claim

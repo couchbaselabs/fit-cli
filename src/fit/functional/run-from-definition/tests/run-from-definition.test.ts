@@ -6,15 +6,17 @@ import { test } from "node:test";
 import { sdkByValue } from "../../../../util/sdk/sdks.js";
 import type { ClusterCommandExecutor } from "../../../../cluster/cluster-create/allocate-cluster.js";
 import type { SelectedCluster } from "../../../../cluster/cluster-select/cluster-select.js";
-import type { ResolvedFunctionalExecutionGroup, ResolvedSituationalExecutionRun } from "../../../shared/definition/resolve-definition.js";
+import type { ResolvedExecutionGroup, ResolvedFunctionalExecutionGroup, ResolvedSituationalExecutionRun } from "../../../shared/definition/resolve-definition.js";
+import type { ExecutionOverride } from "../../select-execution-target/select-execution-target.js";
 import type { FitExecutionContext } from "../../../shared/util/remote-fit-run.js";
 import type { OtelContainerHandle, OtelStackHandle } from "../../../external-services/otel/start/start-otel-stack.js";
 import {
   cbdinoclusterSetupFailed,
   finalizeRunFromDefinition,
+  type GroupClusterState,
   runLabelParts,
-  runStamp,
   runTests,
+  repoDirOverrideConflictsWithRemote,
   scopedPromptId,
   setupCluster,
   situationalCbdinoSettings,
@@ -23,7 +25,6 @@ import {
 } from "../run-from-definition.js";
 import { formatRunLabel } from "../../../shared/util/run-labels.js";
 import { loadEnvironments } from "../../../util/environments.js";
-import type { ResumeClusterState, RunState } from "../resume-state.js";
 import { removeClusterArgs, removeRunCapellaClustersArgs } from "../../../../cluster/cluster-create/setup-declarative-cluster.js";
 
 const STAMP = "fitcli-20260101-000000-0123abcd";
@@ -110,7 +111,7 @@ function capellaCluster() {
 function cngCluster() {
   return {
     ...cluster(),
-    cng: { performerConnectionString: "couchbase2://localhost:18098", tls: null },
+    cng: { performerConnectionString: "couchbase2://localhost:18098", tls: {} },
   };
 }
 
@@ -161,6 +162,7 @@ function fitExecutionContext(): FitExecutionContext {
     removeTree: () => Promise.resolve(),
     runArtifactsDir: () => "/tmp/root/artifacts/run",
     collectJunitArtifacts: () => Promise.resolve([]),
+    collectResultsDir: () => Promise.resolve(undefined),
     pathExists: () => Promise.resolve(true),
     commandAvailable: () => Promise.resolve(true),
     performerRunArgs: () => [],
@@ -370,20 +372,6 @@ test("runTests gives FIT the run stamp in resourceCreation.cluster.cbdinocluster
   assert.equal(resourceCreation.cluster.cbdinocluster.purpose, STAMP);
 });
 
-test("runStamp prefers the stamp saved by the original run", () => {
-  assert.equal(runStamp({ ...savedRunState(), purpose: STAMP }), STAMP);
-});
-
-test("runStamp makes a fresh stamp when there is none to reuse", () => {
-  assert.match(runStamp(undefined), /^fitcli-\d{8}-\d{6}-[0-9a-f]{8}$/);
-  assert.match(runStamp(savedRunState()), /^fitcli-\d{8}-\d{6}-[0-9a-f]{8}$/);
-  assert.notEqual(runStamp(undefined), runStamp(undefined));
-});
-
-function savedRunState(): RunState {
-  return { version: 1, executionGroupIndex: 0, target: { kind: "local" }, performers: [] };
-}
-
 test("runTests leaves resourceCreation off for a Capella cbdinocluster run (no Docker deployer)", async () => {
   let receivedFitConfig: { config?: Record<string, unknown> } | undefined;
   await runTests(fitExecutionContext(), "cbdinocluster", iteration(capellaCluster()), undefined, {
@@ -416,6 +404,61 @@ test("runTests leaves resourceCreation off for a CNG cbdinocluster run (no Docke
   assert.equal(receivedFitConfig?.config?.resourceCreation, undefined);
 });
 
+function groupWithKind(kind: "aws" | "gcp" | "localhost"): ResolvedExecutionGroup {
+  return { instance: { kind } } as unknown as ResolvedExecutionGroup;
+}
+
+const DEFINITION_OVERRIDE: ExecutionOverride = { kind: "definition" };
+const LOCALHOST_OVERRIDE: ExecutionOverride = { kind: "localhost" };
+const AWS_OVERRIDE: ExecutionOverride = { kind: "aws" };
+const EXISTING_OVERRIDE: ExecutionOverride = { kind: "existing", existing: { instanceId: "i-0123456789abcdef0" } };
+
+test("repoDirOverrideConflictsWithRemote is true when the definition puts an AWS group on it and the override honours the definition", () => {
+  assert.equal(
+    repoDirOverrideConflictsWithRemote(["transactions-fit-performer"], DEFINITION_OVERRIDE, [groupWithKind("aws")]),
+    true,
+  );
+});
+
+test("repoDirOverrideConflictsWithRemote is true for a GCP group too", () => {
+  assert.equal(
+    repoDirOverrideConflictsWithRemote(["transactions-fit-performer"], DEFINITION_OVERRIDE, [groupWithKind("gcp")]),
+    true,
+  );
+});
+
+test("repoDirOverrideConflictsWithRemote is false with no active overrides, even against an AWS instance", () => {
+  assert.equal(repoDirOverrideConflictsWithRemote([], DEFINITION_OVERRIDE, [groupWithKind("aws")]), false);
+});
+
+test("repoDirOverrideConflictsWithRemote is false when every group's declared instance is localhost", () => {
+  assert.equal(
+    repoDirOverrideConflictsWithRemote(["transactions-fit-performer"], DEFINITION_OVERRIDE, [groupWithKind("localhost")]),
+    false,
+  );
+});
+
+test("repoDirOverrideConflictsWithRemote is false when an interactive run overrides an AWS-declared group onto localhost", () => {
+  assert.equal(
+    repoDirOverrideConflictsWithRemote(["transactions-fit-performer"], LOCALHOST_OVERRIDE, [groupWithKind("aws")]),
+    false,
+  );
+});
+
+test("repoDirOverrideConflictsWithRemote is true when an interactive run forces a fresh EC2 instance, even if every group is declared localhost", () => {
+  assert.equal(
+    repoDirOverrideConflictsWithRemote(["transactions-fit-performer"], AWS_OVERRIDE, [groupWithKind("localhost")]),
+    true,
+  );
+});
+
+test("repoDirOverrideConflictsWithRemote is true when an interactive run forces an existing EC2 instance", () => {
+  assert.equal(
+    repoDirOverrideConflictsWithRemote(["transactions-fit-performer"], EXISTING_OVERRIDE, [groupWithKind("localhost")]),
+    true,
+  );
+});
+
 test("scopedPromptId leaves ids unscoped for single-preset runs", () => {
   // No scope: id must stay byte-for-byte identical so existing replay logs still match.
   assert.equal(scopedPromptId("run-from-definition.teardown.leave-up", undefined), "run-from-definition.teardown.leave-up");
@@ -440,10 +483,17 @@ test("situationalCbdinoSettings uses the override version for a non-CNG run", ()
   assert.equal(settings.version, "8.0-stable");
 });
 
-test("situationalCbdinoSettings ignores a version override for a CNG run (CNG pins its own version)", () => {
-  const withOverride = situationalCbdinoSettings(true, false, "8.0-stable");
-  const withoutOverride = situationalCbdinoSettings(true, false);
-  assert.equal(withOverride.version, withoutOverride.version);
+test("situationalCbdinoSettings uses environments.json5's cngClusterVersion for a CNG run with no override", () => {
+  assert.equal(situationalCbdinoSettings(true, false).version, loadEnvironments().defaults.cngClusterVersion);
+});
+
+test("situationalCbdinoSettings uses the override version for a CNG run", () => {
+  assert.equal(situationalCbdinoSettings(true, false, "8.0.2-5503").version, "8.0.2-5503");
+});
+
+test("situationalCbdinoSettings asks for gateway ingress for a CNG run, so the driver verifies TLS", () => {
+  assert.equal(situationalCbdinoSettings(true, false).cao?.ingress, "gateway");
+  assert.equal(situationalCbdinoSettings(false, false).cao, undefined);
 });
 
 test("situationalCbdinoSettings leaves deployer unset for an aws instance (driver defaults to aws)", () => {
@@ -525,13 +575,8 @@ function otelStackHandle(): OtelStackHandle {
 
 function teardownInputs(overrides: Partial<Parameters<typeof teardownRun>[0]> = {}): Parameters<typeof teardownRun>[0] {
   return {
-    definitionPath: "/tmp/fit.json5",
-    executionGroupIndex: 0,
-    runIndex: 0,
     execution: fitExecutionContext(),
     teardown: { kind: "local" },
-    forceLocalhost: false,
-    forceAws: false,
     purpose: STAMP,
     performers: [],
     performerStates: [],
@@ -561,6 +606,11 @@ test("a CNG situational run is labelled with CNG's pinned version, and isn't a C
   assert.equal(parts.clusterVersion, cngVersion);
   assert.equal(parts.capella, undefined);
   assert.equal(formatRunLabel(situationalRun().path, parts), `aws1 / ${cngVersion} / java:main / situational:cng:standard-qe`);
+});
+
+test("a CNG situational run that names a version is labelled with it", () => {
+  const parts = runLabelParts("aws", undefined, situationalRun({ cng: true, version: "8.0.2-5503" }), undefined, true);
+  assert.equal(parts.clusterVersion, "8.0.2-5503");
 });
 
 test("a fitConfig override of situational.cbdino.version is what the label reports", () => {
@@ -621,7 +671,7 @@ const SWEEP = `cbdinocluster ${removeRunCapellaClustersArgs(STAMP).join(" ")}`;
 const POOL_REMOVAL = "cbdinocluster cloud apikeys remove";
 const LEAVE_NOTHING_UP = { confirmLeaveUpFn: () => Promise.resolve(false) };
 
-function allocatedClusterState(capellaCredentials: boolean): ResumeClusterState {
+function allocatedClusterState(capellaCredentials: boolean): GroupClusterState {
   return {
     cluster: capellaCredentials ? capellaCluster() : cluster(),
     allocated: true,

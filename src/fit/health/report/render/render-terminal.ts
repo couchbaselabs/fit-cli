@@ -20,7 +20,7 @@ export function renderTerminal(report: HealthReport): string {
     lines.push(`${s.label.padEnd(width)}${shown.map((c) => String(s.counts[c] || "·").padStart(col)).join("")}`);
   }
 
-  // The functional series' changes, as the page and Slack list them (report.digest).
+  // The counted series' changes, as the page and Slack list them (report.digest).
   const d = report.digest;
   lines.push("", `Started failing, last ${report.classes.recentDays} days (${d.started.total}):`);
   for (const g of d.startedGroups) for (const t of g.tests) lines.push(`  ${g.where.padEnd(26)} since ${g.since}  ${t}`);
@@ -29,6 +29,11 @@ export function renderTerminal(report: HealthReport): string {
   if (d.stoppedRunning.length) {
     lines.push("", `Stopped running, last ${report.classes.recentDays} days (${d.stoppedRunning.length}):`);
     for (const t of d.stoppedRunning) lines.push(`  ${t.where.padEnd(26)} not run since ${t.since}  ${t.test}`);
+  }
+
+  if (d.stoppedCounting.length) {
+    lines.push("", `Stopped counting, not tried in the last ${report.activeRuns} nightly runs (${d.stoppedCounting.length}):`);
+    for (const x of d.stoppedCounting) lines.push(`  ${x.series.padEnd(26)} last tried ${x.last}`);
   }
 
   if (d.failedLastNight) {

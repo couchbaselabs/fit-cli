@@ -4,8 +4,8 @@
  * entrypoint; authoring and inspecting definition files lives under
  * `fit definition`.
  *
- *   bun run run preset <preset> --performer <image> [resume flags] [--cbcollect]
- *   bun run run definition <file.json5> [--resume-at=<point>] [resume selectors] [--cbcollect]
+ *   bun run run preset <preset> --performer <image> [--cbcollect]
+ *   bun run run definition <file.json5> [--cbcollect]
  *
  * The subcommand says what kind of thing is being run: a named `preset`
  * template, or a `definition` file (path or URL).
@@ -26,11 +26,6 @@ import {
   resolveAndLoadDefinition,
 } from "../shared/definition/parse-definition.js";
 import {
-  extractResumeAt,
-  extractResumeSelector,
-  parseResumePoint,
-} from "../functional/run-from-definition/resume.js";
-import {
   applyDotPathOverride,
   assertEnvOverridesUsed,
   formatKnownPresetsByTag,
@@ -49,6 +44,8 @@ import { postSlackRunResults } from "../slack/post-run-summary.js";
 import type { SlackRunResult } from "../slack/util/slack-results.js";
 import { extractFailureTail, likelyCauseLine } from "../util/gha.js";
 import { getCurrentSessionTail } from "../../util/non-fit/proc.js";
+import { recordRepoDirOverride } from "../util/repo-dir-overrides.js";
+import { RESULTS_UPLOAD_FLAG } from "../shared/results/results-upload-policy.js";
 
 /** Maps a `--repo-dir` key (a {@link Repo.name}) to the env var {@link resolveFitPerformerDir} reads it from. */
 const REPO_DIR_ENV_VARS: Record<string, string> = {
@@ -63,8 +60,8 @@ function buildHelp(): string {
   return `Run FIT tests from a preset or a definition file.
 
 Usage:
-  ${run} preset <preset>[,<preset>...] --performer <image> [--env-override <path>=<value>] [resume flags] [--cbcollect] [--slack-thread <ref>] [--repeat <n>] [--stop-on-failure] [--situational-run-id <uuid>]
-  ${run} definition <file.json5> [--override <dotpath>=<value>] [--resume-at=<point>] [resume selectors] [--cbcollect] [--slack-thread <ref>] [--repeat <n>] [--stop-on-failure] [--situational-run-id <uuid>]
+  ${run} preset <preset>[,<preset>...] --performer <image> [--env-override <path>=<value>] [--cbcollect] [--slack-thread <ref>] [--repeat <n>] [--stop-on-failure] [--situational-run-id <uuid>] [--results-upload]
+  ${run} definition <file.json5> [--override <dotpath>=<value>] [--cbcollect] [--slack-thread <ref>] [--repeat <n>] [--stop-on-failure] [--situational-run-id <uuid>] [--results-upload]
   ${run} --help
 
 Subcommands:
@@ -94,6 +91,8 @@ Shared options (both subcommands):
   --stop-on-failure                Turn any failure into an immediate abort of the whole run (instead of
                                   continuing to the next run/cluster/instance). Combine with --repeat <n> to
                                   stop a repeated run at its first failure.
+  --results-upload                 Upload FIT/SIT and FIT/PERF result files to the results S3 bucket, for the
+                                  results database. Off by default, wherever the run executes; CI passes it.
 
 preset options:
   --performer <image>             SDK-specific performer image ref (e.g. java-fit-performer:refs-changes-67-246067-3 or ghcr.io/couchbase/java-fit-performer:refs-changes-67-246067-3). Alias: --performer-image-name.
@@ -110,19 +109,6 @@ preset options:
 definition options:
   --override <dotpath>=<value>    Override a field in the definition before running (repeatable).
                                   e.g. --override setup.repos.transactions-fit-performer.gerritRef=refs/changes/05/247705/1
-
-Resume points:
-  --resume-at=after-instance-creation   Reuse a running instance.
-  --resume-at=after-remote-preparation  Reuse a prepared remote workspace.
-  --resume-at=after-cluster-creation    Reuse an allocated cluster.
-  --resume-at=after-performer           Reuse the cluster and a running performer.
-
-Resume selectors (narrow a resume to one run; emitted by a left-up run):
-  --resume-instance=<n>             Which instance to resume.
-  --resume-cluster=<n>              Which cluster within the instance.
-  --resume-session=<n>              Which session within the cluster.
-  --resume-clusterless-session=<n>  Which clusterless (situational) session.
-  --resume-run=<n>                  Which run within the session.
 
 See available presets in detail with: ${runScriptPrefix("preset")} list`;
 }
@@ -175,6 +161,12 @@ function extractSlackThreadFlag(argv: readonly string[]): { slackThread?: string
     }
   }
   return { slackThread, positionals };
+}
+
+/** See {@link RunFromDefinitionOptions.resultsUpload}. */
+export function extractResultsUploadFlag(argv: readonly string[]): { resultsUpload: boolean; positionals: string[] } {
+  const positionals = argv.filter((arg) => arg !== RESULTS_UPLOAD_FLAG);
+  return { resultsUpload: positionals.length !== argv.length, positionals };
 }
 
 /** See {@link RunFromDefinitionOptions.situationalRunId}. */
@@ -250,6 +242,7 @@ function extractRepoDirs(argv: readonly string[]): { repoDirs: Record<string, st
 function applyRepoDirs(repoDirs: Record<string, string>): void {
   for (const [name, dir] of Object.entries(repoDirs)) {
     process.env[REPO_DIR_ENV_VARS[name]] = dir;
+    recordRepoDirOverride(name);
   }
 }
 
@@ -372,35 +365,44 @@ function patchDefinitionFile(resolvedPath: string, patch: (raw: Record<string, u
   return patchedPath;
 }
 
+const REMOVED_RESUME_FLAG = /^--resume-(at|instance|cluster|session|clusterless-session|run)(=|$)/;
+
 /**
- * Extract the resume point/selector, `--cbcollect` and `--repeat`/`--stop-on-failure`
- * shared by both run subcommands, returning the parsed run options, the run count
- * requested via `--repeat` (if any), and the remaining positionals.
+ * `--resume-at` and its `--resume-*` selectors were removed. Fail with a pointer to
+ * what to do instead, rather than a generic usage error.
+ */
+function rejectRemovedResumeFlags(argv: readonly string[]): void {
+  const flag = argv.find((arg) => REMOVED_RESUME_FLAG.test(arg));
+  if (flag === undefined) return;
+  console.error(
+    `${flag.split("=")[0]} has been removed. To iterate quickly, answer yes to "Leave everything up" at the end ` +
+      `of a run, then rerun with the performer's onPortInUse: reuse and the cluster's useExisting settings.`,
+  );
+  process.exit(2);
+}
+
+/**
+ * Extract `--cbcollect`, the Slack flags, `--situational-run-id` and
+ * `--repeat`/`--stop-on-failure` shared by both run subcommands, returning the parsed
+ * run options, the run count requested via `--repeat` (if any), and the remaining
+ * positionals.
  */
 function extractRunOptions(
   argv: readonly string[],
 ): { runOpts: RunFromDefinitionOptions; repeat?: number; slackResultFile?: string; positionals: string[] } {
-  const { resumeAt, positionals: afterResume } = extractResumeAt(argv);
-  const { selector: resumeSelector, positionals: afterSelector } = extractResumeSelector(afterResume);
-  const { cbcollect, positionals: afterCbcollect } = extractCbcollectFlag(afterSelector);
+  rejectRemovedResumeFlags(argv);
+  const { cbcollect, positionals: afterCbcollect } = extractCbcollectFlag([...argv]);
   const { slackThread, positionals: afterSlackThread } = extractSlackThreadFlag(afterCbcollect);
   const { slackResultFile, positionals: afterSlackResultFile } = extractSlackResultFileFlag(afterSlackThread);
   const { situationalRunId, positionals: afterSituationalRunId } = extractSituationalRunIdFlag(afterSlackResultFile);
-  const { repeat, stopOnFailure, positionals } = extractRepeatFlags(afterSituationalRunId);
-  let resumePoint;
-  try {
-    resumePoint = parseResumePoint(resumeAt);
-  } catch (err) {
-    console.error((err as Error).message);
-    process.exit(2);
-  }
+  const { resultsUpload, positionals: afterResultsUpload } = extractResultsUploadFlag(afterSituationalRunId);
+  const { repeat, stopOnFailure, positionals } = extractRepeatFlags(afterResultsUpload);
   const runOpts = {
-    ...(resumePoint ? { resumeAt: resumePoint } : {}),
-    resumeSelector,
     ...(cbcollect ? { cbcollect } : {}),
     ...(slackThread ? { slackThread } : {}),
     ...(stopOnFailure ? { stopOnFailure } : {}),
     ...(situationalRunId ? { situationalRunId } : {}),
+    ...(resultsUpload ? { resultsUpload } : {}),
   };
   return { runOpts, repeat, ...(slackResultFile ? { slackResultFile } : {}), positionals };
 }
@@ -533,7 +535,7 @@ export async function runDispatch(argv: string[]): Promise<RunOutput | void> {
             ...(wantsSlackOutput ? { deferSlackTo: groupSlackResults } : {}),
           });
           if (output) outputs.push(output);
-          // Some failures (e.g. resuming with no saved state) return normally without
+          // Some failures (e.g. missing AWS credentials) return normally without
           // ever reaching the Slack block inside runFromDefinition, so no rows get
           // pushed — without this, such a preset would silently vanish from the
           // combined message instead of showing up as a failure.
@@ -625,12 +627,10 @@ export async function runDispatch(argv: string[]): Promise<RunOutput | void> {
   const [definitionPath, ...extra] = positionals;
   if (!definitionPath || extra.length > 0) {
     console.error(
-      `Usage: ${runScriptPrefix("run")} definition <file.json5> [--override <dotpath>=<value>] [--repeat <n>] [--stop-on-failure] [--resume-at=<point>] [resume selectors]\n` +
+      `Usage: ${runScriptPrefix("run")} definition <file.json5> [--override <dotpath>=<value>] [--repeat <n>] [--stop-on-failure]\n` +
         "  --override: override a field in the definition (repeatable)\n" +
         "  --repeat: run every test in the file this many times\n" +
-        "  --stop-on-failure: abort the whole run at the first failure\n" +
-        "  --resume-at: after-instance-creation | after-remote-preparation | after-cluster-creation | after-performer\n" +
-        "  resume selectors: --resume-instance=<n> --resume-cluster=<n> --resume-session=<n> --resume-clusterless-session=<n> --resume-run=<n>",
+        "  --stop-on-failure: abort the whole run at the first failure",
     );
     process.exit(2);
   }

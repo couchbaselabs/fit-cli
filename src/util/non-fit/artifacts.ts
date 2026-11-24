@@ -167,8 +167,8 @@ export function reconcileArtifactsWithDir(artifactDir: string, explicit: readonl
   const known = new Set(combined.map((artifact) => artifact.filename));
   const extras: Artifact[] = discovered
     .filter((filename) => !known.has(filename))
-    // `_internal/` holds fit-cli's own bookkeeping (run-state.json, wrapper
-    // scripts, etc.) — implementation detail, not something to surface in the
+    // `_internal/` holds fit-cli's own bookkeeping (wrapper scripts,
+    // etc.) — implementation detail, not something to surface in the
     // user-facing artifact table.
     .filter((filename) => !filename.split(/[\\/]/).includes("_internal"))
     // Individual surefire XML files are archived into surefire-reports.tar.gz;

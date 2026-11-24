@@ -121,8 +121,14 @@ function dockerMemoryForServices(services: string[]): CbdinoclusterDockerDef | u
  */
 export interface CbdinoclusterDef {
   nodes: { count: number; version?: string; services?: string[] }[];
-  /** Present only when CNG/Protostellar support is wanted. */
-  cao?: { "operator-version": string; "gateway-version": string };
+  /**
+   * Present only when CNG/Protostellar support is wanted. `ingress` is how allocate
+   * exposes the cluster on OpenShift: `gateway` publishes it through the shared istio
+   * gateway, which serves a publicly-trusted certificate, so the SDK can verify TLS;
+   * `route` (cbdinocluster's default) is a TLS-passthrough route serving CNG's own
+   * self-signed certificate, which forces insecure TLS. See {@link cngPerformerTls}.
+   */
+  cao?: { "operator-version": string; "gateway-version": string; ingress?: "route" | "gateway" };
   /** Present only for an Analytics cluster (Enterprise Analytics or Capella Analytics). */
   columnar?: boolean;
   /** cbdinocluster deployer: "cloud" for Capella Analytics; "docker" (or absent) for Enterprise Analytics. */
@@ -183,7 +189,7 @@ export function buildClusterDefObject(def: ClusterDef): CbdinoclusterDef {
   return {
     nodes: [{ count: def.nodeCount, version: def.version, services: def.services }],
     ...(def.cng
-      ? { cao: { "operator-version": caoOperatorVersion, "gateway-version": cngVersion } }
+      ? { cao: { "operator-version": caoOperatorVersion, "gateway-version": cngVersion, ingress: "gateway" } }
       : {}),
     ...(docker ? { docker } : {}),
   };
@@ -204,6 +210,7 @@ export function buildClusterDef(def: ClusterDef): string {
       "cao:",
       `  operator-version: "${caoOperatorVersion}"`,
       `  gateway-version: "${cngVersion}"`,
+      `  ingress: "gateway"`,
     );
   }
 

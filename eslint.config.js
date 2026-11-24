@@ -4,7 +4,9 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["dist/**", "node_modules/**", ".claude/**"],
+    // src/fit/performance/generated is protoc-gen-es output — regenerate it with
+    // `bun run generate-protocol` rather than editing it to satisfy a rule.
+    ignores: ["dist/**", "node_modules/**", ".claude/**", "src/fit/performance/generated/**"],
   },
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,

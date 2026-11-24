@@ -8,7 +8,7 @@
  * that's the driver's actual contract (transactions-fit-performer's FITConfigRaw),
  * unrelated to fit-cli's own internal naming.
  */
-import type { ExternalService } from "../external-service.js";
+import type { ExternalService, ExternalServiceHandle } from "../external-service.js";
 import type { PieceData } from "../../../util/non-fit/config-pieces.js";
 import { startOtelStack, type OtelStackHandle } from "./start/start-otel-stack.js";
 import { stopOtelStack } from "./stop/stop-otel-stack.js";
@@ -36,3 +36,13 @@ export const otelExternalService: ExternalService = {
   configPiece: (handle) => configPiece(handle as OtelStackHandle),
   describeLeaveUp: (handle) => describeLeaveUp(handle as OtelStackHandle),
 };
+
+/**
+ * The running otel stack's OTLP gRPC collector endpoint, performer-relative, or undefined if no
+ * otel stack is up. For callers that drive a performer themselves rather than via
+ * FITConfiguration — the perf engine.
+ */
+export function otelCollectorOtlpGrpc(handles: readonly ExternalServiceHandle[]): string | undefined {
+  const handle = handles.find((h) => h.service === otelExternalService.name) as OtelStackHandle | undefined;
+  return handle?.endpoints.collector.otlpGrpc;
+}

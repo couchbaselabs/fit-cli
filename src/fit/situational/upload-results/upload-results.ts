@@ -1,9 +1,14 @@
 /**
- * upload-results: upload a FIT/SIT run's results directories to S3, where the
- * ingest job on the results database server picks them up. The test-driver
- * writes one directory per run (transactions-fit-performer I3f285a9e); each
- * complete one goes to s3://fit-cli/incoming/<situationalRunUuid>/<runUuid>/,
- * followed by the DONE_MARKER object that makes the run visible to the ingest.
+ * upload-results: upload a FIT/SIT or FIT/PERF run's results directories to S3,
+ * where the ingest job on the results database server picks them up. Both write
+ * one directory per run (the SIT test-driver since transactions-fit-performer
+ * I3f285a9e, and fit-cli's own perf engine); each complete one goes to
+ * s3://fit-cli/incoming/<situationalRunUuid>/<runUuid>/, followed by the
+ * DONE_MARKER object that makes the run visible to the ingest.
+ *
+ * The first segment groups the runs of one fit-cli invocation. For SIT it is the
+ * situational run id the database records; perf runs have no such parent, so they
+ * are grouped under the invocation's id and the ingest records nothing for it.
  *
  * Run on its own:
  *   bun src/fit/situational/upload-results/upload-results.ts <resultsDir>
@@ -18,6 +23,7 @@ import { type Detail, type RunOutput } from "../../../util/non-fit/artifacts.js"
 import { s3Client } from "../../../cloud/util/aws/aws-clients.js";
 import { uploadDirectoryToS3 } from "../../../cloud/util/aws/upload-directory.js";
 import { UUID_RE } from "../../../util/non-fit/uuid.js";
+import { runKindOf, type RunKind } from "../../ingest/parse.js";
 
 /**
  * Where results go by default: the same bucket the run-artifacts zips live in
@@ -32,6 +38,12 @@ export const RESULTS_BUCKET = "fit-cli";
  */
 export const DONE_MARKER = ".done";
 
+/**
+ * The results site (perf-sdk-frontend) in front of the database `fit ingest situational`
+ * fills from RESULTS_BUCKET.
+ */
+export const RESULTS_SITE = "https://performance-sdk.couchbase.com/results";
+
 /** One run directory found under the results output directory. */
 export interface ResultsRunDir {
   /** Basename of the run's directory (the first 8 chars of its run uuid). */
@@ -43,6 +55,8 @@ export interface ResultsRunDir {
 export interface PlannedUpload {
   dirName: string;
   runUuid: string;
+  /** How the ingest will file it, which decides which results-site page shows it. */
+  kind: RunKind;
   /** Key prefix under the bucket (no trailing slash). */
   keyPrefix: string;
 }
@@ -72,7 +86,7 @@ export function planResultsUpload(
   opts: { assertId?: string; fallbackId?: string } = {},
   newSituationalRunId: () => string = randomUUID,
 ): UploadPlan {
-  const found: { dirName: string; runUuid: string }[] = [];
+  const found: { dirName: string; runUuid: string; kind: RunKind }[] = [];
   const skipped: string[] = [];
   // Lowercased because S3 keys are case-sensitive
   const assertId = opts.assertId?.toLowerCase();
@@ -83,10 +97,12 @@ export function planResultsUpload(
       skipped.push(`${dir.dirName}: no run.json5 (the run was never finalized)`);
       continue;
     }
-    let forDatabase: { runUuid?: string; situationalRunUuid?: string };
+    let forDatabase: { runUuid?: string; situationalRunUuid?: string } & Record<string, unknown>;
+    let topLevelRunUuid: unknown;
     try {
-      const parsed = JSON5.parse<{ forDatabase?: typeof forDatabase }>(dir.runJson5);
+      const parsed = JSON5.parse<{ runUuid?: unknown; forDatabase?: typeof forDatabase }>(dir.runJson5);
       forDatabase = parsed.forDatabase ?? {};
+      topLevelRunUuid = parsed.runUuid;
     } catch (err) {
       skipped.push(`${dir.dirName}: run.json5 is unparseable (${(err as Error).message})`);
       continue;
@@ -110,8 +126,10 @@ export function planResultsUpload(
       fromFiles = recorded;
     }
     // `?.` alone would still crash on a non-string runUuid (e.g. numeric); a bad
-    // run.json5 must skip this one dir, not fail the whole plan.
-    const runUuid = typeof forDatabase.runUuid === "string" ? forDatabase.runUuid.toLowerCase() : undefined;
+    // run.json5 must skip this one dir, not fail the whole plan. The perf bundle keeps
+    // its uuid beside forDatabase rather than in it, as the Java perf driver did.
+    const rawRunUuid = forDatabase.runUuid ?? topLevelRunUuid;
+    const runUuid = typeof rawRunUuid === "string" ? rawRunUuid.toLowerCase() : undefined;
     if (!runUuid || !UUID_RE.test(runUuid)) {
       skipped.push(`${dir.dirName}: run.json5 has no valid forDatabase.runUuid`);
       continue;
@@ -121,7 +139,7 @@ export function planResultsUpload(
       continue;
     }
 
-    found.push({ dirName: dir.dirName, runUuid });
+    found.push({ dirName: dir.dirName, runUuid, kind: runKindOf(forDatabase) });
   }
 
   // Only now is the id settled, so this is where the key prefixes can be built.
@@ -133,12 +151,12 @@ export function planResultsUpload(
   };
 }
 
-function readResultsDir(resultsDir: string): ResultsRunDir[] {
+function readResultsDir(resultsDir: string, onlyDirs?: readonly string[]): ResultsRunDir[] {
   if (!existsSync(resultsDir)) {
     throw new Error(`Results directory not found: ${resultsDir}`);
   }
   return readdirSync(resultsDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
+    .filter((entry) => entry.isDirectory() && (onlyDirs === undefined || onlyDirs.includes(entry.name)))
     .map((entry) => {
       const runJson5Path = join(resultsDir, entry.name, "run.json5");
       return {
@@ -148,11 +166,34 @@ function readResultsDir(resultsDir: string): ResultsRunDir[] {
     });
 }
 
+/**
+ * Where each uploaded run will appear on the results site: the situational run's page for
+ * SIT (it lists every run in it), and each run's own page for perf. Pure, so the URL
+ * shapes can be tested.
+ */
+export function resultsSiteLinks(plan: UploadPlan): Detail[] {
+  const links: Detail[] = [];
+  if (plan.uploads.some((u) => u.kind === "situational")) {
+    links.push({ label: "Results UI (once ingested on the results host)", value: `${RESULTS_SITE}/situational/${plan.situationalRunUuid}`, callToAction: true });
+  }
+  for (const upload of plan.uploads.filter((u) => u.kind === "performance")) {
+    links.push({ label: `Results UI for perf run ${upload.dirName} (once ingested on the results host)`, value: `${RESULTS_SITE}/run/${upload.runUuid}`, callToAction: true });
+  }
+  return links;
+}
+
 /** Publishes the run to the ingest. Must be the last write of the directory. */
 async function writeDoneMarker(bucket: string, keyPrefix: string): Promise<void> {
   await s3Client.send(
     new PutObjectCommand({ Bucket: bucket, Key: `${keyPrefix}/${DONE_MARKER}`, Body: "", ContentLength: 0 }),
   );
+}
+
+export interface UploadResultsOptions {
+  assertId?: string;
+  fallbackId?: string;
+  /** Upload only these run directories — a perf run's results dir can hold earlier attempts' bundles. */
+  onlyDirs?: readonly string[];
 }
 
 /**
@@ -162,9 +203,9 @@ async function writeDoneMarker(bucket: string, keyPrefix: string): Promise<void>
 export async function uploadSituationalResults(
   resultsDir: string,
   bucket: string = RESULTS_BUCKET,
-  opts: { assertId?: string; fallbackId?: string } = {},
+  opts: UploadResultsOptions = {},
 ): Promise<RunOutput> {
-  const plan = planResultsUpload(readResultsDir(resultsDir), opts);
+  const plan = planResultsUpload(readResultsDir(resultsDir, opts.onlyDirs), opts);
   for (const skip of plan.skipped) {
     console.warn(`Skipping ${skip}`);
   }
@@ -181,10 +222,21 @@ export async function uploadSituationalResults(
     console.log(`  ${DONE_MARKER} (the run is now visible to the ingest)`);
     details.push({ label: `Run ${upload.dirName}`, value: `${destination}/` });
   }
-  return { artifacts: [], details };
+  // Only the default bucket is drained into the database the site reads.
+  const links = bucket === RESULTS_BUCKET ? resultsSiteLinks(plan) : [];
+  if (links.length > 0) {
+    console.log(
+      "\nThese results reach the results site only once `fit ingest situational` has loaded them into\n" +
+        "the database. That runs on the results host, not here, so the links below can 404 until it has.",
+    );
+    for (const link of links) {
+      console.log(`  ${link.value}`);
+    }
+  }
+  return { artifacts: [], details: [...links, ...details] };
 }
 
-const USAGE = `Upload FIT/SIT results directories to the results S3 bucket.
+const USAGE = `Upload FIT/SIT or FIT/PERF results directories to the results S3 bucket.
 
 Usage: bun src/fit/situational/upload-results/upload-results.ts <resultsDir> [options]
 
@@ -193,8 +245,10 @@ Options:
   --situational-run-id <uuid>  Require all runs to match this situational run id.
   --help, -h                   Show this help.
 
-<resultsDir> is the files output directory a FIT/SIT test-driver run wrote
-(one subdirectory per run, named by the first 8 chars of the run uuid).`;
+<resultsDir> is the files output directory a FIT/SIT test-driver run or a FIT/PERF
+run wrote (one subdirectory per run, named by the first 8 chars of the run uuid).
+For a perf run, pass --situational-run-id too: perf bundles don't record one, and
+without it every upload lands under a fresh id.`;
 
 function parseArgs(argv: string[]): { resultsDir: string; bucket: string; situationalRunId?: string } {
   const args = argv.filter((a) => a !== "--");

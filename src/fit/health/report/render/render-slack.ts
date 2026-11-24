@@ -10,7 +10,7 @@
  */
 import type { HealthReport } from "../build-report.js";
 import { shortDate } from "../dates.js";
-import { testMethod, type DigestCount, type FailedLastNight } from "../digest.js";
+import { testMethod, type Digest, type DigestCount, type FailedLastNight } from "../digest.js";
 
 export interface SlackDigest {
   headline: string;
@@ -52,6 +52,8 @@ const KIND: Partial<Record<FailedLastNight["tests"][number]["cls"], string>> = {
   new: "new",
   intermittent: "intermittent",
 };
+/** Why a counted preset gave no full results last night (clean.ts). */
+const NOT_FULL: Record<Digest["notFullLastNight"][number]["why"], string> = { none: "no results", log: "CI log only", degraded: "incomplete results" };
 const split = (c: DigestCount) => c.bySeries.map((x) => `${x.n} ${x.series}`).join(" · ");
 
 export function renderSlackDigest(report: HealthReport, sdkName: string, reportUrl?: string): SlackDigest {
@@ -67,43 +69,54 @@ export function renderSlackDigest(report: HealthReport, sdkName: string, reportU
   const last = d.lastNight;
   const failed = d.failedLastNight;
   const ran = last ? ` of ${n(last.tests)} run · ${n(last.skipped)} skipped${failed?.atLeast ? " (series with full results)" : ""}` : "";
-  const headline = [
-    `*${slackEscape(sdkName)} FIT health* · nightly run of ${weekdayDate(report.end)} (UTC date) · updated ${slackLocalTime(report.generatedAt)} · last ${report.classes.windowDays} days`,
-    ...(failed
+  // Last night, as the SDK page leads with it (clean.ts): clean, what failed, or nothing usable.
+  // "0 failed" isn't clean while a counted preset gave no full results, so those are named.
+  const clean = last && d.cleanNights.includes(report.end);
+  const notFull = d.notFullLastNight.map((x) => `${x.series} (${NOT_FULL[x.why]})`).join(" · ");
+  const lastNight = clean
+    ? [`• ✓ Last night was clean: all *${n(last.tests)}* passed · ${n(last.skipped)} skipped (${last.bySeries.map((x) => `${x.series} ${n(x.tests)}`).join(" · ")})`]
+    : failed
       ? [
           `• Failed last night: *${failed.atLeast ? "at least " : ""}${failed.total}*${ran} (${split(failed)})` +
             ` — ${failed.persistent} persistent · ${failed.new} new · ${failed.intermittent} intermittent`,
+          ...(notFull ? [`• ${failed.total ? "No" : "Not clean: no"} full results last night from ${notFull}`] : []),
         ]
+      : [`• Last night: no usable results`];
+  const headline = [
+    `*${slackEscape(sdkName)} FIT health* · nightly run of ${weekdayDate(report.end)} (UTC date) · updated ${slackLocalTime(report.generatedAt)} · last ${report.classes.windowDays} days`,
+    ...lastNight,
+    ...(d.stoppedCounting.length
+      ? [`• Stopped counting, not tried in the last ${report.activeRuns} nightly runs: ${d.stoppedCounting.map((x) => `${x.series} (last ${shortDate(x.last)})`).join(" · ")}`]
       : []),
     `• Last ${recent} days: *${d.started.total}* started failing · *${d.stopped.total}* stopped · last ${report.classes.windowDays} days: *${d.intermittent.total}* intermittent`,
     ...(caveats.length ? [`_Data: ${caveats.join("; ")}._`] : []),
     ...(reportUrl ? [`<${reportUrl}|Full report>`] : []),
   ].join("\n");
 
+  // Changes only: the Capella vs Capella PE comparison covers the whole window and is the same
+  // every night, so it stays on the page. Without it a quiet night gets the "nothing changed" line.
   const thread: string[] = [];
-  if (failed?.tests.length) {
-    thread.push(`*Failed last night*`);
-    thread.push(...list(failed.tests.map((t) => `\`${slackEscape(t.test)}\` — ${KIND[t.cls] ?? t.cls}, ${t.where}`)));
-  }
-  if (d.startedGroups.length) {
+  const section = (title: string, items: string[]) => {
     if (thread.length) thread.push("");
-    thread.push(`*Started failing (last ${recent} days)*`);
-    thread.push(...list(d.startedGroups.map((g) => `\`${g.cls}\` ${slackEscape(g.tests.map(testMethod).join(", "))} — since ${shortDate(g.since)}, ${g.where}`)));
+    thread.push(`*${title}*`, ...list(items));
+  };
+  if (failed?.tests.length) section("Failed last night", failed.tests.map((t) => `\`${slackEscape(t.test)}\` — ${KIND[t.cls] ?? t.cls}, ${t.where}`));
+  if (d.startedGroups.length) {
+    section(
+      `Started failing (last ${recent} days)`,
+      d.startedGroups.map((g) => `\`${g.cls}\` ${slackEscape(g.tests.map(testMethod).join(", "))} — since ${shortDate(g.since)}, ${g.where}`),
+    );
   }
   if (d.stoppedTests.length) {
-    thread.push("", `*Stopped failing (last ${recent} days)*`);
-    thread.push(...list(d.stoppedTests.map((t) => `\`${slackEscape(t.test)}\` — last failed ${shortDate(t.last)}, ${t.where}${t.fix?.ticket ? ` (${t.fix.ticket})` : ""}`)));
+    section(
+      `Stopped failing (last ${recent} days)`,
+      d.stoppedTests.map((t) => `\`${slackEscape(t.test)}\` — last failed ${shortDate(t.last)}, ${t.where}${t.fix?.ticket ? ` (${t.fix.ticket})` : ""}`),
+    );
   }
   if (d.stoppedRunning.length) {
-    thread.push("", `*Stopped running (last ${recent} days)*`);
-    thread.push(...list(d.stoppedRunning.map((t) => `\`${slackEscape(t.test)}\` — not run since ${shortDate(t.since)}, ${t.where}`)));
+    section(`Stopped running (last ${recent} days)`, d.stoppedRunning.map((t) => `\`${slackEscape(t.test)}\` — not run since ${shortDate(t.since)}, ${t.where}`));
   }
-  if (d.always.length) thread.push("", `*Failed every night they ran in the last ${report.classes.windowDays} days*`, ...list(d.always.map((t) => `\`${slackEscape(t.test)}\` — ${t.where}`)));
-  for (const c of report.comparisons) {
-    const a = report.series.find((s) => s.id === c.a)!;
-    const b = report.series.find((s) => s.id === c.b)!;
-    thread.push("", `*${a.short} vs ${b.short}*`, `• Nights with any failure: ${c.aRed}/${c.nights} vs ${c.bRed}/${c.nights} (both on ${c.bothRed})`);
-  }
+  if (d.always.length) section(`Failed every night they ran in the last ${report.classes.windowDays} days`, d.always.map((t) => `\`${slackEscape(t.test)}\` — ${t.where}`));
   if (!thread.length) thread.push(`_Nothing started or stopped failing in the last ${recent} days._`);
   return { headline, thread: thread.join("\n") };
 }

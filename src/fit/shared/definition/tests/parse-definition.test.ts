@@ -7,7 +7,12 @@ import {
   normalizeDefinitionUrl,
   parseDefinition,
 } from "../parse-definition.js";
-import { CURRENT_FIT_DEFINITION_VERSION } from "../types.js";
+import { CURRENT_FIT_DEFINITION_VERSION, type FitRun, type TestsSection } from "../types.js";
+
+/** A run's `tests` block, narrowed away from the perf run type — which has none. */
+function testsOf(run: FitRun | undefined): TestsSection | undefined {
+  return run && run.type !== "performance" ? run.tests : undefined;
+}
 
 const FUNCTIONAL = `
 version: 1
@@ -119,13 +124,31 @@ test("accepts the Python performer image", () => {
 });
 
 test("rejects a performer image for an SDK FIT doesn't know", () => {
-  const def = FUNCTIONAL.replace("image: java-fit-performer:main", "image: php-fit-performer:main");
-  assert.throws(() => parseDefinition(def), /Unknown SDK "php"/);
+  const def = FUNCTIONAL.replace("image: java-fit-performer:main", "image: cobol-fit-performer:main");
+  assert.throws(() => parseDefinition(def), /Unknown SDK "cobol"/);
 });
 
 test("rejects the legacy performer sdk/version fields", () => {
   const def = FUNCTIONAL.replace("image: java-fit-performer:main", "sdk: java");
   assert.throws(() => parseDefinition(def), /no longer takes "sdk"\/"version"/);
+});
+
+test("parses performer logLevel case-insensitively and lowercases it", () => {
+  for (const [input, expected] of [["info", "info"], ["WARN", "warn"], ["Trace", "trace"], ["debug", "debug"], ["error", "error"]]) {
+    const def = FUNCTIONAL.replace("image: java-fit-performer:main", `image: java-fit-performer:main\n              logLevel: ${input}`);
+    assert.equal(parseDefinition(def).instances[0]?.clusters[0]?.sessions[0]?.performer.logLevel, expected);
+  }
+});
+
+test("leaves performer logLevel unset when missing", () => {
+  assert.equal(parseDefinition(FUNCTIONAL).instances[0]?.clusters[0]?.sessions[0]?.performer.logLevel, undefined);
+});
+
+test("rejects an unknown or non-string performer logLevel", () => {
+  for (const value of ["verbose", "42", "true"]) {
+    const def = FUNCTIONAL.replace("image: java-fit-performer:main", `image: java-fit-performer:main\n              logLevel: ${value}`);
+    assert.throws(() => parseDefinition(def), /logLevel" must be one of trace, debug, info, warn, error/);
+  }
 });
 
 test("parses clusterless situational sessions", () => {
@@ -652,7 +675,7 @@ test("parses packages list", () => {
       `                  packages:\n                    - com.couchbase.client.kv\n                    - com.couchbase.transactions`,
     ),
   );
-  const tests = def.instances[0]?.clusters[0]?.sessions[0]?.runs[0]?.tests;
+  const tests = testsOf(def.instances[0]?.clusters[0]?.sessions[0]?.runs[0]);
   assert.deepEqual(tests?.packages, ["com.couchbase.client.kv", "com.couchbase.transactions"]);
 });
 
@@ -666,7 +689,7 @@ test("rejects an empty packages list", () => {
 test("parses all-transactions and all-non-transactions preset placeholders", () => {
   for (const preset of ["all-transactions", "all-non-transactions"] as const) {
     const def = parseDefinition(definitionWithTests(`                  presets: [${preset}]`));
-    assert.deepEqual(def.instances[0]?.clusters[0]?.sessions[0]?.runs[0]?.tests.presets, [preset]);
+    assert.deepEqual(testsOf(def.instances[0]?.clusters[0]?.sessions[0]?.runs[0])?.presets, [preset]);
   }
 });
 
@@ -676,7 +699,7 @@ test("parses presets unioned with explicit classes", () => {
       `                  presets: [all-non-transactions]\n                  classes:\n                    - com.couchbase.transactions.FooTest`,
     ),
   );
-  const tests = def.instances[0]?.clusters[0]?.sessions[0]?.runs[0]?.tests;
+  const tests = testsOf(def.instances[0]?.clusters[0]?.sessions[0]?.runs[0]);
   assert.deepEqual(tests?.presets, ["all-non-transactions"]);
   assert.deepEqual(tests?.classes, ["com.couchbase.transactions.FooTest"]);
 });
@@ -794,23 +817,43 @@ test("rejects versions combined with situational.version", () => {
   );
 });
 
-test("rejects versions combined with situational.cng", () => {
+test("accepts versions of cb-rhcc builds combined with situational.cng", () => {
+  const def = parseDefinition(
+    SITUATIONAL
+      .replace("mode: files", "mode: files\n              cng: {}")
+      .replace("presets: [all]", "presets: [all]\n            versions: [8.5.0-1060, 8.0.2-5503]"),
+  );
+  const run = def.instances[0]?.clusterlessSessions?.[0]?.runs[0];
+  assert.ok(run && run.type === "situational");
+  assert.deepEqual(run.versions, ["8.5.0-1060", "8.0.2-5503"]);
+});
+
+test("rejects a cb-alias in versions combined with situational.cng, as cb-rhcc doesn't carry it", () => {
   assert.throws(
     () => parseDefinition(
       SITUATIONAL
         .replace("mode: files", "mode: files\n              cng: {}")
-        .replace("presets: [all]", "presets: [all]\n            versions: [8.0-stable]"),
+        .replace("presets: [all]", "presets: [all]\n            versions: [8.0.2-5503, 8.0-stable]"),
     ),
-    (err: unknown) => err instanceof InvalidDefinitionError && /CNG pins its own cluster version/.test(err.message),
+    (err: unknown) => err instanceof InvalidDefinitionError && /versions\[1\]/.test(err.message) && /cb-rhcc/.test(err.message),
   );
 });
 
-test("rejects situational.version combined with situational.cng", () => {
+test("accepts situational.version of a cb-rhcc build combined with situational.cng", () => {
+  const def = parseDefinition(
+    SITUATIONAL.replace("mode: files", "mode: files\n              version: 8.0.2-5503\n              cng: {}"),
+  );
+  const run = def.instances[0]?.clusterlessSessions?.[0]?.runs[0];
+  assert.ok(run && run.type === "situational");
+  assert.equal(run.situational.version, "8.0.2-5503");
+});
+
+test("rejects a cb-alias situational.version combined with situational.cng", () => {
   assert.throws(
     () => parseDefinition(
       SITUATIONAL.replace("mode: files", "mode: files\n              version: 8.0-stable\n              cng: {}"),
     ),
-    (err: unknown) => err instanceof InvalidDefinitionError && /mutually exclusive/.test(err.message),
+    (err: unknown) => err instanceof InvalidDefinitionError && /cb-rhcc/.test(err.message),
   );
 });
 

@@ -10,11 +10,13 @@ import YAML from "yaml";
 import { isMain, runCli } from "../../../util/non-fit/cli.js";
 import { runScriptPrefix } from "../../../util/non-fit/fit-cli-log.js";
 import { PORT_IN_USE_POLICIES, type PortInUsePolicy } from "../../performers/util/performer-port.js";
+import { PERFORMER_LOG_LEVELS, type PerformerLogLevel } from "../../performers/util/performer-log-level.js";
 import {
   CLUSTER_EXISTS_POLICIES,
   type ClusterExistsPolicy,
 } from "../../../cluster/cluster-create/cluster-exists-policy.js";
 import { CAPELLA_CLOUD_PROVIDERS, type CbdinoclusterDef } from "../../../cluster/cluster-create/build-cluster-def.js";
+import { isAlias } from "../../../cluster/cluster-create/cb-alias.js";
 import { analysePerformerImage } from "../../performers/util/performer-image.js";
 import { isAnalyticsSdk } from "../../../util/sdk/sdks.js";
 import {
@@ -42,6 +44,10 @@ import {
   type InstanceLifetime,
   type InstanceSetup,
   type MavenOptions,
+  type PerformanceClusterMetadata,
+  type PerformanceGrpcSettings,
+  type PerformanceSection,
+  type PerformanceWorkload,
   type PerformerSetup,
   type ResolvedFitConfig,
   type SchemeAndTls,
@@ -365,9 +371,20 @@ function isPortInUsePolicy(value: unknown): value is PortInUsePolicy {
   return isString(value) && (PORT_IN_USE_POLICIES as readonly string[]).includes(value);
 }
 
+function validatePerformerLogLevel(value: unknown, path: string): PerformerLogLevel {
+  const level = isString(value) ? value.toLowerCase() : undefined;
+  const match = PERFORMER_LOG_LEVELS.find((allowed) => allowed === level);
+  if (!match) {
+    throw new InvalidDefinitionError(
+      `"${path}" must be one of ${PERFORMER_LOG_LEVELS.join(", ")} when present; got ${JSON.stringify(value)}`,
+    );
+  }
+  return match;
+}
+
 function validatePerformer(value: unknown, path: string): PerformerSetup {
   const record = requireRecord(value, path);
-  rejectUnknown(record, ["image", "port", "onPortInUse", "sdk", "version"], path);
+  rejectUnknown(record, ["image", "port", "onPortInUse", "logLevel", "sdk", "version"], path);
   if (record.sdk !== undefined || record.version !== undefined) {
     throw new InvalidDefinitionError(
       `"${path}" no longer takes "sdk"/"version"; use a single "image" like java-fit-performer:main` +
@@ -390,6 +407,9 @@ function validatePerformer(value: unknown, path: string): PerformerSetup {
       );
     }
     performer.onPortInUse = record.onPortInUse;
+  }
+  if (record.logLevel !== undefined) {
+    performer.logLevel = validatePerformerLogLevel(record.logLevel, `${path}.logLevel`);
   }
   return performer;
 }
@@ -553,7 +573,7 @@ function validateSituationalSection(value: unknown, path: string): SituationalSe
   }
   const version = validateSituationalVersion(record, path);
   if (version !== undefined && record.cng !== undefined) {
-    throw new InvalidDefinitionError(`"${path}.version" and "${path}.cng" are mutually exclusive — CNG pins its own cluster version.`);
+    rejectCngAliasVersion(version, `${path}.version`);
   }
   return {
     database: validateSituationalDatabase(record.database, `${path}.database`),
@@ -587,6 +607,20 @@ function validateRepeat(record: Record<string, unknown>, path: string): number |
   return value;
 }
 
+/**
+ * A CNG cluster's server image comes from cb-rhcc, which only carries hand-picked builds:
+ * a cb-alias like "8.0-stable" resolves to a cb-vanilla dev build cb-rhcc doesn't have,
+ * leaving the server pod in ImagePullBackOff (see `cngClusterVersion` in environments.json5).
+ */
+function rejectCngAliasVersion(version: string, path: string): void {
+  if (isAlias(version)) {
+    throw new InvalidDefinitionError(
+      `"${path}" is the cb-alias "${version}", which a CNG cluster can't use: CNG pulls its server image from cb-rhcc, ` +
+        `so it needs a build that exists there, e.g. "8.0.2-5503" (https://github.com/orgs/cb-rhcc/packages/container/package/server).`,
+    );
+  }
+}
+
 function validateVersions(record: Record<string, unknown>, path: string): string[] | undefined {
   if (record.versions === undefined) return undefined;
   const value = record.versions;
@@ -596,16 +630,155 @@ function validateVersions(record: Record<string, unknown>, path: string): string
   return value;
 }
 
+/**
+ * The workload is passed to the perf driver as-is (see {@link PerformanceWorkload}),
+ * so validate only enough to catch the mistakes that would otherwise surface as an
+ * opaque Jackson error inside the driver: each operation has to be an object, and
+ * has to be either a plain op or a transaction.
+ */
+function validatePerformanceWorkload(value: unknown, path: string): PerformanceWorkload {
+  const record = requireRecord(value, path);
+  rejectUnknown(record, ["operations"], path);
+  if (!Array.isArray(record.operations) || record.operations.length === 0) {
+    throw new InvalidDefinitionError(`"${path}.operations" must contain at least one operation.`);
+  }
+  const operations = record.operations.map((operation, index) => {
+    const opPath = `${path}.operations[${index}]`;
+    const op = requireRecord(operation, opPath);
+    if (op.op === undefined && op.transaction === undefined) {
+      throw new InvalidDefinitionError(`"${opPath}" must set either "op" (e.g. get) or "transaction".`);
+    }
+    if (op.op !== undefined && op.transaction !== undefined) {
+      throw new InvalidDefinitionError(`"${opPath}" cannot set both "op" and "transaction".`);
+    }
+    return op as PerformanceWorkload["operations"][number];
+  });
+  return { operations };
+}
+
+function validatePerformanceVariables(value: unknown, path: string): Record<string, string | number | boolean> {
+  const record = requireRecord(value, path);
+  const out: Record<string, string | number | boolean> = {};
+  for (const [name, raw] of Object.entries(record)) {
+    if (typeof raw !== "string" && typeof raw !== "number" && typeof raw !== "boolean") {
+      throw new InvalidDefinitionError(`"${path}.${name}" must be a string, number or boolean; got ${JSON.stringify(raw)}`);
+    }
+    out[name] = raw;
+  }
+  return out;
+}
+
+/** Each tunable must name a variable, since the variable supplies its value. */
+function validatePerformanceTunables(
+  value: unknown,
+  variables: Record<string, string | number | boolean> | undefined,
+  path: string,
+): string[] {
+  if (!Array.isArray(value)) {
+    throw new InvalidDefinitionError(`"${path}" must be a list of variable names; got ${JSON.stringify(value)}`);
+  }
+  for (const name of value) {
+    if (!isString(name) || variables === undefined || !Object.hasOwn(variables, name)) {
+      throw new InvalidDefinitionError(`"${path}" entry ${JSON.stringify(name)} must name a key in the run's variables`);
+    }
+  }
+  return [...new Set(value as string[])];
+}
+
+function validateOptionalInt(record: Record<string, unknown>, key: string, path: string): number | undefined {
+  const value = record[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    throw new InvalidDefinitionError(`"${path}.${key}" must be an integer; got ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
+function validatePerformanceClusterMetadata(value: unknown, path: string): PerformanceClusterMetadata {
+  const record = requireRecord(value, path);
+  const numeric = ["nodeCount", "cpuCount", "memory", "replicas"] as const;
+  const strings = ["type", "version", "storage", "instance", "compaction", "topology", "region"] as const;
+  rejectUnknown(record, [...numeric, ...strings], path);
+  const out: PerformanceClusterMetadata = {};
+  for (const key of numeric) {
+    const parsed = validateOptionalInt(record, key, path);
+    if (parsed !== undefined) out[key] = parsed;
+  }
+  for (const key of strings) {
+    const raw = record[key];
+    if (raw === undefined) continue;
+    if (!isString(raw)) {
+      throw new InvalidDefinitionError(`"${path}.${key}" must be a string; got ${JSON.stringify(raw)}`);
+    }
+    out[key] = raw;
+  }
+  return out;
+}
+
+function validatePerformanceGrpc(value: unknown, path: string): PerformanceGrpcSettings {
+  const record = requireRecord(value, path);
+  rejectUnknown(record, ["flowControl", "batch", "compression"], path);
+  const out: PerformanceGrpcSettings = {};
+  for (const key of ["flowControl", "compression"] as const) {
+    const raw = record[key];
+    if (raw === undefined) continue;
+    if (typeof raw !== "boolean") {
+      throw new InvalidDefinitionError(`"${path}.${key}" must be a boolean; got ${JSON.stringify(raw)}`);
+    }
+    out[key] = raw;
+  }
+  const batch = validateOptionalInt(record, "batch", path);
+  if (batch !== undefined) out.batch = batch;
+  return out;
+}
+
+function validatePerformanceSection(value: unknown, path: string): PerformanceSection {
+  const record = requireRecord(value, path);
+  rejectUnknown(record, ["workload", "variables", "tunables", "driverVer", "performerVer", "grpc", "cluster"], path);
+  if (record.workload === undefined) {
+    throw new InvalidDefinitionError(`Missing required field: ${path}.workload`);
+  }
+  const driverVer = validateOptionalInt(record, "driverVer", path);
+  const performerVer = validateOptionalInt(record, "performerVer", path);
+  const variables = record.variables !== undefined ? validatePerformanceVariables(record.variables, `${path}.variables`) : undefined;
+  const tunables = record.tunables !== undefined ? validatePerformanceTunables(record.tunables, variables, `${path}.tunables`) : undefined;
+  return {
+    workload: validatePerformanceWorkload(record.workload, `${path}.workload`),
+    ...(variables !== undefined ? { variables } : {}),
+    ...(tunables !== undefined ? { tunables } : {}),
+    ...(driverVer !== undefined ? { driverVer } : {}),
+    ...(performerVer !== undefined ? { performerVer } : {}),
+    ...(record.grpc !== undefined ? { grpc: validatePerformanceGrpc(record.grpc, `${path}.grpc`) } : {}),
+    ...(record.cluster !== undefined ? { cluster: validatePerformanceClusterMetadata(record.cluster, `${path}.cluster`) } : {}),
+  };
+}
+
 function validateRun(value: unknown, path: string, clusterless: boolean): FitRun {
   const record = requireRecord(value, path);
   const type = record.type;
   if (!isString(type) || !FIT_RUN_TYPES.includes(type as FitRun["type"])) {
     throw new InvalidDefinitionError(`"${path}.type" must be one of ${FIT_RUN_TYPES.join(", ")}; got ${JSON.stringify(type)}`);
   }
+  const repeat = validateRepeat(record, path);
+  if (type === "performance") {
+    // No `tests`: a perf run drives a workload and records timings, it doesn't assert.
+    rejectUnknown(record, ["type", "performance", "fitConfig", "repeat"], path);
+    if (clusterless) {
+      throw new InvalidDefinitionError(`"${path}.type" cannot be "performance" under clusterlessSessions.`);
+    }
+    if (record.performance === undefined) {
+      throw new InvalidDefinitionError(`Missing required field: ${path}.performance`);
+    }
+    return {
+      type,
+      performance: validatePerformanceSection(record.performance, `${path}.performance`),
+      ...(record.fitConfig !== undefined ? { fitConfig: validateRunFitConfig(record.fitConfig, `${path}.fitConfig`) } : {}),
+      ...(repeat !== undefined ? { repeat } : {}),
+    };
+  }
   if (record.tests === undefined) {
     throw new InvalidDefinitionError(`Missing required field: ${path}.tests`);
   }
-  const repeat = validateRepeat(record, path);
   if (type === "functional" || type === "analytics-functional") {
     rejectUnknown(record, ["type", "tests", "fitConfig", "repeat"], path);
     if (clusterless) {
@@ -631,7 +804,7 @@ function validateRun(value: unknown, path: string, clusterless: boolean): FitRun
     throw new InvalidDefinitionError(`"${path}.versions" and "${path}.situational.version" are mutually exclusive; set only one.`);
   }
   if (versions !== undefined && situational.cng !== undefined) {
-    throw new InvalidDefinitionError(`"${path}.versions" cannot be combined with "${path}.situational.cng" — CNG pins its own cluster version.`);
+    versions.forEach((version, index) => rejectCngAliasVersion(version, `${path}.versions[${index}]`));
   }
   return {
     type: "situational",
@@ -1080,8 +1253,8 @@ export function localPathForUrl(url: string, home: string = homedir()): string {
 
 /**
  * Fetch a definition file from a URL, write it to a stable local cache path, and
- * return that path. The stable path means resume state written next to it can be
- * found again when the same URL is passed to a later `--resume-at` invocation.
+ * return that path. The path is stable, so the same URL always lands in the same
+ * cache entry rather than a new file per run.
  * A gist.github.com page URL is rewritten to its raw-content URL before fetching
  * (see {@link normalizeDefinitionUrl}); the cache path is keyed off the original
  * URL so both forms of the same gist link reuse the same cache entry.

@@ -12,6 +12,9 @@ export const SDKS = [
   { name: "Python", value: "python", family: "operational", cng: false },
   { name: "Ruby", value: "ruby", family: "operational", cng: true },
   { name: "Rust", value: "rust", family: "operational", cng: false },
+  // The PHP SDK has couchbase2:// only with the PHP protobuf extension, which its performer
+  // image does not install.
+  { name: "PHP", value: "php", family: "operational", cng: false },
   // Java performer in Quarkus not yet tested over CNG
   { name: "Quarkus (JVM)", value: "quarkus", family: "operational", cng: false },
   { name: "Quarkus (native)", value: "quarkus-native", family: "operational", cng: false },
@@ -27,13 +30,15 @@ export const SDKS = [
   //     https://github.com/orgs/couchbase/packages/container/package/analytics-dotnet-fit-performer
   //   - analytics-go (family "enterprise-analytics"), from couchbase/gocbanalytics:
   //     https://github.com/couchbase/gocbanalytics/pkgs/container/analytics-go-fit-performer
+  //   - columnar-go (family "columnar"), from couchbase/gocbcolumnar:
+  //     https://github.com/couchbase/gocbcolumnar/pkgs/container/columnar-go-fit-performer
   //   - insights-python (family "enterprise-analytics"), from
   //     couchbaselabs/operational-insights-python-client:
   //     https://github.com/couchbaselabs/operational-insights-python-client/pkgs/container/insights-python-fit-performer
   //   - insights-node (family "enterprise-analytics"), from
   //     couchbaselabs/operational-insights-nodejs-client:
   //     https://github.com/couchbaselabs/operational-insights-nodejs-client/pkgs/container/insights-node-fit-performer
-  // The Go/Node/Python columnar+analytics performers still in transactions-fit-performer
+  // The Node/Python columnar+analytics performers still in transactions-fit-performer
   // are not published. Add entries here as more images ship.
   // Enterprise Analytics SDK first — it's the standard/recommended choice for the
   // (self-managed Enterprise Analytics) clusters fit-cli allocates; the Columnar SDK
@@ -43,6 +48,7 @@ export const SDKS = [
   { name: ".NET Enterprise Analytics", value: "analytics-dotnet", family: "enterprise-analytics" },
   { name: "Go Enterprise Analytics", value: "analytics-go", family: "enterprise-analytics" },
   { name: "Java Columnar", value: "columnar-java", family: "columnar" },
+  { name: "Go Columnar", value: "columnar-go", family: "columnar" },
   { name: "Go Operational Insights", value: "insights-go", family: "enterprise-analytics" },
   { name: ".NET Operational Insights", value: "insights-dotnet", family: "enterprise-analytics" },
   { name: "Python Operational Insights", value: "insights-python", family: "enterprise-analytics" },
@@ -52,6 +58,16 @@ export const SDKS = [
 export type Sdk = (typeof SDKS)[number];
 export type SdkValue = Sdk["value"];
 export type SdkFamily = Sdk["family"];
+
+/**
+ * Look up an SDK by its display name ("Java", "C++", ".NET"), or undefined.
+ *
+ * These are the names FIT/PERF records as `impl.language` and that its scheduling config names
+ * its SDKs by, so anything reading that config has to resolve them back to an SDK.
+ */
+export function sdkByName(name: string): Sdk | undefined {
+  return SDKS.find((sdk) => sdk.name === name);
+}
 
 /** Look up an SDK by its `value`, or undefined if there is no such SDK. */
 export function sdkByValue(value: string): Sdk | undefined {

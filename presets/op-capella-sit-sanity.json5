@@ -9,7 +9,7 @@
     {
       aws: {},
       setup: {
-        capellaEnvironment: 'prod',
+        capellaEnvironment: '{{environments.defaults.defaultCapellaEnvironment}}',
       },
       clusters: [],
       clusterlessSessions: [

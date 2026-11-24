@@ -49,29 +49,25 @@ async function dumpPrometheusFederate(execution: FitExecutionContext, localPath:
 }
 
 /**
- * Split from {@link removeContainer} because the badger store snapshot has to
- * happen in between: with Jaeger stopped so its store is flushed and released, but
- * before the container it lives in is removed.
+ * Each of these is one command over all three containers rather than one per
+ * container: Docker stops/removes them concurrently itself, and on a remote box every
+ * command is a multi-second round trip. Stop and remove are split because the badger
+ * store snapshot has to happen in between: with Jaeger stopped so its store is flushed
+ * and released, but before the container it lives in is removed.
  */
-async function stopContainer(execution: FitExecutionContext, handle: OtelContainerHandle, name: string): Promise<void> {
+async function forAllContainers(execution: FitExecutionContext, stack: OtelStackHandle, verb: "stop" | "rm"): Promise<void> {
+  const containerIds = [stack.collector, stack.jaeger, stack.prometheus].map((handle) => handle.containerId);
+  const names = Object.values(OTEL_CONTAINER_NAMES).join(" ");
   try {
-    await execution.run(execution.dockerCommand, ["stop", handle.containerId], undefined, { display: `docker stop ${name}` });
+    await execution.runHiddenUntilFailure(execution.dockerCommand, [verb, ...containerIds], undefined, { display: `docker ${verb} ${names}` });
   } catch (err) {
-    console.error(`  ✗ Failed to stop ${name}: ${(err as Error).message}`);
-  }
-}
-
-async function removeContainer(execution: FitExecutionContext, handle: OtelContainerHandle, name: string): Promise<void> {
-  try {
-    await execution.run(execution.dockerCommand, ["rm", handle.containerId], undefined, { display: `docker rm ${name}` });
-  } catch (err) {
-    console.error(`  ✗ Failed to remove ${name}: ${(err as Error).message}`);
+    console.error(`  ✗ Failed to ${verb === "rm" ? "remove" : verb} one or more of ${names}: ${(err as Error).message}`);
   }
 }
 
 async function collectContainerLog(execution: FitExecutionContext, handle: OtelContainerHandle, explanation: string): Promise<Artifact> {
   // docker logs --follow only reaches EOF once the container has stopped, so
-  // drain has to happen after stopAndRemove above.
+  // drain has to happen after the containers are removed.
   await handle.logStream.drain();
   const targetLogFile = execution.targetFilePath(handle.logFile);
   const collectedPath = await execution.collectFile(targetLogFile, handle.logFile).catch(() => handle.logFile);
@@ -88,33 +84,35 @@ export async function stopOtelStack(execution: FitExecutionContext, stack: OtelS
   // The dump is deliberately spread either side of the shutdown, because the two
   // halves need opposite states. These first two need the servers UP — they're HTTP
   // queries against Jaeger and Prometheus.
-  const federateArtifact = await dumpPrometheusFederate(execution, join(otelDir, "prometheus-federate.txt"));
+  const [federateArtifact, dump] = await Promise.all([
+    dumpPrometheusFederate(execution, join(otelDir, "prometheus-federate.txt")),
+    dumpOtelData(execution, otelDir, stack.windowStart),
+  ]);
   if (federateArtifact) artifacts.push(federateArtifact);
-
-  const dump = await dumpOtelData(execution, otelDir, stack.windowStart);
   artifacts.push(...dump.artifacts);
   details.push(...dump.details);
 
-  await stopContainer(execution, stack.collector, OTEL_CONTAINER_NAMES.collector);
-  await stopContainer(execution, stack.jaeger, OTEL_CONTAINER_NAMES.jaeger);
-  await stopContainer(execution, stack.prometheus, OTEL_CONTAINER_NAMES.prometheus);
+  await forAllContainers(execution, stack, "stop");
 
   // ...whereas this one needs Jaeger STOPPED (so badger has flushed and released
   // its store) but not yet removed (so there's still a container to copy from).
   artifacts.push(...(await dumpJaegerBadgerStore(execution, otelDir)));
 
-  await removeContainer(execution, stack.collector, OTEL_CONTAINER_NAMES.collector);
-  await removeContainer(execution, stack.jaeger, OTEL_CONTAINER_NAMES.jaeger);
-  await removeContainer(execution, stack.prometheus, OTEL_CONTAINER_NAMES.prometheus);
+  await forAllContainers(execution, stack, "rm");
 
-  artifacts.push(await collectContainerLog(execution, stack.collector, "OTel collector container logs for this run's otel stack"));
-  artifacts.push(await collectContainerLog(execution, stack.jaeger, "Jaeger container logs for this run's otel stack"));
-  artifacts.push(await collectContainerLog(execution, stack.prometheus, "Prometheus container logs for this run's otel stack"));
+  const [collectorLog, jaegerLog, prometheusLog] = await Promise.all([
+    collectContainerLog(execution, stack.collector, "OTel collector container logs for this run's otel stack"),
+    collectContainerLog(execution, stack.jaeger, "Jaeger container logs for this run's otel stack"),
+    collectContainerLog(execution, stack.prometheus, "Prometheus container logs for this run's otel stack"),
+  ]);
+  artifacts.push(collectorLog, jaegerLog, prometheusLog);
 
-  await execution.run(execution.dockerCommand, ["network", "rm", OTEL_NETWORK]).catch(() => {});
-  // Safe only now the containers referencing it are gone. The spans it held have
-  // already been captured as jaeger-badger.tar.gz above.
-  await execution.run(execution.dockerCommand, ["volume", "rm", OTEL_BADGER_VOLUME]).catch(() => {});
+  await Promise.all([
+    execution.runHiddenUntilFailure(execution.dockerCommand, ["network", "rm", OTEL_NETWORK]).catch(() => {}),
+    // Safe only now the containers referencing it are gone. The spans it held have
+    // already been captured as jaeger-badger.tar.gz above.
+    execution.runHiddenUntilFailure(execution.dockerCommand, ["volume", "rm", OTEL_BADGER_VOLUME]).catch(() => {}),
+  ]);
 
   console.log(`  ✓ Otel stack stopped.`);
   return { artifacts, details };

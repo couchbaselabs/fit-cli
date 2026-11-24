@@ -27,20 +27,14 @@ import { LocalTarget } from "../../../util/non-fit/local-target.js";
 import { checkAwsCredentials } from "../../../cloud/util/aws/identity.js";
 import { checkGcpCredentials } from "../../../cloud/util/gcp/identity.js";
 import { listInstances } from "../../../cloud/util/aws/list-instances.js";
-import { terminateInstance } from "../../../cloud/util/aws/terminate-instance.js";
 import { type InstanceInfo } from "../../../cloud/util/aws/parse-instance.js";
 import { type ExecutionTarget } from "../../../util/non-fit/target.js";
 import { FIT_INSTANCE_USER, provisionFitInstance } from "../../util/aws/fit-instance.js";
 import { ssmStartSessionCommand } from "../../util/aws/lifecycle-warning.js";
 import { provisionFitGcpInstance } from "../../util/gcp/fit-instance.js";
-import { gcpDebugAccessCommand } from "../../util/gcp/lifecycle-warning.js";
-import { terminateGcpInstance } from "../../../cloud/util/gcp/terminate-instance.js";
-import { IapTarget } from "../../../util/non-fit/iap-target.js";
-import { waitForIapSsh, type IapHost } from "../../../util/non-fit/gcp-iap.js";
 import { loadEnvironments } from "../../util/environments.js";
 import { SsmTarget, waitForSsmReady } from "../../../util/non-fit/ssm-target.js";
 import type { ResolvedInstance } from "../../shared/definition/resolve-definition.js";
-import type { ResumeTargetState } from "../run-from-definition/resume-state.js";
 
 /**
  * How to tear down (or leave up) the chosen target. The run owns the decision —
@@ -97,76 +91,6 @@ function promptId(attempt: number, suffix: string): string {
 }
 
 const LOCAL_TEARDOWN: ExecutionTargetTeardown = { kind: "local" };
-
-/**
- * Reconnect to the target a previous run used, without prompting — the resume
- * path. Local is immediate; a remote target is reached over SSM using the saved
- * instance id, and is verified reachable before returning.
- */
-export async function reconnectExecutionTarget(target: ResumeTargetState): Promise<ExecutionTargetOutcome> {
-  if (target.kind === "local") {
-    return { ready: true, target: new LocalTarget(), teardown: LOCAL_TEARDOWN, artifacts: [], details: [] };
-  }
-
-  const { instanceId } = target;
-  if (!instanceId) {
-    fitCliError("\nresume: the saved run state is missing the instance id.");
-    return { ready: false, artifacts: [], details: [] };
-  }
-
-  if (target.provider === "gcp") {
-    if (!target.gcpZone || !target.gcpProject) {
-      fitCliError("\nresume: the saved run state is missing the GCP zone/project.");
-      return { ready: false, artifacts: [], details: [] };
-    }
-    const host: IapHost = { instance: instanceId, zone: target.gcpZone, project: target.gcpProject };
-    process.stdout.write(`Reconnecting to ${instanceId}...`);
-    if (!(await waitForIapSsh(host))) {
-      console.log(" unreachable");
-      fitCliError(`\nresume: couldn't reach ${instanceId} over an IAP tunnel. The instance may be stopped or gone.`);
-      return { ready: false, artifacts: [], details: [] };
-    }
-    console.log(" ready");
-    const teardown: ExecutionTargetTeardown = {
-      kind: "remote",
-      provider: "gcp",
-      instanceId,
-      gcpZone: target.gcpZone,
-      gcpProject: target.gcpProject,
-      owned: target.owned,
-      ...(target.owned ? { terminate: () => terminateGcpInstance(target.gcpProject!, target.gcpZone!, instanceId) } : {}),
-    };
-    return {
-      ready: true,
-      target: new IapTarget(host),
-      teardown,
-      artifacts: [],
-      details: [{ label: "Debug access (IAP)", value: gcpDebugAccessCommand(instanceId, target.gcpZone, target.gcpProject) }],
-    };
-  }
-
-  process.stdout.write(`Reconnecting to ${instanceId}...`);
-  if (!(await waitForSsmReady(instanceId))) {
-    console.log(" unreachable");
-    fitCliError(`\nresume: couldn't reach ${instanceId} over SSM. The instance may be stopped or gone.`);
-    return { ready: false, artifacts: [], details: [] };
-  }
-  console.log(" ready");
-
-  const teardown: ExecutionTargetTeardown = {
-    kind: "remote",
-    instanceId,
-    owned: target.owned,
-    ...(target.owned ? { terminate: () => terminateInstance(instanceId) } : {}),
-  };
-  return {
-    ready: true,
-    target: new SsmTarget(instanceId, FIT_INSTANCE_USER),
-    teardown,
-    artifacts: [],
-    details: [{ label: "Debug access (SSM)", value: ssmStartSessionCommand(instanceId) }],
-  };
-}
 
 /**
  * Acquire the execution target a single execution group declared in its definition, without
@@ -284,7 +208,7 @@ export async function selectExecutionTarget(): Promise<ExecutionTargetOutcome> {
         { name: "A clean AWS EC2 instance", value: "ec2" },
         { name: "A clean GCP Compute Engine instance", value: "gcp" },
         { name: "This machine (local)", value: "local" },
-          // Temporarily hidden as not sure how well this works currently..  Also it's maybe better handled with resume.
+          // Temporarily hidden as not sure how well this works currently..
         // { name: "An existing EC2 instance", value: "existing" },
       ],
     });

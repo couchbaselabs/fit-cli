@@ -10,6 +10,7 @@ import { test } from "node:test";
 import {
   buildOpenShiftK8sBlock,
   cngKubernetesBackend,
+  cngPerformerTls,
   DEFAULT_OC_VERSION,
   detectNodeLeak,
   ocInstallScript,
@@ -17,6 +18,7 @@ import {
   openshiftNodeLeakScript,
   parseNodeLeakCounts,
   resolveOcVersion,
+  ROSA_SHARED_GATEWAY,
   withOpenShiftK8sBlock,
 } from "../cng-openshift.js";
 import { CAO_TOOLS_VERSION } from "../install-cao-tools.js";
@@ -40,8 +42,18 @@ test("buildOpenShiftK8sBlock points cbdinocluster at the logged-in OpenShift con
       "cao-tools": `/home/ubuntu/.dinotools/cao/${CAO_TOOLS_VERSION}`,
       kubeconfig: "/home/ubuntu/.kube/config",
       context: "rosa/api-example:6443/cluster-admin",
+      "shared-gateway": ROSA_SHARED_GATEWAY,
     },
   });
+});
+
+test("cngPerformerTls verifies TLS only for gateway ingress on OpenShift", () => {
+  assert.deepEqual(cngPerformerTls("gateway", "openshift"), {});
+  assert.deepEqual(cngPerformerTls("route", "openshift"), { insecure: true });
+  // No ingress means cbdinocluster's default, route.
+  assert.deepEqual(cngPerformerTls(undefined, "openshift"), { insecure: true });
+  // k3d has no shared gateway, so ingress is ignored there.
+  assert.deepEqual(cngPerformerTls("gateway", "k3d"), { insecure: true });
 });
 
 test("withOpenShiftK8sBlock merges the k8s block onto an init config without dropping fields", () => {

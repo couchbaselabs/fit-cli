@@ -22,7 +22,8 @@ import { dockerLoginCommand, dockerPullArgs } from "../../performers/check-and-p
 import { performerImageName } from "../../performers/util/performer-image.js";
 import { DEFAULT_PERFORMER_PORT } from "../../performers/util/performer-port.js";
 import type { CapsFetchResult } from "../util/caps-table.js";
-import { fetchPerformerCaps, GrpcStatusError, type PerformerCaps } from "../util/performer-caps-rpc.js";
+import { fetchPerformerCaps, isUnimplemented, type PerformerCaps } from "../util/performer-caps-rpc.js";
+import { isPerformerStatus } from "../../performers/util/performer-grpc.js";
 
 /** How long to give a performer to come up and start serving gRPC. */
 const STARTUP_TIMEOUT_MS = 90_000;
@@ -97,7 +98,7 @@ async function awaitCaps(sdk: Sdk, port: number): Promise<PerformerCaps> {
     } catch (err) {
       // UNIMPLEMENTED is a real answer from a running performer, not a "still booting"
       // — retrying would just burn the whole timeout.
-      if (err instanceof GrpcStatusError) throw err;
+      if (isPerformerStatus(err)) throw err;
       lastError = err as Error;
     }
     if (Date.now() >= deadline) {
@@ -142,7 +143,7 @@ export async function fetchCapsForSdk(sdk: Sdk, options: FetchCapsOptions = {}):
     const caps = await awaitCaps(sdk, port);
     return { sdk, status: "ok", caps };
   } catch (err) {
-    if (err instanceof GrpcStatusError && err.isUnimplemented) {
+    if (isUnimplemented(err)) {
       return { sdk, status: "unimplemented" };
     }
     return { sdk, status: "error", error: (err as Error).message };
