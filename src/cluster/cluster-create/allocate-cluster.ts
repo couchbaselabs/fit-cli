@@ -10,7 +10,6 @@
  *   bun src/cluster/cluster-create/allocate-cluster.ts
  */
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { artifactFromPath, type RunOutput, type Artifact } from "../../util/non-fit/artifacts.js";
 import { isMain, runCli } from "../../util/non-fit/cli.js";
@@ -21,6 +20,7 @@ import { ensureRunDir } from "../../util/non-fit/replay.js";
 import { posixQuote, teeToFileCommand } from "../../util/non-fit/remote-target.js";
 import { findOnPath } from "../../util/non-fit/which.js";
 import { loadEnvironments } from "../../fit/util/environments.js";
+import { allocatePurpose } from "./allocate-purpose.js";
 import { buildClusterDef } from "./build-cluster-def.js";
 import { printCapellaDebugLinks, printCapellaPreflightInfo, printCapellaUiLink } from "./capella-debug-links.js";
 import { ensureCbdinocluster } from "./ensure-cbdinocluster.js";
@@ -65,6 +65,11 @@ export interface ClusterCommandExecutor {
   /** Collect `targetPath` to `localPath`; returns the actual local path written (see {@link FitExecutionContext.collectFile}). */
   collectFile(targetPath: string, localPath: string): Promise<string>;
   commandAvailable(command: string): Promise<boolean>;
+}
+
+/** Whether the executor runs on a remote box (vs. this machine). */
+export function isRemoteExecution(execution: ClusterCommandExecutor): boolean {
+  return "kind" in execution && (execution as { kind?: string }).kind === "remote";
 }
 
 export function localClusterCommandExecutor(): ClusterCommandExecutor {
@@ -128,20 +133,6 @@ export async function askDeployer(): Promise<string | undefined> {
 }
 
 /**
- * Purpose string every `cbdinocluster allocate` call is tagged with, matching the
- * `fit-cli-<username>` convention already used for AWS role session names and EC2
- * instance tags (see `aws-cli.ts`). `cbdinocluster` stores this as the
- * `cbdc2.purpose` namespace label on CNG/Docker deployers — without it, a leaked
- * or stuck cluster on the shared ROSA cluster is untraceable to whoever created
- * it. Note this is a no-op for the `cloud` (Capella) deployer: cbdinocluster
- * never threads purpose into the Capella project/cluster name it auto-generates,
- * so it won't show up anywhere in the Capella UI.
- */
-export function allocatePurpose(): string {
-  return `fit-cli-${userInfo().username}`;
-}
-
-/**
  * Allocate a cluster: write `def` to a file and run
  * `cbdinocluster --verbose allocate [--deployer=<deployer>] --def-file=<file>`.
  * Progress is streamed; resolves with the new cluster's id when allocation
@@ -150,6 +141,7 @@ export function allocatePurpose(): string {
 export async function allocateCluster(
   cbdinocluster: string,
   def: string,
+  purpose: string,
   deployer?: string,
   execution: ClusterCommandExecutor = localClusterCommandExecutor(),
   cycleDir: string = ensureRunDir(),
@@ -181,7 +173,9 @@ export async function allocateCluster(
   // 31h claim can starve other users. Expire those quickly instead.
   const sharedResourceDeployer = deployer === "cloud" || cng;
   args.push(sharedResourceDeployer ? "--expiry=3h" : "--expiry=31h");
-  args.push(`--purpose=${allocatePurpose()}`);
+  // Every cluster of the run carries the run stamp as its purpose, so teardown
+  // can find it.
+  args.push(`--purpose=${purpose}`);
   args.push(`--def-file=${defFile}`);
 
   mkdirSync(cycleDir, { recursive: true, mode: 0o700 });
@@ -291,6 +285,6 @@ if (isMain(import.meta.url)) {
       services: ["kv", "n1ql", "index", "fts"],
       cng: false,
     });
-    return allocateCluster(cbdinocluster, def, await askDeployer());
+    return allocateCluster(cbdinocluster, def, allocatePurpose(), await askDeployer());
   });
 }

@@ -30,6 +30,11 @@ export interface ClusterCreatingConfig {
   cbdinoclusterPath: string;
   /** Concrete (alias-resolved) server version to create, e.g. "8.0.1-4654". */
   version: string;
+  /**
+   * The run stamp. FIT puts it in front of the purpose of each cluster it
+   * allocates, which ties those clusters to the run.
+   */
+  purpose: string;
 }
 
 /**
@@ -42,7 +47,7 @@ export function resourceCreationPiece(clusterCreating: ClusterCreatingConfig): P
     resourceCreation: {
       "//": "Enables cluster-creating functional tests (@RequiresClusterCreating).",
       cluster: {
-        cbdinocluster: { path: clusterCreating.cbdinoclusterPath },
+        cbdinocluster: { path: clusterCreating.cbdinoclusterPath, purpose: clusterCreating.purpose },
         preferredCluster: { version: clusterCreating.version },
       },
     },
