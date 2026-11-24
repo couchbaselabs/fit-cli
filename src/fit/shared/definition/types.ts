@@ -391,6 +391,11 @@ export interface PerformanceSection {
    */
   variables?: Record<string, string | number | boolean>;
   /**
+   * Names from `variables` the driver also sends to the performer as SDK tunables,
+   * e.g. `concurrencyMechanism` for the Python performer. Doesn't change the datapoint identity.
+   */
+  tunables?: string[];
+  /**
    * The "invalidate the world" levers. A run only compares against history with
    * the same values, so bump when a driver/performer change makes older numbers
    * incomparable. Default to the perf driver's current values when omitted.

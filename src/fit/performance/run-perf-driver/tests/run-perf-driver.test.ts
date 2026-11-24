@@ -101,6 +101,17 @@ test("converts the variables map to the driver's name/value list", () => {
   );
 });
 
+test("marks the definition's tunables so the driver sends them to the performer", () => {
+  const built = suite({
+    performance: { ...getWorkload, variables: { ...getWorkload.variables, concurrencyMechanism: "multiprocessing" }, tunables: ["concurrencyMechanism"] },
+  });
+  assert.deepEqual(
+    built.settings.variables.find((v) => v.name === "concurrencyMechanism"),
+    { name: "concurrencyMechanism", value: "multiprocessing", type: "tunable" },
+  );
+  assert.deepEqual(built.settings.variables.find((v) => v.name === "poolSize"), { name: "poolSize", value: 10000 });
+});
+
 test("defaults the cluster facts the driver acts on when creating the bucket", () => {
   const built = suite();
   assert.equal(built.connections.cluster.replicas, DEFAULT_PERF_REPLICAS);
