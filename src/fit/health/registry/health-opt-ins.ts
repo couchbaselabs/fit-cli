@@ -115,8 +115,8 @@ export const HEALTH_OPT_INS: Partial<Record<SdkValue, HealthOptIn>> = {
     paths: ["columnar-java-client/", "columnar-java-fit-performer/", "columnar-fit-performer-shared/"],
     language: "java",
   },
-  // Python and Node.js are built on the C++ SDK's core (couchbase-cxx-client): a test failing on
-  // all three, and passing elsewhere, points at the shared core.
+  // Python, Node.js and Ruby are built on the C++ SDK's core (couchbase-cxx-client): a test
+  // failing on all of them, and passing elsewhere, points at the shared core.
   cpp: {
     repo: "couchbase/couchbase-cxx-client",
     workflows: ["fit-test.yml"],
@@ -131,6 +131,16 @@ export const HEALTH_OPT_INS: Partial<Record<SdkValue, HealthOptIn>> = {
     repo: "couchbase/couchnode",
     workflows: ["fit-test.yml"],
     family: "cxx",
+  },
+  ruby: {
+    repo: "couchbase/couchbase-ruby-client",
+    workflows: ["fit-tests.yml"],
+    family: "cxx",
+  },
+  // Rust is its own SDK, built on no other SDK's core.
+  rust: {
+    repo: "couchbase/couchbase-rs",
+    workflows: ["fit-test.yml"],
   },
   // The Operational Insights SDKs. Each is its own client, built on no other SDK's core, so none
   // has a family; language puts it in the row of its language's Couchbase SDK.
