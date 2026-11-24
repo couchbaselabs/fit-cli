@@ -12,6 +12,9 @@ export const SDKS = [
   { name: "Python", value: "python", family: "operational", cng: false },
   { name: "Ruby", value: "ruby", family: "operational", cng: true },
   { name: "Rust", value: "rust", family: "operational", cng: false },
+  // The PHP SDK has couchbase2:// only with the PHP protobuf extension, which its performer
+  // image does not install.
+  { name: "PHP", value: "php", family: "operational", cng: false },
   // Java performer in Quarkus not yet tested over CNG
   { name: "Quarkus (JVM)", value: "quarkus", family: "operational", cng: false },
   { name: "Quarkus (native)", value: "quarkus-native", family: "operational", cng: false },

@@ -124,8 +124,8 @@ test("accepts the Python performer image", () => {
 });
 
 test("rejects a performer image for an SDK FIT doesn't know", () => {
-  const def = FUNCTIONAL.replace("image: java-fit-performer:main", "image: php-fit-performer:main");
-  assert.throws(() => parseDefinition(def), /Unknown SDK "php"/);
+  const def = FUNCTIONAL.replace("image: java-fit-performer:main", "image: cobol-fit-performer:main");
+  assert.throws(() => parseDefinition(def), /Unknown SDK "cobol"/);
 });
 
 test("rejects the legacy performer sdk/version fields", () => {
