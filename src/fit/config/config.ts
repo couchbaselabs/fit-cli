@@ -7,10 +7,12 @@
  *                     [--github-user <u>] [--github-token <t>]
  *                     [--config-path <path>]
  * bun run config show [--config-path <path>]
+ * bun run config environments
  * bun run config --help
  */
 import { isMain, runCli } from "../../util/non-fit/cli.js";
-import { installFitCliConsoleFormatting, runScriptPrefix } from "../../util/non-fit/fit-cli-log.js";
+import { installFitCliConsoleFormatting, printWithoutTimestamps, runScriptPrefix } from "../../util/non-fit/fit-cli-log.js";
+import { loadEnvironments, type EnvironmentsFile } from "../util/environments.js";
 import { runAutoEdit, runEditWorkflow, formatConfigForDisplay, buildAutoConfig, printResolutionLog } from "./edit.js";
 import {
   CLOUD_INSTANCE_PURPOSES,
@@ -26,11 +28,15 @@ function helpText(): string {
 Usage:
   ${p} edit [options]
   ${p} show [--config-path <path>]
+  ${p} environments
   ${p} --help
 
 Subcommands:
-  edit   Create or update the fit-cli config file (interactive by default).
-  show   Print the current config with secrets elided.
+  edit          Create or update the fit-cli config file (interactive by default).
+  show          Print the current config with secrets elided.
+  environments  Print environments.json5 as JSON on stdout, and nothing else, so
+                scripts and CI can read it with jq. It holds no secrets, only the
+                names of the AWS secrets that hold them.
 
 Edit options:
   --auto                 Non-interactive mode. Reads from env vars and CLI args only.
@@ -178,9 +184,44 @@ export function parseEditArgs(argv: string[]): AutoInitCliArgs {
   };
 }
 
+/**
+ * Subcommands whose stdout is parsed by a machine, so it carries the payload and
+ * nothing else. `main.ts` reads this to skip its banner and console formatting.
+ * `args` is argv after the `config` token.
+ */
+export function isMachineOutputConfigSubcommand(args: readonly string[]): boolean {
+  return args[0] === "environments";
+}
+
+/**
+ * environments.json5 as JSON. It goes to CI logs, so it must stay config only.
+ * Never add a value read from AWS or the environment.
+ */
+export function environmentsJson(environments: EnvironmentsFile = loadEnvironments()): string {
+  return JSON.stringify(environments, null, 2);
+}
+
+/** Writes straight to stdout, with no runCli, so no banner or artifact table mixes in. */
+function printEnvironments(rest: readonly string[]): void {
+  if (rest.includes("--help") || rest.includes("-h")) {
+    console.log(helpText());
+    return;
+  }
+  if (rest.length > 0) {
+    process.stderr.write(`Usage: ${runScriptPrefix("config")} environments\n`);
+    process.exit(2);
+  }
+  printWithoutTimestamps(environmentsJson());
+}
+
 export function runConfigMain(): void {
   const argv = process.argv.slice(2);
   const [subcommand, ...rest] = argv;
+
+  if (isMachineOutputConfigSubcommand(argv)) {
+    printEnvironments(rest);
+    return;
+  }
 
   // --suppress-artifacts: run auto-edit without creating a fit-cli artifact
   // directory, so CI config steps don't leave an extra directory in /tmp/fit-cli/

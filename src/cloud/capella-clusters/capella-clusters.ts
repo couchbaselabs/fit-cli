@@ -3,9 +3,9 @@
  * Sweeps the Capella clusters that runs leave behind when they die before their
  * own teardown. Called by the scheduled cleanup-capella-clusters workflow.
  *
- * `cleanup` runs `cbdinocluster cleanup cloud`. It removes every expired
- * cbdinocluster project in the organization, whoever made it, because an expiry
- * means the owner is done with it. Live clusters are never touched. Clusters in
+ * `cleanup` runs `cbdinocluster cleanup cloud --purpose fitcli`. It removes only
+ * the expired clusters and projects that fit-cli runs created. Clusters other
+ * teams made are never touched, and live clusters are never touched. Clusters in
  * `destroyFailed` are left and flagged, since only Capella support can clear them.
  *
  * cbdinocluster runs here against a throwaway config in a temp file, so the
@@ -24,7 +24,7 @@ import { isMain, runCli } from "../../util/non-fit/cli.js";
 import { fitCliWarn, runScriptPrefix } from "../../util/non-fit/fit-cli-log.js";
 import { capture, run, runHiddenUntilFailure } from "../../util/non-fit/proc.js";
 import { findOnPath } from "../../util/non-fit/which.js";
-import { isFitCliPurpose } from "../../cluster/cluster-create/allocate-purpose.js";
+import { FITCLI_PURPOSE_PREFIX, isFitCliPurpose } from "../../cluster/cluster-create/allocate-purpose.js";
 import { capellaCleanupCbdinoclusterInitArgs } from "../../cluster/cluster-create/default-cbdinocluster-init-config.js";
 import {
   CBDINOCLUSTER_URL,
@@ -262,34 +262,42 @@ function reportDestroyFailed(clusters: readonly CbdinoclusterListItem[], envName
 }
 
 /**
- * The bound on the cleanup. A big backlog of expired projects is slow to delete.
- * The job cap is 120m, so this has to give up first for the summary to still be
- * written.
+ * The bound on the cleanup. The job cap is 45m, so this has to give up first for
+ * the summary to still be written.
  */
-export const CLEANUP_TIMEOUT = "90m";
+export const CLEANUP_TIMEOUT = "30m";
+
+/**
+ * The `--purpose` that limits the cleanup to fit-cli's clusters. cbdinocluster
+ * removes a cluster only when its purpose equals this value or starts with this
+ * value and a dash. Every fit-cli stamp starts with {@link FITCLI_PURPOSE_PREFIX},
+ * so the value is that prefix without its trailing dash.
+ */
+export const CLEANUP_PURPOSE = FITCLI_PURPOSE_PREFIX.replace(/-$/, "");
 
 /** Build the `cbdinocluster cleanup cloud` args. */
 export function cleanupArgs(dryRun: boolean): string[] {
-  return dryRun ? ["cleanup", CAPELLA_DEPLOYER, "--dry-run"] : ["cleanup", CAPELLA_DEPLOYER, "--timeout", CLEANUP_TIMEOUT];
+  const scoped = ["cleanup", CAPELLA_DEPLOYER, "--purpose", CLEANUP_PURPOSE];
+  return dryRun ? [...scoped, "--dry-run"] : [...scoped, "--timeout", CLEANUP_TIMEOUT];
 }
 
-/** Remove every expired cbdinocluster project in the organization. Throws if cbdinocluster fails. */
+/** Remove the expired clusters and projects that fit-cli runs created. Throws if cbdinocluster fails. */
 async function removeExpiredProjects(cbdinocluster: string, dryRun: boolean): Promise<void> {
   console.log(
-    `\n${dryRun ? "Dry run of removing" : "Removing"} every expired cbdinocluster project ` +
-      `in the organization, whoever made it`,
+    `\n${dryRun ? "Dry run of removing" : "Removing"} the expired clusters and projects ` +
+      `that fit-cli runs created (purpose ${CLEANUP_PURPOSE})`,
   );
   try {
     await run(cbdinocluster, cleanupArgs(dryRun));
   } catch (err) {
     throw new Error(`Capella cleanup failed. ${(err as Error).message}`, { cause: err });
   }
-  console.log(`\n✓ ${dryRun ? "Dry run finished. Nothing was deleted." : "Removed every expired project in the organization."}`);
+  console.log(`\n✓ ${dryRun ? "Dry run finished. Nothing was deleted." : "Removed the expired clusters and projects that fit-cli runs created."}`);
 }
 
 function helpText(): string {
   const p = runScriptPrefix("capella-clusters");
-  return `Sweep the expired Capella clusters and projects in a Capella organization.
+  return `Sweep the expired Capella clusters and projects that fit-cli runs created.
 
 Usage:
   ${p} list [--env <name>]
@@ -299,10 +307,10 @@ Usage:
 Subcommands:
   list      Show the Capella clusters cbdinocluster can see, with the purpose and
             expiry of each, and which of them fit-cli created.
-  cleanup   Show the same table, then run \`cbdinocluster cleanup ${CAPELLA_DEPLOYER}\`. It removes
-            every expired cbdinocluster project in the organization, whoever made
-            it, because an expiry means the owner is done with it. Bounded at
-            ${CLEANUP_TIMEOUT}.
+  cleanup   Show the same table, then run
+            \`cbdinocluster cleanup ${CAPELLA_DEPLOYER} --purpose ${CLEANUP_PURPOSE}\`. It removes only
+            the expired clusters and projects that fit-cli runs created. Clusters
+            other teams made are never touched. Bounded at ${CLEANUP_TIMEOUT}.
 
 Options:
   --env <name>  Capella environment to sweep, a key under \`capella\` in

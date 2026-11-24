@@ -24,7 +24,7 @@ import { runCapsMain } from "../caps/caps.js";
 import { runHealthMain } from "../health/health.js";
 import { runIngestMain } from "../ingest/ingest.js";
 import { runExternalServicesMain } from "../external-services/external-services-cli.js";
-import { runConfigMain } from "../config/config.js";
+import { isMachineOutputConfigSubcommand, runConfigMain } from "../config/config.js";
 import { runEditWorkflow } from "../config/edit.js";
 import { defaultFitCliConfigPath } from "../util/config.js";
 import { runCloudInstancesMain } from "../../cloud/cloud-instances/cloud-instances.js";
@@ -233,7 +233,7 @@ const COMMANDS: Record<string, { fn: () => void; description: string; hidden?: b
   "run":             { fn: runRunMain,             description: "Run FIT tests from a preset or a definition file" },
   "preset":          { fn: runPresetMain,          description: "List, expand or generate FIT presets", machineOutput: isMachineOutputPresetSubcommand },
   "definition":      { fn: runDefinitionMain,      description: "Author or inspect a FIT definition file", machineOutput: isMachineOutputDefinitionSubcommand },
-  "config":          { fn: runConfigMain,           description: "Manage fit-cli configuration" },
+  "config":          { fn: runConfigMain,           description: "Manage fit-cli configuration", machineOutput: isMachineOutputConfigSubcommand },
   "cloud-instances": { fn: runCloudInstancesMain,  description: "Manage cloud (EC2) instances" },
   "capella-clusters": { fn: runCapellaClustersMain, description: "Sweep the Capella clusters failed runs left behind" },
   "performer":       { fn: runPerformerMain,        description: "Build FIT performer images from an SDK repo ref" },
