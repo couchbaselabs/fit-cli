@@ -25,6 +25,7 @@ import { AttributeSchema } from "../generated/observability.top_pb.js";
 import { ConfigSchema as ObservabilityConfigSchema, TracingConfigSchema } from "../generated/observability.config_pb.js";
 import { TransactionException } from "../generated/transactions.commands_pb.js";
 import type { Result } from "../generated/run.top_level_pb.js";
+import type { Exception } from "../generated/shared.exceptions_pb.js";
 import { connectPerformer, UNARY_CALL_OPTIONS, type PerformerClient } from "../../performers/util/performer-grpc.js";
 import {
   buildPerfRequest,
@@ -163,6 +164,19 @@ function buildClusterConfig(testSuite: PerfTestSuite, runUuid: string): ReturnTy
   return config;
 }
 
+function exceptionName(exception: Exception): string | undefined {
+  const ex = exception.exception;
+  switch (ex.case) {
+    case "couchbase":
+    case "other":
+      return ex.value.name;
+    case "special":
+      return ex.value.special.value?.name;
+    default:
+      return undefined;
+  }
+}
+
 /** Classify one result the way the Java `BucketsWriteThread` does. Returns undefined if it isn't an operation. */
 export function classifyResult(result: Result): PerfSample | undefined {
   if (result.initiated === undefined) {
@@ -177,8 +191,7 @@ export function classifyResult(result: Result): PerfSample | undefined {
       return { bucketSec, success: true, elapsedNanos };
     }
     if (sdk.result.case === "exception") {
-      const exception = sdk.result.value;
-      const name = exception.exception.case === "couchbase" ? exception.exception.value.name : exception.exception.value?.name;
+      const name = exceptionName(sdk.result.value);
       if (name === "IllegalArgumentException") {
         // The performer uses this to say the driver asked for something impossible. Continuing
         // would produce a bundle full of failures that looks like a cluster problem.
