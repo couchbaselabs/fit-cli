@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildCapellaDebugItems, capellaDebugLinks, defaultDatadogWindow, printCapellaPreflightInfo } from "../capella-debug-links.js";
+import { buildCapellaDebugItems, capellaDebugLinks, capellaUiUrl, defaultDatadogWindow, printCapellaPreflightInfo } from "../capella-debug-links.js";
 import type { EnvironmentsFile } from "../../../fit/util/environments.js";
 
 const environments: EnvironmentsFile = {
@@ -49,6 +49,7 @@ const environments: EnvironmentsFile = {
     prod: { endpoint: "https://api.cloud.couchbase.com", oid: "62488bdd-d416-467e-84f7-fc7c1583a083" },
     dev: { endpoint: "https://api.dev.nonprod-project-avengers.com", oid: "6af08c0a-8cab-4c1c-b257-b521575c16d0" },
     noOid: { endpoint: "https://api.no-oid.example.com" },
+    withProject: { endpoint: "https://api.dev.nonprod-project-avengers.com", oid: "oid-x", projectId: "pid-x" },
   },
   results: {},
   awsTenants: {},
@@ -84,6 +85,17 @@ test("defaultDatadogWindow spans from just before now to past the longest cluste
     from: new Date("2026-11-04T09:30:00Z"),
     to: new Date("2026-11-05T18:00:00Z"),
   });
+});
+
+test("capellaUiUrl adds the project id when the environment has one", () => {
+  assert.equal(
+    capellaUiUrl("withProject", environments),
+    "https://dev.nonprod-project-avengers.com/databases?oid=oid-x&pid=pid-x",
+  );
+});
+
+test("capellaUiUrl links to the org only when the environment has no project id", () => {
+  assert.equal(capellaUiUrl("dev", environments), "https://dev.nonprod-project-avengers.com/databases?oid=6af08c0a-8cab-4c1c-b257-b521575c16d0");
 });
 
 test("capellaDebugLinks omits capellaUiUrl when the environment has no oid", () => {

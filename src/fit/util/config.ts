@@ -878,6 +878,11 @@ export interface ResolvedCapellaConfig {
   /** Only set for environments the Capella team has issued one for (currently just "dev"). */
   internalSupportToken?: string;
   overrideToken?: string;
+  /**
+   * The project cbdinocluster puts every cluster in. A box run needs it to
+   * allocate. Unset when the env has none.
+   */
+  projectId?: string;
 }
 
 /** First non-empty trimmed env var among `names`, or undefined. */
@@ -902,6 +907,9 @@ function firstEnv(env: NodeJS.ProcessEnv, names: string[]): string | undefined {
  * custom image deploys, server version changes, and columnar operations still use
  * it. Throws when the environment is unknown/unprovisioned or any credential
  * can't be resolved.
+ *
+ * projectId comes only from the environments.json5 entry, like the org id. It
+ * belongs to that org. It stays undefined when the entry has none.
  */
 export async function resolveCapellaConfig(
   options: {
@@ -976,6 +984,7 @@ export async function resolveCapellaConfig(
   const internalSupportToken =
     firstEnv(env, ["CAPELLA_INTERNAL_SUPPORT_TOKEN"]) ?? secret?.internalSupportToken?.trim() ?? undefined;
   const overrideToken = firstEnv(env, ["CAPELLA_OVERRIDE_TOKEN"]) ?? secret?.overrideToken?.trim() ?? undefined;
+  const projectId = entry.projectId?.trim() || undefined;
 
   return {
     username,
@@ -987,6 +996,7 @@ export async function resolveCapellaConfig(
     apiSecret,
     ...(internalSupportToken ? { internalSupportToken } : {}),
     ...(overrideToken ? { overrideToken } : {}),
+    ...(projectId ? { projectId } : {}),
   };
 }
 
